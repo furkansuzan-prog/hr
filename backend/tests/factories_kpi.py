@@ -30,7 +30,8 @@ KPI-022 MC: H1, H2, H3, H6 = 4 / 6 = 66.6667 %
 KPI-023 tenant 03-31: 20 persons, days 9x1461 + 365 + 6x455 (C1: max(455,120)) + 17 + 3x303 = 17170
    -> 17170 / 365.25 / 20 = 2.3504 years ; MC: 9x1461 + 365 + 120 (C1's MC spell) = 13634 / 365.25 / 11 = 3.3934
 KPI-028 MC/tenant M: timesheets MC9 + R1 = 10 rows x planned 40 = 400 h ; sick 8 h (03-04) + 16 h over 03-30..04-02
-   prorated 2/4 = 8 h -> 16 / 400 = 4.0 %  (annual 8 h and unexcused 4 h excluded; KPI-003 = 20/400 = 5.0 %)
+   prorated 2/4 = 8 h -> 16 / 400 = 4.0 %  (annual 8 h and unexcused 4 h excluded)
+   KPI-003 company definition: sick 16 + unexcused 4 + annual 8 = 28 / 400 = 7.0 %
 KPI-032 M: night 10 x 11 = 110 h / worked 10 x 44 = 440 h = 25.0 %
 KPI-034 M (timesheets on P1): DT1 MC equipment 20 h + DT2 MC weather 10 h + DT3 no entity material 6 h
    (+ DT4 2025-04-02 outside) -> tenant 36 / 400 = 9.0 % ; MC 30 / 400 = 7.5 % (1 event without entity excluded)

@@ -142,3 +142,48 @@ redis-cli -n 1 flushdb   # soğuk
 python scripts/perf_smoke.py --base http://localhost:8200 --concurrency 30 --requests 600 --json a.json
 python scripts/perf_smoke.py --base http://localhost:8200 --concurrency 150 --think-time 5 --duration 180 --requests 0 --json b.json
 ```
+
+---
+
+## B-21 / B-22 sonrası — aynı 15K veri seti (2026-11-05, orchestrator)
+
+### Yapılan değişiklikler
+| # | Değişiklik | Neden (A13 bulgusu) |
+|---|---|---|
+| 1 | `timesheet_monthly` aylık özet tablosu (migration `0005`, 1.83M → 446K satır, 85 MB). Hesaplayıcılar tam takvim aylarından oluşan pencerelerde özeti okur | Q1 puantaj toplamı soğuk sürenin %70'i |
+| 2 | **Doğruluk koruması:** `timesheets` üzerinde INSERT/UPDATE/DELETE (COPY dahil) istatistik tetikleyicileri değişen en erken ayı `timesheet_summary_dirty`'ye yazar; kirli aylar her zaman ham tablodan okunur | Özet, yazan kodun yenilemeyi hatırlamasına bağlı olmamalı |
+| 3 | Maliyet sorgusunda `count(DISTINCT person)` ana toplamadan çıkarıldı; gizlilik nüfusu = en yoğun aydaki ücretli çalışan sayısı (ayrı, ucuz sorgu; ücret satırı yoksa tüm maliyet satırları) | Q2 4.3 sn |
+| 4 | Fact tablolarına `tenant_id` filtresi (puantaj, izin, maliyet) | Kiracı öncelikli indeksler kullanılabilsin |
+| 5 | İstek içi memo: aynı kapsam+pencere puantaj toplamı ve personel sayıları tek kez hesaplanır (commit'te temizlenir) | Aynı sorgu panelde 17 kez çalışıyordu |
+| 6 | Firma kırılımı için tek gruplu sorgu (KPI-016, 202 firma → 1 sorgu) | 220 ayrı sorgu |
+| 7 | **Dogpile koruması:** soğuk anahtarı tek istek hesaplar (Redis `SET NX` kilidi), diğerleri bekler | Soğuk yükte aynı KPI'lar yüzlerce kez paralel hesaplanıyordu |
+| 8 | **Önceden doldurma:** analitik veriyi değiştiren her commit sonrası arka planda özet yenilenir ve kiracıdaki her farklı kullanıcı kapsamı için yönetici paneli hesaplanır | Kullanıcı import sonrası soğuk yolu görmemeli |
+| 9 | **Panel yanıt önbelleği** (anahtar: kiracı, veri sürümü, katalog sürümü, kullanıcının etkin kapsamı, filtreler, dil); dönem kapatma/açma veri sürümünü artırır | Sıcak yolda istek başına ~260 önbellek okuması |
+| 10 | B-22: havuz zaman aşımı → **503 + `Retry-After`**; worker iş parçacığı sayısı DB havuzuna eşitlendi | Yük altında 500 hataları |
+
+### Sonuçlar (ms) — 4 vCPU, 4 worker, Redis; bu kez makinede başka iş yoktu
+| Senaryo | Önce (A13) dashboard p95 | **Sonra** dashboard p95 | Sonra tümü p95 | Hata önce → sonra |
+|---|---|---|---|---|
+| Tek kullanıcı, soğuk dashboard | 19,840 | **3,797** | — | 0 → 0 |
+| Tek kullanıcı, sıcak dashboard | ~150 | **256** (HTTP) | — | — |
+| 30 VU düşünme yok, **soğuk** | 85,704 | **4,011** | 3,730 | 7×500 → **0** |
+| 30 VU düşünme yok, **sıcak** | 3,484–4,498 | **1,332** ✔ | 1,371 | 0 → 0 |
+| 150 VU ~5 sn düşünme, **sıcak**, 180 sn | 512 | **71** ✔ | 121 | 1 → 0 |
+| 150 VU ~5 sn düşünme, **soğuk başlangıç** (önbellek boş, prewarm yok) | 117,458 | **183** ✔ | 658 | 172×500 → **0** |
+| 150 VU ~5 sn düşünme, **gerçek import'tan hemen sonra** (prewarm yarışıyor) | — (soğuk ≈ 117 sn) | **72** ✔ | 119 | **0** |
+
+Doğruluk: özet yolu ile ham yolun her kapsamda ve pencerede birebir aynı sonuç verdiği, tetikleyicilerin INSERT/UPDATE/DELETE'i yakaladığı ve kirli ayların ham tabloya düştüğü `tests/test_timesheet_summary.py` ile doğrulanır (136/136 test).
+
+### Hedef değerlendirmesi (güncel)
+| Hedef | Sonuç |
+|---|---|
+| 150 eşzamanlı kullanıcı (gerçekçi), dashboard p95 < 2 sn — sıcak, soğuk başlangıç ve import sonrası | ✔ 71 / 183 / 72 ms |
+| 30 eşzamanlı düşünme süresiz, dashboard p95 < 2 sn | ✔ 1.33 sn |
+| Aynı yükte firma kırılımı (202 satırlık tablo) p95 < 2 sn | ✖ 2.06 sn (sınırda) — yanıt düzeyi önbellek / sayfalama önerilir |
+| Tek kullanıcı soğuk dashboard | 3.8 sn — prewarm sayesinde kullanıcı normalde görmez |
+
+### Kalan öneriler
+- Firma kırılımı uçları için yanıt düzeyi önbellek ve sayfalama.
+- Prewarm'ı süreç içi iş parçacığından iş kuyruğuna taşımak (B-12) ve çok worker'lı kurulumda tekilleştirmek (şu an import'u alan worker ısıtır).
+- PgBouncer ve PostgreSQL ayarları (`shared_buffers`, `work_mem`) üretimde.
+- Günlük puantaj beslemesi geldiğinde `timesheets` bölümleme.

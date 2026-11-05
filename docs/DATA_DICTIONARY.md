@@ -2,7 +2,7 @@
 
 # Veri Sözlüğü / Data Dictionary
 
-56 tablo. Şema kaynağı: `backend/app/models/*` → Alembic migration'ları.
+58 tablo. Şema kaynağı: `backend/app/models/*` → Alembic migration'ları.
 
 
 ## `ai_analysis_runs`
@@ -895,6 +895,35 @@ Kısıtlar:
 
 Kısıtlar: 
 
+## `timesheet_monthly`
+
+Monthly pre-aggregate of APPROVED timesheet rows per (tenant, month, employment, project) - B-21. Read only for windows made of whole calendar months; months listed in timesheet_summary_dirty are never read from here (calculators fall back to the raw table), so a stale summary can never produce a wrong KPI.
+
+| Kolon | Tip | Null | Anahtar / FK |
+|---|---|---|---|
+| id | BIGINT |  | PK |
+| tenant_id | INTEGER |  | → tenants.id |
+| month | DATE |  |  |
+| employment_id | INTEGER |  | → employment_relationships.id |
+| project_id | INTEGER | ✓ |  |
+| n | INTEGER |  |  |
+| planned | NUMERIC(14, 2) |  |  |
+| worked | NUMERIC(14, 2) |  |  |
+| overtime | NUMERIC(14, 2) |  |  |
+| productive | NUMERIC(14, 2) |  |  |
+| n_productive | INTEGER |  |  |
+| planned_productive | NUMERIC(14, 2) |  |  |
+| night | NUMERIC(14, 2) |  |  |
+
+## `timesheet_summary_dirty`
+
+Earliest month per tenant whose summary no longer matches timesheets. Written by DB triggers on timesheets (insert/update/delete, incl. COPY), cleared by app.analytics.summary.refresh().
+
+| Kolon | Tip | Null | Anahtar / FK |
+|---|---|---|---|
+| tenant_id | INTEGER |  | PK → tenants.id |
+| from_month | DATE |  |  |
+
 ## `timesheets`
 
 Approved daily time record per employment and project. worked_hours = paid working time; productive_hours = hours booked on work packages (may be NULL = unknown).
@@ -920,7 +949,7 @@ Approved daily time record per employment and project. worked_hours = paid worki
 | record_version | INTEGER |  |  |
 | updated_by | BIGINT | ✓ |  |
 
-Kısıtlar: uq_timesheet_day, ck_ts_nonneg
+Kısıtlar: ck_ts_nonneg, uq_timesheet_day
 
 ## `training_records`
 

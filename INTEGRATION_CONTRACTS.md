@@ -46,6 +46,9 @@ Değişmezler:
 - Tarihsel kayıtlar güncellenmez; kapatılır + yeni kayıt (istihdam, görevlendirme, yüklenici ilişkisi). Geriye dönük ayrılış: `end_date` güncellenir, `record_version` artar.
 - Ham kimlik numarası hiçbir tabloya yazılmaz; yalnızca `national_id_hash` (HMAC).
 
+- **Puantaj (timesheets) yazmaları:** özet tablo (`timesheet_monthly`) veritabanı tetikleyicileriyle kirli işaretlenir; doğruluk için ek çağrı gerekmez. Hızlı yolun geri gelmesi için `mark_stale_from` (commit sonrası prewarm özeti yeniler) veya `app.analytics.summary.refresh` çağrılmalıdır.
+- **Dönem kapatma/açma** veri sürümünü artırır (dondurulmuş değerler panel önbelleğine yansır) ve yalnızca **ana yüklenici** yetkisiyle yapılabilir (karar D-2): tenant geneli `period.close` veya kapsamında `main_contractor` firması olan kullanıcı; aksi 403.
+
 ## 6. Import sözleşmesi
 `POST /imports` (multipart: `file`, `entity_type=employment`) → `{batch_id, headers, suggested_mapping, required_fields, preview}`
 `POST /imports/{id}/validate` `{mapping}` → özet; hatalar `data_quality_issues` + `GET /imports/{id}/errors.csv`

@@ -17,6 +17,8 @@
 | [docs/SECURITY_PRIVACY.md](docs/SECURITY_PRIVACY.md) · [PERMISSION_MATRIX](docs/PERMISSION_MATRIX.md) | KVKK kontrolleri, boşluklar, hukuki inceleme maddeleri |
 | [docs/PERFORMANCE_REPORT.md](docs/PERFORMANCE_REPORT.md) | Ölçülmüş gecikmeler (geliştirme ortamı) |
 | [docs/AUDIT_REPORT.md](docs/AUDIT_REPORT.md) | Bağımsız denetim bulguları ve çözüm durumu |
+| [docs/DECISIONS.md](docs/DECISIONS.md) | Ürün kararları (görünürlük, dönem kapatma, devamsızlık tanımı, KPI hedefleri) |
+| [docs/KPI_TARGETS_REQUEST.md](docs/KPI_TARGETS_REQUEST.md) | İK yöneticisi için KPI hedef/eşik formu |
 
 ## Mimari özet
 Modüler monolit (ADR-001): **FastAPI** (`backend/app`: `api` → `services` → `analytics`/`ai` → `models`, çapraz `security`) + **PostgreSQL 16** + **Redis** (KPI önbelleği) + **Next.js 16 / React 19 / Tailwind 4 / ECharts / TanStack Query & Table** (`frontend/src`).

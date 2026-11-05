@@ -5,7 +5,7 @@ from datetime import UTC, date, datetime
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
-from app.analytics.calculators import CALCULATORS, SERIES_CALCULATORS, Scope
+from app.analytics.calculators import BY_ENTITY_BATCH, CALCULATORS, SERIES_CALCULATORS, Scope
 from app.analytics.domain import OK, SUPPRESSED, CalcResult, month_end, month_starts
 from app.core.cache import cache
 from app.core.config import get_settings
@@ -175,13 +175,11 @@ def evaluate(
         res, meta = frozen
     else:
         meta = None
-        hit = cache.get(key)
-        if hit is not None:
-            res = CalcResult(**hit)
-        else:
+        def compute() -> dict:
             raw = precomputed() if precomputed is not None else calc(db, scope, ps, pe, f.parameters or {})
-            res = enforce_privacy(raw)
-            cache.set(key, res.to_dict())
+            return enforce_privacy(raw).to_dict()
+
+        res = CalcResult(**cache.compute_once(key, compute))
     out = _payload(kpi, f, scope, ps, pe, res, ctx.locale)
     if meta:
         out.update(meta)
@@ -275,9 +273,26 @@ def visible_entities(db: Session, ctx: AccessContext, perm: str = "kpi.read") ->
 
 
 def by_entity(db: Session, ctx: AccessContext, code: str, ps: date, pe: date, **kw) -> list[dict]:
+    kpi = get_definition(db, code)
+    ents = visible_entities(db, ctx, "cost.read" if kpi.sensitive else "kpi.read")
+    batch_fn = None
+    if kpi.status == "active" and not kw.get("version"):
+        batch_fn = BY_ENTITY_BATCH.get(get_formula(db, kpi).calculator_key)
+    batch: dict[int, CalcResult] = {}
+
+    def from_batch(eid: int) -> CalcResult:
+        # computed lazily: only when at least one entity misses the cache, then once for all entities
+        if not batch:
+            f = get_formula(db, kpi)
+            scope = Scope(ctx.tenant_id, frozenset(e.id for e in ents), kw.get("project_id"),
+                          kw.get("occupation_group"))
+            batch.update(batch_fn(db, scope, ps, pe, f.parameters or {}))
+        return batch[eid]
+
     rows = []
-    for le in visible_entities(db, ctx, "cost.read" if get_definition(db, code).sensitive else "kpi.read"):
-        r = evaluate(db, ctx, code, ps, pe, entity_ids={le.id}, **kw)
+    for le in ents:
+        pre = (lambda eid=le.id: from_batch(eid)) if batch_fn else None
+        r = evaluate(db, ctx, code, ps, pe, entity_ids={le.id}, precomputed=pre, **kw)
         r["legal_entity"] = {"id": le.id, "code": le.code, "name": le.name, "type": le.entity_type}
         rows.append(r)
     return rows
@@ -330,28 +345,40 @@ def run_calculation(db: Session, ctx: AccessContext, codes: list[str], ps: date,
     return run
 
 
+def can_close_periods(db: Session, ctx: AccessContext) -> bool:
+    """Product decision (2026-11-05): closing/reopening reporting periods belongs to the MAIN CONTRACTOR.
+    Allowed for tenant-wide period.close holders, or when the period.close scope contains a main_contractor entity;
+    users scoped only to subcontractors cannot close or reopen."""
+    if not ctx.has("period.close"):
+        return False
+    scope = ctx.entity_filter("period.close")
+    if scope is None:
+        return True
+    return db.execute(select(LegalEntity.id).where(
+        LegalEntity.tenant_id == ctx.tenant_id, LegalEntity.id.in_(scope or {-1}),
+        LegalEntity.entity_type == "main_contractor")).first() is not None
+
+
 def freeze_period(db: Session, ctx: AccessContext, period_month: date) -> int:
     """B-18: persist results for a month that is about to be closed, so a closed period always serves frozen values
-    (see `_frozen_result`). Runs every active, validated KPI at tenant scope (the closer's scope) and for each legal
-    entity the closer can see. Sensitive (cost) KPIs are only frozen when the closer holds TENANT-WIDE cost.read, so a
-    close never persists cost numbers wider than the closer may read. Returns the number of persisted results."""
-    if not ctx.has("kpi.read"):
-        return 0
+    (see `_frozen_result`). The closer is the main contractor (can_close_periods), so the month is frozen for EVERY
+    scope readers can use: tenant-wide and each legal entity, cost KPIs included. Freezing stores results; it never
+    returns them - reading still goes through each reader's own scope (resolve_scope / kpi_run_get). The runs are
+    recorded as system runs (triggered_by NULL), so the closer cannot read wider data through GET /kpi/runs/{id}.
+    Returns the number of persisted results."""
     ps = date(period_month.year, period_month.month, 1)
     pe = month_end(ps)
     defs = db.execute(select(KpiDefinition).where(KpiDefinition.status == "active", KpiDefinition.validated.is_(True))
                       .order_by(KpiDefinition.code)).scalars().all()
-    cost_ok = ctx.has("cost.read") and ctx.entity_filter("cost.read") is None
-    codes = [d.code for d in defs if (not d.sensitive or cost_ok)
-             and get_formula(db, d).calculator_key in CALCULATORS]
+    codes = [d.code for d in defs if get_formula(db, d).calculator_key in CALCULATORS]
     if not codes:
         return 0
-    own_scope = ctx.entity_filter("kpi.read")  # None = tenant-wide closer
+    system = AccessContext(user_id=None, tenant_id=ctx.tenant_id, email="system:period_close", locale=ctx.locale,
+                           grants={"kpi.read": None, "cost.read": None})
     scopes: list[set[int] | None] = [None]
-    # one run per visible legal entity; skipped when identical to the closer's own (single-entity) scope
-    scopes += [{le.id} for le in visible_entities(db, ctx, "kpi.read") if own_scope != {le.id}]
+    scopes += [{le.id} for le in visible_entities(db, system, "kpi.read") if le.entity_type != "client"]
     for ents in scopes:
-        run_calculation(db, ctx, codes, ps, pe, entity_ids=ents, trigger="period_close")
+        run_calculation(db, system, codes, ps, pe, entity_ids=ents, trigger="period_close")
     return len(codes) * len(scopes)
 
 
@@ -412,6 +439,10 @@ def mark_stale_from(db: Session, tenant_id: int, from_date: date) -> int:
     """Late-arriving / back-dated data: flag persisted results whose period ends on/after from_date."""
     bump_data_version(db, tenant_id)
     db.info.pop("kpi_memo", None)
+    db.info.pop("hours_memo", None)
+    db.info.pop("headcount_memo", None)
+    db.info.pop("ts_dirty", None)
+    db.info.setdefault("warm_tenants", set()).add(tenant_id)  # app.services.prewarm runs after the commit
     res = db.execute(update(KpiResult).where(KpiResult.tenant_id == tenant_id, KpiResult.period_end >= from_date,
                                              KpiResult.is_stale.is_(False)).values(is_stale=True))
     return res.rowcount or 0

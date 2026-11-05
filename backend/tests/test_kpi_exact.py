@@ -52,8 +52,9 @@ def test_headcount_counts_persons_once(client, auth, ids):
 def test_absenteeism_and_overtime_exact(client, auth, ids):
     a = str(ids["exact"]["entities"]["A"])
     r = ev(client, auth, "KPI-003", entity_ids=a, **JAN)
-    assert r["value"] == pytest.approx(2.0)
-    assert r["breakdown"]["excluded_hours_by_type"] == {"annual": 18.0}
+    assert r["value"] == pytest.approx(6.0)  # company definition: sick 9 h + annual 18 h
+    assert r["breakdown"]["included_hours_by_type"] == {"sick": 9.0, "annual": 18.0}
+    assert r["breakdown"]["excluded_hours_by_type"] == {}
     r = ev(client, auth, "KPI-007", entity_ids=a, **JAN)
     assert r["value"] == pytest.approx(10.0)
 
@@ -125,19 +126,20 @@ def test_formula_change_preserves_old_results(client, auth, ids, db):
     run_id = r.json()["run_id"]
     try:
         r = client.post("/api/v1/kpi/definitions/KPI-003/versions", headers=auth(ADMIN), json={
-            "parameters": {"absence_types": ["sick", "unexcused", "unpaid", "annual"]},
-            "change_note": "Test: include annual leave"})
+            "parameters": {"absence_types": ["sick"]},
+            "change_note": "Test: sick days only"})
         assert r.status_code == 201 and r.json()["version"] == 2
         new = ev(client, auth, "KPI-003", entity_ids=str(a), **JAN)
-        assert new["formula"]["version"] == 2 and new["value"] == pytest.approx(6.0)
+        assert new["formula"]["version"] == 2 and new["value"] == pytest.approx(2.0)
         old = ev(client, auth, "KPI-003", entity_ids=str(a), version=1, **JAN)
-        assert old["value"] == pytest.approx(2.0)
+        assert old["value"] == pytest.approx(6.0)
         stored = client.get(f"/api/v1/kpi/runs/{run_id}", headers=auth(ADMIN)).json()["results"][0]
-        assert stored["formula_version"] == 1 and stored["value"] == pytest.approx(2.0)
+        assert stored["formula_version"] == 1 and stored["value"] == pytest.approx(6.0)
     finally:
-        # restore v1 semantics as a NEW version (history is append-only)
+        # restore the company definition as a NEW version (history is append-only)
         client.post("/api/v1/kpi/definitions/KPI-003/versions", headers=auth(ADMIN), json={
-            "parameters": {"absence_types": ["sick", "unexcused", "unpaid"]}, "change_note": "Restore default"})
+            "parameters": {"absence_types": ["unexcused", "sick", "annual", "unpaid", "other"]},
+            "change_note": "Restore company definition"})
     versions = db.execute(select(KpiFormulaVersion.version).join_from(KpiFormulaVersion, KpiResult, isouter=True)).all()
     assert len(versions) >= 3
 

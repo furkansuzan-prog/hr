@@ -3,14 +3,19 @@ import logging
 import os
 import time
 import uuid
+from contextlib import asynccontextmanager
 
+import anyio
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, PlainTextResponse, Response
+from sqlalchemy.exc import TimeoutError as SATimeoutError
 
+import app.services.prewarm
 from app.api.routers import admin_data, analytics, core
 from app.core import metrics
 from app.core.config import get_settings
+from app.core.db import engine
 from app.core.logging import configure_logging, request_id_var
 
 settings = get_settings()
@@ -18,7 +23,18 @@ settings.validate_for_runtime()
 configure_logging()
 log = logging.getLogger("hrswi.http")
 
+@asynccontextmanager
+async def lifespan(_app):
+    # B-22: sync endpoints run in AnyIO's thread pool (40 threads by default) but each worker has only
+    # pool_size + max_overflow DB connections; cap the threads so requests queue cheaply instead of timing out
+    # on the connection pool.
+    limiter = anyio.to_thread.current_default_thread_limiter()
+    limiter.total_tokens = int(os.getenv("HRSWI_THREAD_LIMIT", str(engine.pool.size() + engine.pool._max_overflow)))
+    yield
+
+
 app = FastAPI(
+    lifespan=lifespan,
     title="HRSWI API",
     version="0.1.0",
     description="HR Sustainability & Workforce Intelligence - modular monolith API. "
@@ -42,6 +58,11 @@ async def request_context(request: Request, call_next):
     metrics.HTTP_IN_PROGRESS.inc()
     try:
         response = await call_next(request)
+    except SATimeoutError:
+        # DB pool exhausted (B-22): transient overload, not a server bug -> 503 + Retry-After so clients back off
+        log.warning("db pool timeout", extra={"path": request.url.path})
+        response = JSONResponse({"detail": "Service temporarily overloaded, retry shortly", "request_id": rid},
+                                status_code=503, headers={"Retry-After": "2"})
     except Exception:
         log.exception("unhandled error", extra={"path": request.url.path})
         response = JSONResponse({"detail": "Internal server error", "request_id": rid}, status_code=500)

@@ -82,7 +82,7 @@ def test_kpi028_sickness_and_kpi003_unchanged(client, auth, ids):
     assert r["value"] == pytest.approx(4.0)
     assert r["breakdown"]["included_types"] == ["sick"]
     assert r["breakdown"]["excluded_hours_by_type"] == {"annual": 8.0, "unexcused": 4.0}
-    assert ev(client, auth, "KPI-003", **MAR)["value"] == pytest.approx(5.0)
+    assert ev(client, auth, "KPI-003", **MAR)["value"] == pytest.approx(7.0)  # sick + unexcused + annual
 
 
 def test_kpi032_night_work_share(client, auth, ids):
@@ -191,16 +191,21 @@ def test_period_close_freezes_all_active_kpis_first(client, auth, ids, db):
     assert "frozen" not in ev(client, auth, "KPI-020", **MAR)
 
 
-def test_period_close_without_tenant_wide_cost_read_skips_sensitive(client, auth, ids):
-    """An MC-scoped closer freezes only its own scope (once - not twice for the identical entity scope) and no
-    sensitive KPI, because it lacks tenant-wide cost.read."""
+def test_main_contractor_close_freezes_every_scope_including_cost(client, auth, ids, db):
+    """Decision 2026-11-05 (supersedes the original B-18 rule): the main contractor owns period closing, so an
+    MC-scoped closer freezes ALL active KPIs (cost included) for the tenant scope and every non-client entity.
+    Results are stored as system runs; the closer only receives the count."""
+    from sqlalchemy import text
+
     active = [k for k in KPI_CATALOG if k["status"] == "active"]
-    plain = [k for k in active if not k["sensitive"]]
+    ents = db.execute(text("SELECT count(*) FROM legal_entities WHERE tenant_id = :t AND entity_type <> 'client'"),
+                      {"t": ids["kpi"]["tenant_id"]}).scalar()
     h = auth(MCDIR)
     r = client.post("/api/v1/kpi/periods/2025-02-01/close", headers=h)
     assert r.status_code == 200, r.text
     try:
-        assert r.json()["frozen_results"] == len(plain) < len(active)
+        assert r.json()["frozen_results"] == len(active) * (1 + ents)
+        assert set(r.json()) == {"period_month", "status", "frozen_results"}  # no values leak to the closer
     finally:
         assert client.post("/api/v1/kpi/periods/2025-02-01/reopen", json={"reason": "test cleanup"},
                            headers=h).status_code == 200

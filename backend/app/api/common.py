@@ -1,17 +1,13 @@
-from datetime import date, timedelta
+from datetime import date
 
 from fastapi import HTTPException, Query
 
-from app.analytics.domain import month_end
+from app.analytics.dashboards import default_period as _default_period
 
 
 def default_period() -> tuple[date, date]:
-    """Last 12 complete months."""
-    today = date.today()
-    pe = date(today.year, today.month, 1) - timedelta(days=1)
-    m = pe.month - 1 - 11
-    ps = date(pe.year + m // 12, m % 12 + 1, 1)
-    return ps, month_end(pe)
+    """Last 12 complete months (single definition in app.analytics.dashboards)."""
+    return _default_period()
 
 
 class Filters:
