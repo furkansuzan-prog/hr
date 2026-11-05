@@ -5,8 +5,8 @@ from datetime import UTC, date, datetime
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
-from app.analytics.calculators import BY_ENTITY_BATCH, CALCULATORS, SERIES_CALCULATORS, Scope
-from app.analytics.domain import OK, SUPPRESSED, CalcResult, month_end, month_starts
+from app.analytics.calculators import ALERTS, BY_ENTITY_BATCH, CALCULATORS, SERIES_CALCULATORS, Scope
+from app.analytics.domain import OK, SHORT_WINDOW, SUPPRESSED, CalcResult, month_end, month_starts
 from app.core.cache import cache
 from app.core.config import get_settings
 from app.models import (
@@ -21,7 +21,7 @@ from app.models import (
 from app.security.access import AccessContext
 
 # bump whenever calculator output semantics or privacy post-processing change: old cache entries become unreachable
-CACHE_SCHEMA = "v2"
+CACHE_SCHEMA = "v3"  # v3: CalcResult.status_reason (ADR-017)
 
 
 class KpiError(Exception):
@@ -112,13 +112,28 @@ def _threshold_status(kpi: KpiDefinition, v: float | None) -> str | None:
     return None
 
 
-def _payload(kpi: KpiDefinition, f: KpiFormulaVersion, scope: Scope, ps: date, pe: date, res, locale: str) -> dict:
+def _status_reason(f: KpiFormulaVersion, days: int, d: dict) -> str | None:
+    """ADR-017: the single colour-suppression mechanism. A value that is shown but must not be coloured gets
+    threshold_status = null and one reason. Calculator reasons (e.g. low_exposure) take precedence over the window
+    rule; a result without a value has no reason (its status already explains it)."""
+    if d["value"] is None:
+        return None
+    if d.get("status_reason"):
+        return d["status_reason"]
+    if days < (f.parameters or {}).get("threshold_min_days", 0):
+        return SHORT_WINDOW
+    return None
+
+
+def _payload(kpi: KpiDefinition, f: KpiFormulaVersion, scope: Scope, ps: date, pe: date, res, locale: str,
+             alerts: list[dict] | None = None) -> dict:
     d = res.to_dict()
     days = (pe - ps).days + 1
     annualized = None
     if (f.parameters or {}).get("annualize") and d["value"] is not None:
         annualized = round(d["value"] * 365 / days, 4)
     judged = annualized if annualized is not None else d["value"]
+    d["status_reason"] = _status_reason(f, days, d)
     return {
         "code": kpi.code,
         "name": kpi.name.get(locale) or kpi.name["en"],
@@ -135,8 +150,8 @@ def _payload(kpi: KpiDefinition, f: KpiFormulaVersion, scope: Scope, ps: date, p
             "critical": float(kpi.critical_threshold) if kpi.critical_threshold is not None else None,
         },
         "annualized_value": annualized,
-        "threshold_status": (None if days < (f.parameters or {}).get("threshold_min_days", 0)
-                             else _threshold_status(kpi, judged)),
+        "threshold_status": None if d["status_reason"] else _threshold_status(kpi, judged),
+        "alerts": alerts or [],
         "formula": {"version": f.version, "calculator": f.calculator_key, "text": f.formula_text,
                     "parameters": f.parameters},
         "calculated_at": datetime.now(UTC).isoformat(),
@@ -181,7 +196,13 @@ def evaluate(
             return enforce_privacy(raw).to_dict()
 
         res = CalcResult(**cache.compute_once(key, compute))
-    out = _payload(kpi, f, scope, ps, pe, res, ctx.locale)
+    alerts = None
+    if f.calculator_key in ALERTS:
+        # live even for frozen periods and independent of privacy suppression (ADR-017, WP-2 R2)
+        a_scope = Scope(scope.tenant_id, scope.entity_ids, scope.project_id, None)
+        a_key = f"kpi:{CACHE_SCHEMA}:alerts:{f.calculator_key}:{ctx.tenant_id}:{dv}:{a_scope.key()}:{ps}:{pe}"
+        alerts = cache.compute_once(a_key, lambda: {"alerts": ALERTS[f.calculator_key](db, a_scope, ps, pe)})["alerts"]
+    out = _payload(kpi, f, scope, ps, pe, res, ctx.locale, alerts)
     if meta:
         out.update(meta)
     return out
@@ -202,6 +223,7 @@ def enforce_privacy(res: CalcResult) -> CalcResult:
         res.value = res.numerator = res.denominator = res.sample_size = None
         res.breakdown = {}
         res.lineage = {k: v for k, v in (res.lineage or {}).items() if k in _LINEAGE_SAFE_KEYS}
+        res.status_reason = None
         if res.status == OK:
             res.status = SUPPRESSED
             res.note = f"Group smaller than the minimum publishable size ({min_n})"
@@ -213,6 +235,11 @@ def _months_all_closed(db: Session, tenant_id: int, ps: date, pe: date) -> bool:
     n = db.execute(select(func.count()).select_from(PeriodClose).where(
         PeriodClose.tenant_id == tenant_id, PeriodClose.period_month.in_(months), PeriodClose.status == "closed")).scalar()
     return n == len(months)
+
+
+# kpi_results has no status_reason column: a calculator's colour-suppression reason is persisted inside lineage
+# under this key (ADR-017) so a frozen result is never coloured when the live one would not be.
+_PERSISTED_REASON = "_status_reason"
 
 
 def _frozen_result(db, tenant_id, kpi, f, scope, ps, pe):
@@ -227,10 +254,13 @@ def _frozen_result(db, tenant_id, kpi, f, scope, ps, pe):
     if r is None:
         return None
     num = lambda v: float(v) if v is not None else None  # noqa: E731
+    lineage = dict(r.lineage or {})
+    reason = lineage.pop(_PERSISTED_REASON, None)
     res = enforce_privacy(CalcResult(r.status, num(r.value), num(r.numerator), num(r.denominator), r.sample_size,
-                                     num(r.quality_score), r.breakdown or {}, r.lineage or {},
+                                     num(r.quality_score), r.breakdown or {}, lineage,
                                      "Closed period: frozen result" + (" (newer source data exists - reopen to "
-                                                                      "recalculate)" if r.is_stale else "")))
+                                                                      "recalculate)" if r.is_stale else ""),
+                                     reason))
     return res, {"frozen": True, "is_stale": r.is_stale, "run_id": r.run_id}
 
 
@@ -334,7 +364,9 @@ def run_calculation(db: Session, ctx: AccessContext, codes: list[str], ps: date,
                              period_start=ps, period_end=pe, scope_key=scope.key(), value=r["value"],
                              numerator=r["numerator"], denominator=r["denominator"], status=r["status"],
                              quality_score=r["quality_score"], sample_size=r["sample_size"],
-                             breakdown=r["breakdown"], lineage=r["lineage"]))
+                             breakdown=r["breakdown"],
+                             lineage={**r["lineage"], **({_PERSISTED_REASON: r["status_reason"]}
+                                                         if r["status_reason"] else {})}))
         run.status = "succeeded"
     except Exception as exc:  # recorded, then re-raised to the caller
         run.status = "failed"
@@ -399,6 +431,8 @@ PARAM_RULES = {
     "include_categories": lambda v: isinstance(v, list) and bool(v) and set(v) <= _TERM,
     "hours_per_day": lambda v: isinstance(v, int | float) and 4 <= v <= 12,
     "threshold_min_days": lambda v: isinstance(v, int) and 1 <= v <= 400,
+    # WP-2 R1 / ADR-017: colour only when hours worked in the window >= this value
+    "threshold_min_exposure_hours": lambda v: isinstance(v, int) and not isinstance(v, bool) and 1 <= v <= 10_000_000,
 }
 
 
@@ -413,8 +447,8 @@ CALCULATOR_PARAMS: dict[str, set[str]] = {
     "annual_leave_nonuse": {"hours_per_day"},
     "capacity_utilization": {"min_coverage"},
     "unit_labor_cost": {"reporting_currency"},
-    "ltifr": {"event_types", "multiplier"},
-    "trir": {"event_types", "multiplier"},
+    "ltifr": {"event_types", "multiplier", "threshold_min_exposure_hours"},
+    "trir": {"event_types", "multiplier", "threshold_min_exposure_hours"},
     "early_turnover_90": {"days"},
     "labor_cost_per_employee": {"reporting_currency"},
     "overtime_cost_share": {"reporting_currency"},

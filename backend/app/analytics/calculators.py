@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.analytics.domain import (
     INSUFFICIENT,
+    LOW_EXPOSURE,
     OK,
     SUPPRESSED,
     CalcResult,
@@ -667,11 +668,8 @@ def rework_rate(db: Session, scope: Scope, ps: date, pe: date, params: dict) -> 
     return res
 
 
-def _safety_rate(db: Session, scope: Scope, ps: date, pe: date, types: list[str], multiplier: float) -> CalcResult:
-    if scope.occupation_group:
-        return CalcResult(INSUFFICIENT, quality_score=0.0, lineage={"tables": ["safety_events"]},
-                          note="Safety events are not recorded per occupation; rate not available for an occupation filter")
-    p: dict = {"tenant": scope.tenant_id, "ps": ps, "pe": pe, "types": types}
+def _safety_where(scope: Scope, p: dict) -> str:
+    """Entity/project filter for safety_events (events are not recorded per occupation)."""
     where = ""
     if scope.entity_ids is not None:
         where += " AND legal_entity_id = ANY(:ents)"
@@ -679,6 +677,18 @@ def _safety_rate(db: Session, scope: Scope, ps: date, pe: date, types: list[str]
     if scope.project_id:
         where += " AND project_id = :project"
         p["project"] = scope.project_id
+    return where
+
+
+def _safety_rate(db: Session, scope: Scope, ps: date, pe: date, types: list[str], multiplier: float,
+                 min_exposure_hours: float | None = None) -> CalcResult:
+    """WP-2 R1: the rate is always computed; when the hours worked in the window are below `min_exposure_hours`
+    the result carries status_reason = low_exposure and the engine gives it no colour (equality = coloured)."""
+    if scope.occupation_group:
+        return CalcResult(INSUFFICIENT, quality_score=0.0, lineage={"tables": ["safety_events"]},
+                          note="Safety events are not recorded per occupation; rate not available for an occupation filter")
+    p: dict = {"tenant": scope.tenant_id, "ps": ps, "pe": pe, "types": types}
+    where = _safety_where(scope, p)
     rows = dict(db.execute(
         text("SELECT event_type, count(*) FROM safety_events WHERE tenant_id = :tenant "
              f"AND event_date BETWEEN :ps AND :pe AND event_type = ANY(:types) {where} GROUP BY 1"), p).all())
@@ -689,20 +699,45 @@ def _safety_rate(db: Session, scope: Scope, ps: date, pe: date, types: list[str]
     res.breakdown = {"events_by_type": rows, "hours_worked": round(h["worked"], 1), "multiplier": multiplier}
     res.quality_score = 100.0 if h["rows"] else 0.0
     res.lineage = {"tables": ["safety_events", "timesheets"], "event_types_counted": types}
+    if res.status == OK and min_exposure_hours is not None and h["worked"] < min_exposure_hours:
+        res.status_reason = LOW_EXPOSURE
+        res.note = (f"Low exposure: {h['worked']:,.0f} h worked < {min_exposure_hours:,.0f} h minimum - value shown "
+                    f"with event counts, no colour")
     return res
 
 
 def ltifr(db: Session, scope: Scope, ps: date, pe: date, params: dict) -> CalcResult:
     """KPI-014A LTIFR: lost-time injuries (incl. fatalities) per 1,000,000 hours worked."""
     return _safety_rate(db, scope, ps, pe, params.get("event_types", ["lost_time_injury", "fatality"]),
-                        params.get("multiplier", 1_000_000))
+                        params.get("multiplier", 1_000_000), params.get("threshold_min_exposure_hours"))
 
 
 def trir(db: Session, scope: Scope, ps: date, pe: date, params: dict) -> CalcResult:
     """KPI-014B TRIR: recordable injuries per 200,000 hours worked (OSHA convention)."""
     return _safety_rate(db, scope, ps, pe,
                         params.get("event_types", ["fatality", "lost_time_injury", "restricted_work", "medical_treatment"]),
-                        params.get("multiplier", 200_000))
+                        params.get("multiplier", 200_000), params.get("threshold_min_exposure_hours"))
+
+
+def fatality_alerts(db: Session, scope: Scope, ps: date, pe: date) -> list[dict]:
+    """WP-2 R2 (ADR-017): any fatality in scope x window surfaces an alert, independent of the rate - of its
+    exposure rule, small-group suppression, the occupation filter (events are not per occupation, so the filter is
+    ignored here) and of the formula's event_types. Counts ALL fatality records in scope. Group-level only: count and
+    month, never a person, description or day-level date. Not subject to minimum group size (HR Director WP-2 Q7)."""
+    p: dict = {"tenant": scope.tenant_id, "ps": ps, "pe": pe}
+    where = _safety_where(scope, p)
+    rows = db.execute(
+        text("SELECT to_char(event_date, 'YYYY-MM'), count(*) FROM safety_events WHERE tenant_id = :tenant "
+             f"AND event_date BETWEEN :ps AND :pe AND event_type = 'fatality' {where} GROUP BY 1 ORDER BY 1"), p).all()
+    n = sum(int(r[1]) for r in rows)
+    if not n:
+        return []
+    return [{"type": "fatality", "count": n, "by_month": {r[0]: int(r[1]) for r in rows}}]
+
+
+# Calculators whose results carry rate-independent alerts (engine.evaluate; never frozen, never suppressed).
+ALERTS: dict[str, Callable[[Session, Scope, date, date], list[dict]]] = {"ltifr": fatality_alerts,
+                                                                          "trir": fatality_alerts}
 
 
 def active_headcount(db: Session, scope: Scope, ps: date, pe: date, params: dict) -> CalcResult:

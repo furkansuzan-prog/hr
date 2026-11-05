@@ -15,6 +15,29 @@ export function statusTone(r: Pick<KpiResult, "status" | "threshold_status">) {
   return "info" as const;
 }
 
+/** Fatalities recorded in the result's scope and period (ADR-017 alert; present even for suppressed results). */
+export function fatalities(r: Pick<KpiResult, "alerts">) {
+  return (r.alerts ?? []).filter((a) => a.type === "fatality").reduce((n, a) => n + a.count, 0);
+}
+
+/** Shown where the traffic-light colour would be when the backend deliberately withholds it (status_reason). */
+export function ReasonBadge({ r }: { r: KpiResult }) {
+  const { t } = useI18n();
+  if (!r.status_reason) return null;
+  const min = r.formula.parameters?.threshold_min_exposure_hours;
+  const hours = r.status_reason === "low_exposure" && typeof min === "number" && r.denominator !== null
+    ? `${fmt(r.denominator, 0)} ${t("reason.hours")} ${fmt(min, 0)}`
+    : null;
+  return (
+    <>
+      <Badge tone="neutral" title={r.note ?? undefined}>{t(`reason.${r.status_reason}`)}</Badge>
+      {hours && <span>({hours})</span>}
+    </>
+  );
+}
+
+const SAFETY_CALCULATORS = new Set(["ltifr", "trir"]);
+
 /** KPI tile. Shows the backend value only; non-ok states are shown explicitly, never as 0. */
 export function KpiTile({ r }: { r: KpiResult }) {
   const { t } = useI18n();
@@ -37,6 +60,11 @@ export function KpiTile({ r }: { r: KpiResult }) {
           <div className="mt-2 text-sm font-medium text-muted">{t(`status.${r.status}`)}</div>
         )}
         <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px] text-muted">
+          {fatalities(r) > 0 && <Badge tone="critical">{t("alert.fatality")}: {fatalities(r)}</Badge>}
+          {r.status === "ok" && r.status_reason && <ReasonBadge r={r} />}
+          {r.status === "ok" && SAFETY_CALCULATORS.has(r.formula.calculator) && r.numerator !== null && r.denominator !== null && (
+            <span>{fmt(r.numerator, 0)} / {fmt(r.denominator, 0)} h</span>
+          )}
           {r.annualized_value !== null && r.status === "ok" && (
             <span>{t("kpi.annualized")}: {fmt(r.annualized_value, 1)}{r.unit === "%" ? "%" : ""}</span>
           )}
