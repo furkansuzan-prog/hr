@@ -279,6 +279,11 @@ class User(Base, TenantMixin, TimestampMixin):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     mfa_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # brute-force protection (SECURITY_PRIVACY G6): consecutive failures and temporary lock
+    failed_login_count: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
+    locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # token revocation: JWT claim `tv` must equal this value; logout-all increments it
+    token_version: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
 
 
 class Permission(Base):

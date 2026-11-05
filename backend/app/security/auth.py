@@ -30,7 +30,8 @@ def verify_password(password: str, stored: str | None) -> bool:
     return hmac.compare_digest(dk, base64.b64decode(dk_b64))
 
 
-def create_access_token(user_id: int, tenant_id: int) -> str:
+def create_access_token(user_id: int, tenant_id: int, token_version: int) -> str:
+    """`tv` binds the token to users.token_version; incrementing it (logout-all) revokes every earlier token."""
     s = get_settings()
     now = datetime.now(UTC)
     payload = {
@@ -39,6 +40,7 @@ def create_access_token(user_id: int, tenant_id: int) -> str:
         "iat": now,
         "exp": now + timedelta(minutes=s.jwt_ttl_minutes),
         "jti": uuid.uuid4().hex,
+        "tv": int(token_version),
         "iss": "hrswi",
     }
     return jwt.encode(payload, s.jwt_secret, algorithm="HS256")
@@ -46,7 +48,7 @@ def create_access_token(user_id: int, tenant_id: int) -> str:
 
 def decode_access_token(token: str) -> dict:
     return jwt.decode(token, get_settings().jwt_secret, algorithms=["HS256"], issuer="hrswi",
-                      options={"require": ["exp", "iat", "sub", "tid", "iss"]})
+                      options={"require": ["exp", "iat", "sub", "tid", "iss", "tv"]})
 
 
 def national_id_hash(raw: str) -> str:

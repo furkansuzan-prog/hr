@@ -28,8 +28,9 @@ from app.models import (
     User,
 )
 from app.security.access import AccessContext
-from app.security.auth import create_access_token, verify_password
+from app.security.auth import create_access_token
 from app.security.deps import deny_entity, get_context, require, write_audit
+from app.security.login import authenticate, revoke_all_tokens
 
 router = APIRouter()
 
@@ -59,16 +60,20 @@ class LoginIn(BaseModel):
 
 @router.post("/api/v1/auth/login", tags=["auth"])
 def login(body: LoginIn, request: Request, db: Session = Depends(get_db)):
-    user = db.execute(select(User).where(func.lower(User.email) == str(body.email).lower())).scalar()
+    """401 for every credential problem (unknown e-mail, wrong password, inactive, locked); 429 + Retry-After when
+    the client IP exceeded the failed-attempt window. See app/security/login.py."""
     ip = request.client.host if request.client else None
-    if user is None or not user.is_active or not verify_password(body.password, user.password_hash):
-        write_audit(tenant_id=user.tenant_id if user else None, user_id=user.id if user else None,
-                    action="auth.login_failed", outcome="denied", ip=ip)
-        raise HTTPException(401, "Invalid credentials")
-    user.last_login_at = datetime.now(UTC)
-    db.commit()
-    write_audit(tenant_id=user.tenant_id, user_id=user.id, action="auth.login", ip=ip)
-    return {"access_token": create_access_token(user.id, user.tenant_id), "token_type": "bearer"}
+    user = authenticate(db, body.email, body.password, ip)
+    return {"access_token": create_access_token(user.id, user.tenant_id, user.token_version), "token_type": "bearer"}
+
+
+@router.post("/api/v1/auth/logout-all", tags=["auth"])
+def logout_all(request: Request, ctx: AccessContext = Depends(get_context), db: Session = Depends(get_db)):
+    """Revoke every access token of the calling user (all devices), including the one used for this call."""
+    revoke_all_tokens(db, ctx.user_id)
+    write_audit(tenant_id=ctx.tenant_id, user_id=ctx.user_id, action="auth.logout_all",
+                ip=request.client.host if request.client else None)
+    return {"status": "ok"}
 
 
 @router.get("/api/v1/auth/me", tags=["auth"])

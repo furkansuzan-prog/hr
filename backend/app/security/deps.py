@@ -55,9 +55,16 @@ def get_context(
         claims = decode_access_token(creds.credentials)
     except jwt.PyJWTError:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid or expired token") from None
-    user = db.get(User, int(claims["sub"]))
+    try:
+        user = db.get(User, int(claims["sub"]))
+    except (TypeError, ValueError):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid or expired token") from None
     if user is None or not user.is_active or user.tenant_id != claims.get("tid"):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid user")
+    # revocation: logout-all (and any future credential reset) increments users.token_version
+    tv = claims.get("tv")
+    if not isinstance(tv, int) or isinstance(tv, bool) or tv != user.token_version:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid or expired token")
     ctx = build_access_context(db, user)
     # UI language may differ from the stored profile locale; only the display language is affected
     hdr = (request.headers.get("X-Locale") or "").lower()[:2]
