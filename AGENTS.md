@@ -27,6 +27,7 @@ Bu dosya, ileride gerçek paralel ajanlarla (ayrı branch/worktree) çalışmak 
 | 14 | Reporting & BI | `backend/app/services/reports.py` | engine | rapor şablonları |
 | 15 | Documentation | `README.md`, `docs/*` (üretilen dosyalar hariç) | tümü | kılavuzlar, sözlük |
 | 16 | Independent Review | yalnızca `docs/AUDIT_REPORT.md` | tümü (salt okunur) | denetim raporu |
+| 17 | HR Director (iş tarafı karar sahibi) | `docs/HR_DIRECTOR_RECOMMENDATIONS.md` | tümü (kod yazmaz) | KPI hedef/eşik önerileri, İK politika kararları, tanım onayı — persona: `.claude/agents/hr-director.md` |
 
 ## Bağımlılık ve paralellik planı
 
