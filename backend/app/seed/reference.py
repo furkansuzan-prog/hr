@@ -116,4 +116,6 @@ if __name__ == "__main__":  # python -m app.seed.reference [--apply]
     from app.core.db import SessionLocal
 
     with SessionLocal() as _db:
+        if "--apply" in sys.argv:
+            seed_reference(_db)  # insert definitions/frameworks that do not exist yet (new KPIs)
         print(json.dumps(sync_kpi_catalog(_db, apply="--apply" in sys.argv), indent=1, default=str))

@@ -135,7 +135,8 @@ def _payload(kpi: KpiDefinition, f: KpiFormulaVersion, scope: Scope, ps: date, p
             "critical": float(kpi.critical_threshold) if kpi.critical_threshold is not None else None,
         },
         "annualized_value": annualized,
-        "threshold_status": _threshold_status(kpi, judged),
+        "threshold_status": (None if days < (f.parameters or {}).get("threshold_min_days", 0)
+                             else _threshold_status(kpi, judged)),
         "formula": {"version": f.version, "calculator": f.calculator_key, "text": f.formula_text,
                     "parameters": f.parameters},
         "calculated_at": datetime.now(UTC).isoformat(),
@@ -396,6 +397,8 @@ PARAM_RULES = {
     "days": lambda v: isinstance(v, int) and 1 <= v <= 365,
     "exclude_categories": lambda v: isinstance(v, list) and set(v) <= _TERM,
     "include_categories": lambda v: isinstance(v, list) and bool(v) and set(v) <= _TERM,
+    "hours_per_day": lambda v: isinstance(v, int | float) and 4 <= v <= 12,
+    "threshold_min_days": lambda v: isinstance(v, int) and 1 <= v <= 400,
 }
 
 

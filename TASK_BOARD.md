@@ -70,6 +70,10 @@ Değerlendirme: iş değeri / kullanıcı önemi / maliyet / bağımlılık / ve
 | B-22 ◐ | P0 (503 + thread limiter Done; PgBouncer/üretim ayarı açık) | Havuz zaman aşımında 500 yerine 503; worker thread sayısı ↔ DB havuzu uyumu / PgBouncer | 13 | Yük altında 500 hataları |
 | B-23 | P1 | Sentetik üreticide akışlı COPY (1.4 GB bellek tepesi) | 12 | Ölçek verisi üretimi |
 | B-24 | P1 | Saklama-imha işinin zamanlanması (Celery beat / cron) | 11/13 | KVKK |
-| B-25 | P1 | İK yöneticisinden KPI hedef/eşiklerinin alınması ve kataloğa işlenmesi (D-4, `docs/KPI_TARGETS_REQUEST.md`) | 02/09 | Renkli durum göstergesi için gerekli |
-| B-26 | P2 | Doğum/ebeveyn izninin devamsızlığa dahil olup olmadığı (D-3 açık nokta) | 02 | İK onayı |
+| B-25 ✔ | P1 (D-5) | İK yöneticisinden KPI hedef/eşiklerinin alınması ve kataloğa işlenmesi (D-4, `docs/KPI_TARGETS_REQUEST.md`) | 02/09 | Renkli durum göstergesi için gerekli |
+| B-26 ✔ | P2 (D-6) | Doğum/ebeveyn izninin devamsızlığa dahil olup olmadığı (D-3 açık nokta) | 02 | İK onayı |
+| B-27 | P1 | İzin import'u (B-07 kapsamı) `normalize_leave_type` kullanmak zorunda; eşlenemeyen etiketler veri kalite kuyruğuna | 08 | D-6'nın veri hattında garantisi |
+| B-28 | P1 | İzin günü çevrimi çalışma düzenine göre (5 gün → 9 sa, 6 gün → 7,5 sa) ve toplu sözleşme/sözleşmeden doğan ek izin hakkı (KPI-055 paydası) ⚖️ | 05/09 | 6 günlük şantiyelerde KPI-055 düşük görünür |
+| B-29 | P1 | İş kazası/meslek hastalığı istirahatleri için ayrı izin türü (`work_injury`), KPI-053 dışında — kaza gizleme baskısını önler (ADR gerekir) | 02/09/11 | HR Director E.2 |
+| B-30 | P2 | "İzin Sağlığı" paneli ve grup düzeyi uyarılar (KPI-056 eşik aşımı, kâğıt üstünde izin, işten ayrılmadan izin ücreti ödemesi) — bireysel sıralama yok | 07/14 | HR Director E.3 |
 | B-17 | P2 | Dinamik rapor oluşturucu, kalan 10 rapor şablonu | 14 | FAZ 4 |

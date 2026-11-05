@@ -274,6 +274,115 @@ def absenteeism_rate(db: Session, scope: Scope, ps: date, pe: date, params: dict
     return res
 
 
+def protected_leave_share(db: Session, scope: Scope, ps: date, pe: date, params: dict) -> CalcResult:
+    """KPI-054 (decision D-6): maternity / parental and related protected leave hours / planned hours x 100.
+    Planning figure only - never part of absenteeism. Health-adjacent (KVKK md.6): suppressed unless at least
+    HRSWI_MIN_GROUP_SIZE distinct people took such leave in the group, so no individual can be inferred."""
+    types = params.get("absence_types", ["parental"])
+    hours = _hours(db, scope, ps, pe)
+    where, p = _emp_where(scope, date_from=":ps", date_to=":pe")
+    r = db.execute(
+        text("SELECT coalesce(sum(l.hours * (LEAST(l.end_date, :pe) - GREATEST(l.start_date, :ps) + 1)::numeric "
+             "/ (l.end_date - l.start_date + 1)), 0), count(DISTINCT e.person_id) FROM leave_records l "
+             "JOIN employment_relationships e ON e.id = l.employment_id WHERE l.tenant_id = :tenant "
+             f"AND l.leave_type = ANY(:types) AND l.start_date <= :pe AND l.end_date >= :ps {where}"),
+        {**p, "ps": ps, "pe": pe, "types": types},
+    ).one()
+    leave_h, takers = float(r[0]), int(r[1])
+    if 0 < takers < _min_group():
+        return CalcResult(SUPPRESSED, quality_score=100.0 if hours["rows"] else 0.0,
+                          note=f"Fewer than {_min_group()} people took protected leave in this group",
+                          lineage={"tables": ["leave_records", "timesheets"]})
+    res = ratio(leave_h, hours["planned"], sample_size=hours["persons"], min_sample=_min_group(),
+                has_source_data=hours["rows"] > 0)
+    res.quality_score = 100.0 if hours["rows"] else 0.0
+    res.lineage = {"tables": ["leave_records", "timesheets"], "included_types": types,
+                   "proration": "calendar-day overlap"}
+    return res
+
+
+def _annual_leave_population(db: Session, scope: Scope, ps: date, pe: date, params: dict) -> list[dict]:
+    """Population for KPI-055/056 (decision D-7, corrected per HR Director review):
+    - person active in scope at period end; current employer = legal entity of the latest active employment;
+    - service = ALL spells with that same employer up to period end (4857 md.54), not just the current contract;
+    - one-year date approximated as period_end - (service_days - 365);
+    - statutory entitlement (md.53) by service years and age, prorated from max(period start, one-year date);
+    - long_absent: sick / parental / unpaid days in the window > half of the window's working days.
+    Returns dicts with entitlement, taken, one_year_date, long_absent, birth_known."""
+    hpd = float(params.get("hours_per_day", 9))
+    w_end, p = _emp_where(scope, date_from=":pe", date_to=":pe")
+    rows = db.execute(
+        text("WITH cur AS (SELECT DISTINCT ON (e.person_id) e.person_id, e.legal_entity_id, pp.birth_year birth "
+             "FROM employment_relationships e JOIN people pp ON pp.id = e.person_id "
+             f"WHERE e.start_date <= :pe AND (e.end_date IS NULL OR e.end_date >= :pe) {w_end} "
+             "ORDER BY e.person_id, e.start_date DESC), "
+             "svc AS (SELECT c.person_id, c.legal_entity_id, c.birth, "
+             "sum(LEAST(coalesce(x.end_date, :pe), :pe) - x.start_date + 1) service_days "
+             "FROM cur c JOIN employment_relationships x ON x.person_id = c.person_id "
+             "AND x.legal_entity_id = c.legal_entity_id AND x.start_date <= :pe GROUP BY 1, 2, 3), "
+             "lv AS (SELECT x.person_id, l.leave_type, sum(l.hours * (LEAST(l.end_date, :pe) - GREATEST(l.start_date, :ps)"
+             " + 1)::numeric / (l.end_date - l.start_date + 1)) h FROM leave_records l "
+             "JOIN employment_relationships x ON x.id = l.employment_id JOIN svc ON svc.person_id = x.person_id "
+             "AND svc.legal_entity_id = x.legal_entity_id WHERE l.tenant_id = :tenant AND l.start_date <= :pe "
+             "AND l.end_date >= :ps AND l.leave_type IN ('annual', 'sick', 'parental', 'unpaid') GROUP BY 1, 2) "
+             "SELECT svc.service_days, svc.birth, "
+             "coalesce(sum(lv.h) FILTER (WHERE lv.leave_type = 'annual'), 0), "
+             "coalesce(sum(lv.h) FILTER (WHERE lv.leave_type <> 'annual'), 0) "
+             "FROM svc LEFT JOIN lv ON lv.person_id = svc.person_id WHERE svc.service_days >= 365 "
+             "GROUP BY svc.person_id, svc.service_days, svc.birth"),
+        {**p, "ps": ps, "pe": pe},
+    ).all()
+    window_days = (pe - ps).days + 1
+    half_working_days = window_days * 5 / 7 / 2
+    out = []
+    for service_days, birth, annual_h, absent_h in rows:
+        years = service_days / 365.25
+        ent = 14 if years <= 5 else 20 if years < 15 else 26  # 4857 md.53 (5 years inclusive -> 14 days)
+        if birth is not None and (pe.year - birth <= 18 or pe.year - birth >= 50):
+            ent = max(ent, 20)
+        one_year = pe - timedelta(days=service_days - 365)
+        start = max(ps, one_year)
+        out.append({"entitlement": ent * ((pe - start).days + 1) / 365, "taken": float(annual_h) / hpd,
+                    "one_year_date": one_year, "long_absent": float(absent_h) / hpd > half_working_days,
+                    "birth_known": birth is not None})
+    return out
+
+
+def _annual_leave_lineage(pop: list[dict], params: dict, **extra) -> dict:
+    return {"tables": ["employment_relationships", "people", "leave_records"],
+            "population": "active at period end, >= 1 year of service with the current employer (all spells)",
+            "entitlement_rule": "4857 md.53: <=5y 14d, 5-15y 20d, >=15y 26d; age <=18 or >=50 min 20d; "
+                                "prorated from max(period start, one-year date)",
+            "hours_per_day": params.get("hours_per_day", 9), "eligible": len(pop), **extra}
+
+
+def annual_leave_usage(db: Session, scope: Scope, ps: date, pe: date, params: dict) -> CalcResult:
+    """KPI-055 (decision D-7): annual-leave days taken / statutory entitlement days x 100 (group level only).
+    Can exceed 100 when carried-over leave is used (a good outcome)."""
+    pop = _annual_leave_population(db, scope, ps, pe, params)
+    res = ratio(sum(x["taken"] for x in pop), sum(x["entitlement"] for x in pop), sample_size=len(pop),
+                min_sample=_min_group(), has_source_data=bool(pop))
+    res.quality_score = round(100 * sum(1 for x in pop if x["birth_known"]) / len(pop), 1) if pop else 0.0
+    res.lineage = _annual_leave_lineage(pop, params)
+    return res
+
+
+def annual_leave_nonuse(db: Session, scope: Scope, ps: date, pe: date, params: dict) -> CalcResult:
+    """KPI-056 (decision D-7): eligible persons with no annual leave taken in the period / eligible persons x 100.
+    Population: one-year date on/before period start, excluding persons on long sick/parental/unpaid absence
+    (reported only as a count). Early-warning indicator at team level - never used to rank individuals."""
+    full = _annual_leave_population(db, scope, ps, pe, params)
+    long_absent = sum(1 for x in full if x["one_year_date"] <= ps and x["long_absent"])
+    pop = [x for x in full if x["one_year_date"] <= ps and not x["long_absent"]]
+    res = ratio(sum(1 for x in pop if x["taken"] <= 0), len(pop), sample_size=len(pop), min_sample=_min_group(),
+                has_source_data=bool(pop))
+    res.quality_score = 100.0 if pop else 0.0
+    res.lineage = _annual_leave_lineage(pop, params, excluded_long_absence=long_absent)
+    if ((pe - ps).days + 1) < 360:
+        res.note = "Meaningful on 12-month windows; shorter periods overstate non-use"
+    return res
+
+
 def capacity_utilization(db: Session, scope: Scope, ps: date, pe: date, params: dict) -> CalcResult:
     """KPI-004: productive hours / planned hours, only over rows where productive hours were recorded."""
     h = _hours(db, scope, ps, pe)
@@ -836,6 +945,9 @@ CALCULATORS: dict[str, Callable[[Session, Scope, date, date, dict], CalcResult]]
     "turnover_rate": turnover_rate,
     "retention_rate": retention_rate,
     "absenteeism_rate": absenteeism_rate,
+    "protected_leave_share": protected_leave_share,
+    "annual_leave_usage": annual_leave_usage,
+    "annual_leave_nonuse": annual_leave_nonuse,
     "capacity_utilization": capacity_utilization,
     "productivity_index": productivity_index,
     "plan_deviation": plan_deviation,

@@ -261,6 +261,67 @@ for code, fam, mod, tr, en, ru, unit, formula, stds in _DRAFTS:
 KPI_CATALOG.sort(key=lambda k: k["code"])  # activated drafts sit in code order in docs and the definitions API
 
 
+# ---------------------------------------------------------------- Leave & absence (decisions D-5..D-7, 2026-11-05)
+KPI_CATALOG += [
+    _k("KPI-053", "attendance", "D", "Plansız Devamsızlık Oranı", "Unplanned Absence Rate", "Незапланированное отсутствие",
+       "%", "lower_better", "absenteeism_rate",
+       formula="(Unexcused absence + sick-note hours) / planned working hours x 100",
+       num="Unexcused and sick leave hours prorated to period", den="Planned hours on approved timesheets",
+       sources=["leave_records", "timesheets"], owner="HR_MANAGER", standards=["ISO 30414 (absenteeism)"],
+       purpose="Standard (unplanned) absenteeism, comparable with sector practice; complements the company KPI-003",
+       incl="Unexcused absence, sick-note days", excl="Annual leave, unpaid leave, other leave, public holidays, "
+       "maternity/parental and other protected leave", params={"absence_types": ["unexcused", "sick"]}),
+    _k("KPI-054", "attendance", "D", "Korunan İzin Payı", "Protected Leave Share", "Доля охраняемых отпусков", "%",
+       "neutral", "protected_leave_share",
+       formula="Maternity / parental and related protected leave hours / planned working hours x 100",
+       num="Protected leave hours prorated to period (leave type 'parental')", den="Planned hours on approved timesheets",
+       sources=["leave_records", "timesheets"], owner="HR_DIRECTOR",
+       standards=["4857 md. 74, Ek md. 2", "6701 (non-discrimination)", "KVKK md. 6"],
+       purpose="Capacity-planning figure only. Never part of absenteeism, never a target (decision D-6)",
+       incl="Leave type 'parental' (maternity, paternity, parental, nursing, pregnancy check-ups - mapped on import)",
+       excl="All other leave", params={"absence_types": ["parental"]}),
+    _k("KPI-055", "wellbeing", "D", "Yıllık İzin Kullanım Oranı", "Annual Leave Utilisation", "Использование ежегодного отпуска",
+       "%", "higher_better", "annual_leave_usage",
+       formula="Annual-leave days taken / statutory entitlement days (4857 md.53, prorated to the period) x 100",
+       num="Annual-leave days taken in the period (hours / hours_per_day)",
+       den="Statutory entitlement of persons active at period end with >= 1 year tenure, prorated to period length",
+       sources=["leave_records", "employment_relationships", "people"], owner="HR_DIRECTOR",
+       standards=["4857 md. 53-59", "ISO 30414 (wellbeing)"],
+       purpose="Sustainable, humane leave practice: leave is taken, not accumulated (decision D-7). Group level only",
+       incl="Persons with >= 1 year of service with the current employer (all spells, 4857 md.54)",
+       excl="Persons with < 1 year of service", params={"hours_per_day": 9, "threshold_min_days": 360}),
+    _k("KPI-056", "wellbeing", "D", "Yıllık İzin Kullanmayan Çalışan Oranı", "Employees Without Annual Leave",
+       "Доля сотрудников без отпуска", "%", "lower_better", "annual_leave_nonuse",
+       formula="Eligible persons with no annual leave taken in the period / eligible persons x 100",
+       num="Eligible persons with zero annual-leave days in the period", den="Persons active at period end with >= 1 "
+       "year tenure", sources=["leave_records", "employment_relationships"], owner="HR_DIRECTOR",
+       standards=["4857 md. 53-59"],
+       purpose="Early warning for workload / burnout at team level (decision D-7); never used to rank individuals",
+       incl="Persons whose one-year date is on/before the period start", excl="Persons with < 1 year of service at "
+       "period start; persons on long sick/parental/unpaid absence (> half of the window; reported as a count)",
+       params={"hours_per_day": 9, "threshold_min_days": 360}),
+]
+
+# ---------------------------------------------------------------- Approved thresholds (decision D-5)
+# Source: docs/HR_DIRECTOR_RECOMMENDATIONS.md (Agent 17), approved by the product owner on 2026-11-05.
+# (target, warning, critical); None = monitoring only. Thresholds of annualised KPIs apply to the annualised value.
+APPROVED_THRESHOLDS: dict[str, tuple] = {
+    "KPI-001": (35, 45, 60), "KPI-002": (75, 65, 55), "KPI-003": (7, 9, 11), "KPI-004": (85, 80, 70),
+    "KPI-005": (100, 90, 80), "KPI-006": None, "KPI-007": (5, 8, 10), "KPI-008": (30, 20, 16),
+    "KPI-009": (100, 98, 95), "KPI-010": None, "KPI-011": (30, 45, 60), "KPI-013": (3, 5, 8),
+    "KPI-014A": (1.5, 3.0, 5.0), "KPI-014B": (1.0, 2.0, 3.5), "KPI-016": None, "KPI-017": None,
+    "KPI-018": (10, 15, 20), "KPI-019": None, "KPI-020": (12, 18, 25), "KPI-021": (3, 5, 8),
+    "KPI-022": (18, 25, 32), "KPI-023": None, "KPI-028": (2.0, 3.0, 4.5), "KPI-032": (5, 10, 15),
+    "KPI-034": None, "KPI-036": (7, 11, 14), "KPI-048": None, "KPI-050": None,
+    "KPI-053": (2.5, 3.5, 5.0), "KPI-054": None,
+    "KPI-055": (90, 75, 60), "KPI-056": (5, 10, 15),  # HR Director annex E.1; colour only on >= 12-month windows
+}
+for _item in KPI_CATALOG:
+    if _item["code"] in APPROVED_THRESHOLDS:
+        _t = APPROVED_THRESHOLDS[_item["code"]] or (None, None, None)
+        _item["target_value"], _item["warning_threshold"], _item["critical_threshold"] = _t
+
+
 FRAMEWORKS = [
     {"code": "ISO30414", "name": "ISO 30414 Human capital reporting", "version": "2025", "obligation": "voluntary",
      "note": "Guideline for internal/external human capital reporting. Version to be verified."},
