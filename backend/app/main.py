@@ -6,7 +6,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api.routers import analytics, core
+from app.api.routers import admin_data, analytics, core
 from app.core.config import get_settings
 from app.core.logging import configure_logging, request_id_var
 
@@ -54,3 +54,4 @@ async def request_context(request: Request, call_next):
 
 app.include_router(core.router)
 app.include_router(analytics.router)
+app.include_router(admin_data.router)
