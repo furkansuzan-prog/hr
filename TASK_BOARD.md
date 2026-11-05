@@ -41,6 +41,7 @@ Son doğrulama: backend `pytest` (gerçek PostgreSQL), frontend `tsc` + `eslint`
 | T-034 | Hesap kilitleme, IP limiti, token iptali (`tv`), saklama-imha servisi; migration 0004 | A11 | Done | `test_security_hardening.py` (11) |
 | T-035 | `/metrics`, 15K ölçek testi, yedek/geri yükleme tatbikatı, CI perf işi | A13 | Done (ölçüm) | `test_metrics.py`; tatbikat PASS (4.46M satır) |
 | T-036 | Çift transfer hatası düzeltmesi, kullanıcı pasifleştirme, dev DB onarımı | 00 | Done | `test_data_management.py` |
+| T-038 | Alt yüklenici görünürlüğü `contractor_relationships.project_id` ile sınırlandı (HR sprint-1 dalga 1 #2, SUB-02, ADR-017): proje sınırlı varlık hibesi, kademeli yayılım aynı projede, NULL proje = bütün varlık; tüm iş verisi yolları + KPI/panel önbellek anahtarı; yazma bütün varlık ister. Kademe (PO-2(b)) ve geçmiş (PO-2(c)) kuralları **kapsam dışı** | A11/A06 | Done (PO-2(a) teyidi bekleniyor) | `test_project_scoped_access.py` (12), tam paket |
 
 
 Değerlendirme: iş değeri / kullanıcı önemi / maliyet / bağımlılık / veri bulunabilirliği / güvenlik etkisi / operasyonel risk.

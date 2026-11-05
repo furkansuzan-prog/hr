@@ -234,9 +234,9 @@ def validate(db: Session, ctx: AccessContext, batch_id: int, mapping: dict[str, 
     if batch.entity_type == "leave":
         return _validate_leave(db, ctx, batch, mapping)
 
-    import_scope = ctx.entity_filter("import.write")
+    import_scope = _import_scope(ctx)
     ents = {le.code: le for le in db.execute(select(LegalEntity).where(LegalEntity.tenant_id == ctx.tenant_id)).scalars()}
-    projects = {p.code: p.id for p in db.execute(select(Project).where(Project.tenant_id == ctx.tenant_id)).scalars()}
+    projects ={p.code: p.id for p in db.execute(select(Project).where(Project.tenant_id == ctx.tenant_id)).scalars()}
     occs = {o.code: o.id for o in db.execute(select(Occupation).where(Occupation.tenant_id == ctx.tenant_id)).scalars()}
     seen: set[tuple] = set()
     valid = errors = 0
@@ -405,10 +405,17 @@ def _resolve_employment(db: Session, ctx: AccessContext, source: str, external_i
     return [], "none"
 
 
+def _import_scope(ctx: AccessContext) -> set[int] | None:
+    """Entities the caller may import into: whole-entity grants only (ADR-017 - an entity visible only for some
+    projects is not writable). None = tenant-wide."""
+    s = ctx.entity_filter("import.write")
+    return None if s is None else {e for e in s if ctx.covers_entity("import.write", e)}
+
+
 def _validate_leave(db: Session, ctx: AccessContext, batch: ImportBatch, mapping: dict) -> dict:
     """Leave rows: resolve the employment, map the source label through normalize_leave_type (protected leave first,
     decision D-6), derive hours, flag unmapped labels (B-27), detect duplicates in file and in the database."""
-    import_scope = ctx.entity_filter("import.write")
+    import_scope = _import_scope(ctx)
     ents = {le.code: le for le in db.execute(select(LegalEntity).where(LegalEntity.tenant_id == ctx.tenant_id)).scalars()}
     seen: set[tuple] = set()
     valid = errors = 0

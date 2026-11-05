@@ -36,8 +36,11 @@ Değişmezler:
 5. `formula.version` sonuç üretildiği versiyondur; formül versiyonları değişmezdir (yeni sürüm = yeni satır).
 
 ## 4. Yetki değişmezleri (Security ↔ herkes)
-- Her iş verisi sorgusu `tenant_id` + `AccessContext.entity_filter(perm)` ile filtrelenir.
+- Her iş verisi sorgusu `tenant_id` + kapsamla filtrelenir: ORM'de `AccessContext.entity_clause(perm, entity_col, project_col=… | employment_col=…)`, KPI motorunda `resolve_scope` → `calculators.Scope` (`entity_ids` + `project_limits`) → `_ent_sql` / `_emp_where`. `entity_filter(perm)` tek başına **yeterli değildir** (proje sınırlı varlıkları da içeren varlık kümesini döner); yalnızca varlık düzeyi kararlar için kullanılır (ADR-017).
 - Alt yüklenici görünürlüğü yalnızca **tarihte geçerli** ve `data_sharing_granted = true` olan `contractor_relationships` ile genişler.
+- **Proje sınırı (ADR-017):** `project_id` taşıyan ilişkiyle açılan alt yüklenici yalnızca o proje için görünür (`AccessContext.project_limits[perm] = {entity_id: {project_id}}`); `project_id IS NULL` ilişki bütün varlığı açar (geriye uyumlu). Proje sınırlı ebeveynden yalnızca aynı projedeki (veya NULL → ebeveynin projesi) çocuk ilişkiler izlenir. Sınırlı varlığın satırı yalnızca izinli projeye atfedilebiliyorsa görünür: satırın kendi `project_id`'si veya istihdamın pencereyle örtüşen görevlendirmesi; **`project_id` NULL satır görünmez**, proje boyutu olmayan veri (talepler, anket toplamları, aksiyonlar) sınırlı varlık için hiç görünmez.
+- Proje sınırlı hibe yalnızca okumadır: yazma, import ve yönetim kontrolleri `covers_entity(perm, eid)` (bütün varlık) ister.
+- Önbellek anahtarları kapsam imzasını **proje sınırlarıyla birlikte** içerir: `Scope.key()` (`…|pl:<eid>=<prj>,…`; KPI önbelleği, `kpi_results.scope_key`) ve panel anahtarı için `AccessContext.scope_signature(perm)`. `KpiResult.scope` sınır varsa `project_limits: {"<entity_id>": [project_id]}` alanını taşır (geriye uyumlu ek). `GET /auth/me` → `project_limits`.
 - `sensitive` KPI'lar (maliyet) `kpi.read` **ve** `cost.read` kapsamlarının kesişimiyle hesaplanır.
 - Reddedilen her erişim `audit_logs`'a `outcome='denied'` olarak ayrı transaction'da yazılır.
 

@@ -80,24 +80,23 @@ def resolve_scope(
 ) -> Scope:
     """Fold authorization into the calculation scope. Requests outside the user's scope are denied, not
     silently widened."""
-    perms = ["kpi.read"] + (["cost.read"] if kpi.sensitive else [])
-    allowed: set[int] | None = None
-    first = True
+    perms = _kpi_perms(kpi)
     for p in perms:
         if not ctx.has(p):
             raise ScopeDenied(f"Missing permission {p} for {kpi.code}")
-        s = ctx.entity_filter(p)
-        if first:
-            allowed, first = s, False
-        elif s is not None:
-            allowed = s if allowed is None else allowed & s
+    # ADR-017: project-limited entities travel with the scope - and therefore with every cache / frozen-result key
+    allowed, limits = ctx.scope_for(perms)
     if entity_ids:
         if allowed is not None and not set(entity_ids) <= allowed:
             raise ScopeDenied("Requested legal entity is outside your access scope")
         eff = frozenset(entity_ids)
     else:
         eff = frozenset(allowed) if allowed is not None else None
-    return Scope(ctx.tenant_id, eff, project_id, occupation_group)
+    return Scope(ctx.tenant_id, eff, project_id, occupation_group, Scope.limits_of(limits, eff))
+
+
+def _kpi_perms(kpi: KpiDefinition) -> list[str]:
+    return ["kpi.read"] + (["cost.read"] if kpi.sensitive else [])
 
 
 def _threshold_status(kpi: KpiDefinition, v: float | None) -> str | None:
@@ -285,8 +284,9 @@ def by_entity(db: Session, ctx: AccessContext, code: str, ps: date, pe: date, **
         # computed lazily: only when at least one entity misses the cache, then once for all entities
         if not batch:
             f = get_formula(db, kpi)
-            scope = Scope(ctx.tenant_id, frozenset(e.id for e in ents), kw.get("project_id"),
-                          kw.get("occupation_group"))
+            eids = frozenset(e.id for e in ents)
+            scope = Scope(ctx.tenant_id, eids, kw.get("project_id"), kw.get("occupation_group"),
+                          Scope.limits_of(ctx.scope_for(_kpi_perms(kpi))[1], eids))
             batch.update(batch_fn(db, scope, ps, pe, f.parameters or {}))
         return batch[eid]
 
@@ -355,6 +355,7 @@ def can_close_periods(db: Session, ctx: AccessContext) -> bool:
     scope = ctx.entity_filter("period.close")
     if scope is None:
         return True
+    scope = {e for e in scope if ctx.covers_entity("period.close", e)}  # ADR-017: whole-entity grants only
     return db.execute(select(LegalEntity.id).where(
         LegalEntity.tenant_id == ctx.tenant_id, LegalEntity.id.in_(scope or {-1}),
         LegalEntity.entity_type == "main_contractor")).first() is not None

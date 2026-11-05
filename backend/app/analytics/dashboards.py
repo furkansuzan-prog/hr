@@ -28,18 +28,11 @@ def default_period(today: date | None = None) -> tuple[date, date]:
 def _response_key(db: Session, ctx: AccessContext, ps: date, pe: date, kw: dict) -> str:
     """Whole-response cache key. Everything that can change the payload is in it: tenant data version (bumped by
     every analytics write and by period close/reopen), the catalog version (any formula version), the caller's
-    effective kpi.read / cost.read scopes, filters, period and display language."""
+    effective kpi.read / cost.read scopes (project limits included, ADR-017), filters, period and display language."""
     dv = db.execute(select(Tenant.data_version).where(Tenant.id == ctx.tenant_id)).scalar() or 0
     catv = db.execute(select(func.max(KpiFormulaVersion.id))).scalar() or 0
-
-    def sig(perm: str) -> str:
-        if not ctx.has(perm):
-            return "-"
-        s = ctx.entity_filter(perm)
-        return "*" if s is None else ",".join(map(str, sorted(s)))
-
     filt = f"{sorted(kw['entity_ids']) if kw['entity_ids'] else ''}|{kw['project_id']}|{kw['occupation_group']}"
-    raw = f"{sig('kpi.read')}#{sig('cost.read')}#{filt}"
+    raw = f"{ctx.scope_signature('kpi.read')}#{ctx.scope_signature('cost.read')}#{filt}"
     return (f"dash:{engine.CACHE_SCHEMA}:{ctx.tenant_id}:{dv}:{catv}:{ps}:{pe}:{ctx.locale}:"
             + hashlib.sha256(raw.encode()).hexdigest()[:32])
 

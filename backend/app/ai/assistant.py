@@ -322,9 +322,12 @@ def handle(db: Session, ctx: AccessContext, question: str, as_of: date | None = 
         elif intent == "action_results":
             tools.append("actions.list")
             q = select(ImprovementAction).where(ImprovementAction.tenant_id == ctx.tenant_id)
-            scope = ctx.entity_filter("risk.read") if ctx.has("risk.read") else set()
-            if scope is not None:
-                q = q.where(ImprovementAction.legal_entity_id.in_(scope or {-1}))
+            if not ctx.has("risk.read"):
+                q = q.where(ImprovementAction.legal_entity_id.in_({-1}))
+            else:  # actions have no project: entities visible only for some projects are excluded (ADR-017)
+                clause = ctx.entity_clause("risk.read", ImprovementAction.legal_entity_id)
+                if clause is not None:
+                    q = q.where(clause)
             acts = list(db.execute(q.order_by(ImprovementAction.due_date.desc()).limit(20)).scalars())
             out["data"] = {"actions": [{"problem": a.problem, "kpi": a.kpi_code, "baseline": _f(a.baseline_value),
                                         "target": _f(a.target_value), "result": _f(a.result_value),

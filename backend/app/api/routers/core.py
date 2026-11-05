@@ -83,6 +83,9 @@ def me(ctx: AccessContext = Depends(get_context), db: Session = Depends(get_db))
         "id": user.id, "email": user.email, "full_name": user.full_name, "locale": user.locale,
         "tenant_id": ctx.tenant_id, "permissions": sorted(ctx.permissions),
         "scopes": {p: (sorted(s) if s is not None else "tenant") for p, s in ctx.grants.items()},
+        # ADR-017: entities visible only for some projects, per permission ({entity_id: [project_id, ...]})
+        "project_limits": {p: {str(e): sorted(ps) for e, ps in sorted(ctx.limits(p).items())}
+                           for p in sorted(ctx.grants) if ctx.limits(p)},
         "mfa_enabled": user.mfa_enabled,
     }
 
@@ -152,7 +155,6 @@ def people(
     ctx: AccessContext = Depends(require("people.read")),
     db: Session = Depends(get_db),
 ):
-    scope = ctx.entity_filter("people.read")
     if entity_id is not None and not ctx.can_see_entity("people.read", entity_id):
         deny_entity(ctx, request, "people.read", {entity_id})
     today = date.today()
@@ -160,8 +162,11 @@ def people(
             .join(Person, Person.id == EmploymentRelationship.person_id)
             .join(LegalEntity, LegalEntity.id == EmploymentRelationship.legal_entity_id)
             .where(EmploymentRelationship.tenant_id == ctx.tenant_id))
-    if scope is not None:
-        base = base.where(EmploymentRelationship.legal_entity_id.in_(scope or {-1}))
+    # ADR-017: employments of a project-limited entity only when assigned to an allowed project
+    clause = ctx.entity_clause("people.read", EmploymentRelationship.legal_entity_id,
+                               employment_col=EmploymentRelationship.id)
+    if clause is not None:
+        base = base.where(clause)
     if entity_id is not None:
         base = base.where(EmploymentRelationship.legal_entity_id == entity_id)
     if status == "active":
@@ -193,7 +198,7 @@ def person_history(person_id: int, request: Request, ctx: AccessContext = Depend
         raise HTTPException(404, "Not found")
     emps = list(db.execute(select(EmploymentRelationship).where(EmploymentRelationship.person_id == person_id)
                            .order_by(EmploymentRelationship.start_date)).scalars())
-    visible = [e for e in emps if ctx.can_see_entity("people.read", e.legal_entity_id)]
+    visible = [e for e in emps if ctx.employment_visible(db, "people.read", e.legal_entity_id, e.id)]
     if not visible:  # 404 (not 403) so person ids cannot be probed; the attempt is still audited
         write_audit(tenant_id=ctx.tenant_id, user_id=ctx.user_id, action="authz.scope_denied", entity_type="person",
                     entity_id=str(person_id), outcome="denied")
@@ -201,8 +206,12 @@ def person_history(person_id: int, request: Request, ctx: AccessContext = Depend
     names = {e.id: e.name for e in db.execute(select(LegalEntity).where(
         LegalEntity.id.in_({x.legal_entity_id for x in visible}))).scalars()}
     out = []
+    limits = ctx.limits("people.read")
     for e in visible:
-        asg = db.execute(select(Assignment).where(Assignment.employment_id == e.id)).scalars()
+        aq = select(Assignment).where(Assignment.employment_id == e.id)
+        if e.legal_entity_id in limits:  # ADR-017: only assignments on the allowed projects
+            aq = aq.where(Assignment.project_id.in_(limits[e.legal_entity_id]))
+        asg = db.execute(aq).scalars()
         out.append({"employment_id": e.id, "legal_entity": names[e.legal_entity_id], "start_date": e.start_date,
                     "end_date": e.end_date, "termination_category": e.termination_category,
                     "record_version": e.record_version,
@@ -265,9 +274,9 @@ def sync_source(source_id: int, ctx: AccessContext = Depends(require("import.wri
 @router.get("/api/v1/risks", tags=["risk"])
 def risks(ctx: AccessContext = Depends(require("risk.read")), db: Session = Depends(get_db)):
     q = select(RiskItem).where(RiskItem.tenant_id == ctx.tenant_id)
-    s = ctx.entity_filter("risk.read")
-    if s is not None:
-        q = q.where(RiskItem.legal_entity_id.in_(s or {-1}))
+    clause = ctx.entity_clause("risk.read", RiskItem.legal_entity_id, project_col=RiskItem.project_id)
+    if clause is not None:
+        q = q.where(clause)
     return [{"id": r.id, "title": r.title, "category": r.category, "severity": r.severity, "status": r.status,
              "target_date": r.target_date, "source_kpi": r.source_kpi_code, "legal_entity_id": r.legal_entity_id}
             for r in db.execute(q.order_by(RiskItem.target_date)).scalars()]
@@ -276,9 +285,9 @@ def risks(ctx: AccessContext = Depends(require("risk.read")), db: Session = Depe
 @router.get("/api/v1/actions", tags=["risk"])
 def actions(ctx: AccessContext = Depends(require("risk.read")), db: Session = Depends(get_db)):
     q = select(ImprovementAction).where(ImprovementAction.tenant_id == ctx.tenant_id)
-    s = ctx.entity_filter("risk.read")
-    if s is not None:
-        q = q.where(ImprovementAction.legal_entity_id.in_(s or {-1}))
+    clause = ctx.entity_clause("risk.read", ImprovementAction.legal_entity_id)  # no project: limited entities hidden
+    if clause is not None:
+        q = q.where(clause)
     f = lambda v: float(v) if v is not None else None  # noqa: E731
     return [{"id": a.id, "problem": a.problem, "kpi_code": a.kpi_code, "baseline": f(a.baseline_value),
              "target": f(a.target_value), "result": f(a.result_value), "priority": a.priority, "status": a.status,
@@ -313,9 +322,10 @@ def survey(ctx: AccessContext = Depends(require("sustainability.read")), db: Ses
     q = select(SurveyAggregate.dimension, func.sum(SurveyAggregate.respondents),
                func.sum(SurveyAggregate.mean_score * SurveyAggregate.respondents) / func.sum(SurveyAggregate.respondents)
                ).where(SurveyAggregate.tenant_id == ctx.tenant_id).group_by(SurveyAggregate.dimension)
-    s = ctx.entity_filter("sustainability.read")
-    if s is not None:
-        q = q.where(SurveyAggregate.legal_entity_id.in_(s or {-1}))
+    # survey aggregates have no project: project-limited entities are excluded (ADR-017)
+    clause = ctx.entity_clause("sustainability.read", SurveyAggregate.legal_entity_id)
+    if clause is not None:
+        q = q.where(clause)
     return [{"dimension": d, "respondents": int(n), "mean_score": round(float(m), 2)} for d, n, m in db.execute(q)
             if n and n >= 10]
 

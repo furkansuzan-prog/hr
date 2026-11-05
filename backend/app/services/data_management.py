@@ -89,11 +89,12 @@ def _covers(ctx: AccessContext, perm: str, entity_id: int | None) -> bool:
         return False
     if entity_id is None:
         return ctx.entity_filter(perm) is None
-    return ctx.can_see_entity(perm, entity_id)
+    # ADR-017: an entity visible only for some projects is never covered as a whole (no entity-wide admin/writes)
+    return ctx.covers_entity(perm, entity_id)
 
 
 def _require_entity_scope(ctx: AccessContext, perm: str, entity_id: int) -> None:
-    if not ctx.can_see_entity(perm, entity_id):
+    if not ctx.covers_entity(perm, entity_id):  # writes need whole-entity access (ADR-017)
         raise Forbidden("Requested legal entity is outside your access scope", permission=perm,
                         entity_id=str(entity_id))
 
@@ -559,7 +560,7 @@ def relationship_json(r: ContractorRelationship) -> dict:
 def _require_org_scope(ctx: AccessContext, *entity_ids: int) -> None:
     # both ends: a relationship with data sharing widens the parent's visibility to the child's workforce data
     for eid in entity_ids:
-        if not ctx.can_see_entity("org.write", eid):
+        if not ctx.covers_entity("org.write", eid):
             raise Forbidden("Requested legal entity is outside your access scope", permission="org.write",
                             entity_id=str(eid))
 

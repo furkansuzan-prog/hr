@@ -1,12 +1,13 @@
 """Registered KPI calculators (ADR-008).
 
 Each calculator: (db, scope, period_start, period_end, params) -> CalcResult. They read ONLY the scope they
-are given; authorization has already been folded into `scope.entity_ids` by the engine.
+are given; authorization has already been folded into `scope.entity_ids` / `scope.project_limits` by the engine.
+Every entity filter goes through `_ent_sql` / `_emp_where` so project-limited entities (ADR-017) are honoured.
 Formula changes are made by adding a new formula version with different `params` or a new calculator key -
 never by editing a calculator in a way that changes historical semantics.
 """
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, timedelta
 
 from sqlalchemy import text
@@ -34,9 +35,24 @@ class Scope:
     entity_ids: frozenset[int] | None = None  # None = all entities of tenant (already authorised)
     project_id: int | None = None
     occupation_group: str | None = None
+    # ADR-017: ((entity_id, (project_id, ...)), ...) sorted - entities of entity_ids visible ONLY for these projects
+    project_limits: tuple[tuple[int, tuple[int, ...]], ...] = ()
+
+    @staticmethod
+    def limits_of(limits: dict[int, frozenset[int]] | None, entity_ids) -> tuple[tuple[int, tuple[int, ...]], ...]:
+        """Canonical project_limits restricted to entity_ids (None entity_ids = tenant-wide, no limits)."""
+        if entity_ids is None or not limits:
+            return ()
+        return tuple((e, tuple(sorted(limits[e]))) for e in sorted(limits) if e in entity_ids)
+
+    def entities_only(self) -> "Scope":
+        """Same authorised entity scope (project limits included) without the user's project/occupation filters."""
+        return Scope(self.tenant_id, self.entity_ids, project_limits=self.project_limits)
 
     def key(self) -> str:
         parts = ["le:" + (",".join(map(str, sorted(self.entity_ids))) if self.entity_ids is not None else "*")]
+        if self.project_limits:
+            parts.append("pl:" + ";".join(f"{e}=" + ",".join(map(str, ps)) for e, ps in self.project_limits))
         if self.project_id:
             parts.append(f"prj:{self.project_id}")
         if self.occupation_group:
@@ -44,11 +60,14 @@ class Scope:
         return "|".join(parts)
 
     def as_dict(self) -> dict:
-        return {
+        d = {
             "entity_ids": sorted(self.entity_ids) if self.entity_ids is not None else None,
             "project_id": self.project_id,
             "occupation_group": self.occupation_group,
         }
+        if self.project_limits:
+            d["project_limits"] = {str(e): list(ps) for e, ps in self.project_limits}
+        return d
 
 
 def _min_group() -> int:
@@ -58,14 +77,48 @@ def _min_group() -> int:
 # ------------------------------------------------------------------ SQL fragment builders
 
 
-def _emp_where(scope: Scope, alias: str = "e", date_from: str = ":d", date_to: str = ":d") -> tuple[str, dict]:
+def _ent_sql(scope: Scope, ent_col: str, p: dict, *, row_project: str | None = None, emp_alias: str | None = None,
+             date_from: str = ":d", date_to: str = ":d") -> str:
+    """Entity restriction of `scope` as SQL (ADR-017). Whole entities: `ent_col = ANY(:ents)`. A project-limited
+    entity passes only when the row is attributable to an allowed project:
+      row_project -> that column must hold an allowed project (NULL never passes);
+      emp_alias   -> the employment must have an assignment on an allowed project overlapping [date_from, date_to];
+      neither     -> the entity contributes nothing (the data has no project dimension).
+    Parameter names are derived from the entity id, so fragments built for several aliases of one query agree."""
+    if scope.entity_ids is None:
+        return ""
+    limited = dict(scope.project_limits)
+    p["ents"] = [e for e in scope.entity_ids if e not in limited] or [-1]
+    conds = [f"{ent_col} = ANY(:ents)"]
+    for eid, projs in scope.project_limits:
+        key = f"plim_{int(eid)}"
+        if row_project:
+            cond = f"{row_project} = ANY(:{key})"
+        elif emp_alias:
+            cond = (f"EXISTS (SELECT 1 FROM assignments ax WHERE ax.employment_id = {emp_alias}.id "
+                    f"AND ax.project_id = ANY(:{key}) AND ax.valid_from <= {date_to} "
+                    f"AND (ax.valid_to IS NULL OR ax.valid_to > {date_from}))")
+        else:
+            continue
+        p[key] = list(projs)
+        conds.append(f"({ent_col} = {int(eid)} AND {cond})")
+    return f" AND ({' OR '.join(conds)})" if len(conds) > 1 else f" AND {conds[0]}"
+
+
+def _spell(alias: str) -> dict:
+    """Assignment window = the spell's own employment period (transfer detection on another spell)."""
+    return {"date_from": f"{alias}.start_date", "date_to": f"coalesce({alias}.end_date, DATE '9999-12-31')"}
+
+
+def _emp_where(scope: Scope, alias: str = "e", date_from: str = ":d", date_to: str = ":d",
+               row_project: str | None = None) -> tuple[str, dict]:
     """Filter employments to the scope. Project/occupation filters go through assignments overlapping
-    [date_from, date_to]."""
+    [date_from, date_to]. Project-limited entities (ADR-017): by `row_project` when the data row has its own project
+    (timesheets, costs, assignments), otherwise by an assignment on an allowed project overlapping the same window."""
     sql = f" AND {alias}.tenant_id = :tenant"
     params: dict = {"tenant": scope.tenant_id}
-    if scope.entity_ids is not None:
-        sql += f" AND {alias}.legal_entity_id = ANY(:ents)"
-        params["ents"] = list(scope.entity_ids) or [-1]
+    sql += _ent_sql(scope, f"{alias}.legal_entity_id", params, row_project=row_project, emp_alias=alias,
+                    date_from=date_from, date_to=date_to)
     if scope.project_id or scope.occupation_group:
         sql += (
             f" AND EXISTS (SELECT 1 FROM assignments a LEFT JOIN occupations o ON o.id = a.occupation_id"
@@ -112,7 +165,7 @@ def average_headcount(db: Session, scope: Scope, ps: date, pe: date) -> tuple[fl
 
 def _separations(db: Session, scope: Scope, ps: date, pe: date) -> dict[str, int]:
     where, p = _emp_where(scope, date_from=":ps", date_to=":pe")
-    where2, _ = _emp_where(Scope(scope.tenant_id, scope.entity_ids), alias="e2")
+    where2, _ = _emp_where(scope.entities_only(), alias="e2", **_spell("e2"))
     rows = db.execute(
         text(
             "SELECT coalesce(e.termination_category, 'unknown'), count(*) FROM employment_relationships e "
@@ -164,9 +217,9 @@ def _hours_windows(db: Session, scope: Scope, windows: list[tuple[date, date]]) 
 
 
 def _hours_query(db: Session, scope: Scope, windows: list[tuple[date, date]], *, summary: bool) -> dict:
-    where, p = _emp_where(Scope(scope.tenant_id, scope.entity_ids, None, scope.occupation_group),
-                          date_from="w.ps", date_to="w.pe")
     alias = "s" if summary else "t"
+    where, p = _emp_where(replace(scope, project_id=None), date_from="w.ps", date_to="w.pe",
+                          row_project=f"{alias}.project_id")
     proj = ""
     if scope.project_id:
         proj = f" AND {alias}.project_id = :project"
@@ -402,9 +455,7 @@ def capacity_utilization(db: Session, scope: Scope, ps: date, pe: date, params: 
 def _outputs(db: Session, scope: Scope, ps: date, pe: date) -> dict:
     p: dict = {"tenant": scope.tenant_id, "ps": ps, "pe": pe}
     where = ""
-    if scope.entity_ids is not None:
-        where += " AND w.legal_entity_id = ANY(:ents)"
-        p["ents"] = list(scope.entity_ids) or [-1]
+    where += _ent_sql(scope, "w.legal_entity_id", p, row_project="wp.project_id")
     if scope.project_id:
         where += " AND wp.project_id = :project"
         p["project"] = scope.project_id
@@ -444,9 +495,7 @@ def plan_deviation(db: Session, scope: Scope, ps: date, pe: date, params: dict) 
     """KPI-006: actual - planned headcount (mean over months with a plan). Absolute value; % in breakdown."""
     p: dict = {"tenant": scope.tenant_id, "ps": date(ps.year, ps.month, 1), "pe": pe}
     where = ""
-    if scope.entity_ids is not None:
-        where += " AND legal_entity_id = ANY(:ents)"
-        p["ents"] = list(scope.entity_ids) or [-1]
+    where += _ent_sql(scope, "legal_entity_id", p, row_project="project_id")
     if scope.project_id:
         where += " AND project_id = :project"
         p["project"] = scope.project_id
@@ -516,7 +565,7 @@ def training_hours_per_employee(db: Session, scope: Scope, ps: date, pe: date, p
 
 def competency_coverage(db: Session, scope: Scope, ps: date, pe: date, params: dict) -> CalcResult:
     """KPI-009: active assignments (at period end) whose holder has all mandatory competencies valid."""
-    where, p = _emp_where(scope, date_from=":pe", date_to=":pe")
+    where, p = _emp_where(scope, date_from=":pe", date_to=":pe", row_project="a.project_id")
     r = db.execute(
         text(
             "WITH req AS (SELECT occupation_id, count(*) n FROM occupation_competencies "
@@ -556,8 +605,8 @@ def _fx(db: Session, ccy: str, to: str, on: date) -> float | None:
 def labor_cost_total(db: Session, scope: Scope, ps: date, pe: date, params: dict) -> tuple[float | None, dict]:
     """Total labour cost in reporting currency. Returns (None, info) when any FX rate is missing."""
     to = params.get("reporting_currency", "TRY")
-    where, p = _emp_where(Scope(scope.tenant_id, scope.entity_ids, None, scope.occupation_group),
-                          date_from=":ps", date_to=":pe")
+    where, p = _emp_where(replace(scope, project_id=None), date_from=":ps", date_to=":pe",
+                          row_project="pc.project_id")
     proj = ""
     if scope.project_id:
         proj = " AND pc.project_id = :project"
@@ -604,9 +653,7 @@ def labor_cost_total(db: Session, scope: Scope, ps: date, pe: date, params: dict
 def _output_units(db: Session, scope: Scope, ps: date, pe: date) -> list[str]:
     p: dict = {"tenant": scope.tenant_id, "ps": ps, "pe": pe}
     where = ""
-    if scope.entity_ids is not None:
-        where += " AND w.legal_entity_id = ANY(:ents)"
-        p["ents"] = list(scope.entity_ids) or [-1]
+    where += _ent_sql(scope, "w.legal_entity_id", p, row_project="wp.project_id")
     if scope.project_id:
         where += " AND wp.project_id = :project"
         p["project"] = scope.project_id
@@ -642,9 +689,7 @@ def time_to_hire(db: Session, scope: Scope, ps: date, pe: date, params: dict) ->
     """KPI-011: mean days from requisition approval to accepted offer, for offers accepted in period."""
     p: dict = {"tenant": scope.tenant_id, "ps": ps, "pe": pe}
     where = ""
-    if scope.entity_ids is not None:
-        where = " AND legal_entity_id = ANY(:ents)"
-        p["ents"] = list(scope.entity_ids) or [-1]
+    where = _ent_sql(scope, "legal_entity_id", p)  # no project column: project-limited entities excluded
     r = db.execute(
         text("SELECT count(*), coalesce(sum(offer_accepted_on - approved_on),0) FROM requisitions "
              f"WHERE tenant_id = :tenant AND offer_accepted_on BETWEEN :ps AND :pe {where}"
@@ -673,9 +718,7 @@ def _safety_rate(db: Session, scope: Scope, ps: date, pe: date, types: list[str]
                           note="Safety events are not recorded per occupation; rate not available for an occupation filter")
     p: dict = {"tenant": scope.tenant_id, "ps": ps, "pe": pe, "types": types}
     where = ""
-    if scope.entity_ids is not None:
-        where += " AND legal_entity_id = ANY(:ents)"
-        p["ents"] = list(scope.entity_ids) or [-1]
+    where += _ent_sql(scope, "legal_entity_id", p, row_project="project_id")
     if scope.project_id:
         where += " AND project_id = :project"
         p["project"] = scope.project_id
@@ -733,7 +776,7 @@ BY_ENTITY_BATCH = {"active_headcount": headcount_by_entity}
 def new_hire_count(db: Session, scope: Scope, ps: date, pe: date, params: dict) -> CalcResult:
     """KPI-017: employments starting in period that are not internal transfers within scope."""
     where, p = _emp_where(scope, date_from=":ps", date_to=":pe")
-    where2, _ = _emp_where(Scope(scope.tenant_id, scope.entity_ids), alias="e2")
+    where2, _ = _emp_where(scope.entities_only(), alias="e2", **_spell("e2"))
     n = db.execute(
         text("SELECT count(*) FROM employment_relationships e WHERE e.start_date BETWEEN :ps AND :pe "
              f"{where} AND NOT EXISTS (SELECT 1 FROM employment_relationships e2 WHERE e2.person_id = e.person_id "
@@ -749,9 +792,9 @@ def early_turnover_90(db: Session, scope: Scope, ps: date, pe: date, params: dic
     """KPI-018: share of hires (start in period) who left within `days` days of starting."""
     days = params.get("days", 90)
     where, p = _emp_where(scope, date_from=":ps", date_to=":pe")
-    ents = Scope(scope.tenant_id, scope.entity_ids)
-    w_in, _ = _emp_where(ents, alias="e2")
-    w_out, _ = _emp_where(ents, alias="e3")
+    ents = scope.entities_only()
+    w_in, _ = _emp_where(ents, alias="e2", **_spell("e2"))
+    w_out, _ = _emp_where(ents, alias="e3", **_spell("e3"))
     # same transfer rule as KPI-001/017: transfers in are not hires, transfers out are not early leavers
     r = db.execute(
         text("SELECT count(*), count(*) FILTER (WHERE e.end_date IS NOT NULL AND e.end_date < e.start_date + :days "
@@ -834,8 +877,7 @@ def downtime_lost_hours_share(db: Session, scope: Scope, ps: date, pe: date, par
     where = ""
     if scope.entity_ids is not None:
         # events without a legal entity cannot be attributed to an entity-filtered scope (counted in lineage)
-        where += " AND legal_entity_id = ANY(:ents)"
-        p["ents"] = list(scope.entity_ids) or [-1]
+        where += _ent_sql(scope, "legal_entity_id", p, row_project="project_id")
     if scope.project_id:
         where += " AND project_id = :project"
         p["project"] = scope.project_id

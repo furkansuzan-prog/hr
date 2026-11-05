@@ -39,8 +39,7 @@ def warm_tenant(tenant_id: int) -> dict:
             ctx = build_access_context(db, user)
             if not ctx.has("kpi.read"):
                 continue
-            k = (frozenset(ctx.entity_filter("kpi.read") or {"*"}),
-                 frozenset(ctx.entity_filter("cost.read") or {"*"}) if ctx.has("cost.read") else None)
+            k = (ctx.scope_signature("kpi.read"), ctx.scope_signature("cost.read"))  # incl. project limits
             if k in seen:
                 continue
             seen.add(k)
