@@ -78,7 +78,8 @@ cd backend && python scripts/perf_smoke.py --concurrency 30 --requests 600
 | `HRSWI_FORECAST_MIN_POINTS` | 12 | Tahmin için asgari aylık gözlem |
 | `HRSWI_DB_POOL_SIZE` / `HRSWI_DB_MAX_OVERFLOW` | 8 / 4 | Worker başına |
 | `HRSWI_LLM_ENABLED` | false | FAZ 6 |
-| `NEXT_PUBLIC_API_URL` | http://localhost:8000 | Frontend derleme zamanı |
+| `BACKEND_URL` | http://localhost:8000 | Frontend derleme zamanı: tarayıcı aynı adresten `/api/*` çağırır, Next bu adrese iletir |
+| `NEXT_PUBLIC_API_URL` | (boş) | Yalnızca API başka bir origin'de çağrılacaksa |
 
 ## Depo yapısı
 ```

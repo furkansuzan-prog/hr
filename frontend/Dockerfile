@@ -7,8 +7,10 @@ RUN --mount=type=secret,id=extra_ca,required=false \
 
 FROM node:22-alpine AS build
 WORKDIR /app
-ARG NEXT_PUBLIC_API_URL=http://localhost:8000
-ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL NEXT_TELEMETRY_DISABLED=1
+# Same-origin by default: the browser calls /api/* and Next proxies to BACKEND_URL (resolved at build time).
+ARG NEXT_PUBLIC_API_URL=""
+ARG BACKEND_URL=http://api:8000
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL BACKEND_URL=$BACKEND_URL NEXT_TELEMETRY_DISABLED=1
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN npm run build

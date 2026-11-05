@@ -1,5 +1,6 @@
 /** Thin API client. All numbers shown in the UI come from these backend calls - no KPI math in the browser. */
-export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+// Empty (default) = same-origin; Next rewrites /api/* to BACKEND_URL. Set to call a backend on another origin.
+export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "";
 const TOKEN_KEY = "hrswi.token";
 
 export class ApiError extends Error {
