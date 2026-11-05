@@ -51,7 +51,7 @@ def test_main_contractor_sees_only_shared_subcontractors(client, auth, ids):
 def test_person_history_hides_other_employer_spells(client, auth, ids):
     """P2 worked for A then B: B's manager sees only the B spell."""
     h = client.get(f"/api/v1/people/{ids['exact']['p2']}/history", headers=auth("ex.b@exact.local")).json()
-    assert len(h["employments"]) == 1 and h["hidden_spells"] == 1
+    assert len(h["employments"]) == 1 and "hidden_spells" not in h  # no hint about other employers
 
 
 def test_cost_kpi_requires_cost_permission(client, auth):

@@ -45,7 +45,8 @@ def create_access_token(user_id: int, tenant_id: int) -> str:
 
 
 def decode_access_token(token: str) -> dict:
-    return jwt.decode(token, get_settings().jwt_secret, algorithms=["HS256"], issuer="hrswi")
+    return jwt.decode(token, get_settings().jwt_secret, algorithms=["HS256"], issuer="hrswi",
+                      options={"require": ["exp", "iat", "sub", "tid", "iss"]})
 
 
 def national_id_hash(raw: str) -> str:

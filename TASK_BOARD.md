@@ -28,7 +28,8 @@ Son doğrulama: backend `pytest` (gerçek PostgreSQL), frontend `tsc` + `eslint`
 | T-019 | Docker, Compose, CI | 13 | — | `docker compose build`, CI kapıları | Partial | web imajı derlendi; API imajı Docker Hub 429 nedeniyle bu ortamda derlenemedi; CI GitHub'da henüz çalıştırılmadı |
 | T-020 | Performans ölçümü + önbellek | 13/09 | T-015 | p95<2 sn (30 eşzamanlı) | Partial | 30: ✔ 1.06 sn · 150 düşünme süresiz: ✖ 3.6 sn (`PERFORMANCE_REPORT.md`) |
 | T-021 | Dokümantasyon (README, KPI sözlüğü, veri sözlüğü, yetki matrisi) | 15 | — | Koddan üretilen referanslar | Done | `scripts/gen_docs.py` |
-| T-022 | Bağımsız denetim | 16 | T-001..T-021 | Bulgu raporu, kritik/yüksek bulgular kapatılır | Done | `docs/AUDIT_REPORT.md` |
+| T-022 | Bağımsız denetim | 16 | T-001..T-021 | Bulgu raporu | Done | `docs/AUDIT_REPORT.md` (20 bulgu: 7 yüksek) |
+| T-023 | Denetim bulgularının düzeltilmesi | 06/09/11 | T-022 | Yüksek bulgular kapalı + regresyon testi | Partial | 14 düzeltildi, 5 kısmen, 1 açık (politika) · `test_audit_regressions.py` (11) |
 
 ## Backlog (önceliklendirilmiş)
 Değerlendirme: iş değeri / kullanıcı önemi / maliyet / bağımlılık / veri bulunabilirliği / güvenlik etkisi / operasyonel risk.
@@ -51,4 +52,7 @@ Değerlendirme: iş değeri / kullanıcı önemi / maliyet / bağımlılık / ve
 | B-14 | P2 | LLM ile niyet çözümleme/anlatı (yalnızca toplu veri) | 10 | Kullanılabilirlik |
 | B-15 | P2 | Senaryo simülasyonu, iş paketi bazlı planlama | 04/10 | FAZ 5–6 |
 | B-16 | P2 | Çevresel etki modülü (KPI-052) | 03 | Opsiyonel modül N |
+| B-18 | P0 | Dönem kapanışından önce KPI çalıştırmasını zorunlu/otomatik yapmak (denetim #6 notu) | 09 | Kapalı dönemin her zaman dondurulmuş değeri olsun |
+| B-19 | P1 | Alt yüklenici görünürlüğü: dönem bazlı mı bugünkü izin mi? (denetim #16, ⚖️) | 01/11 | Politika kararı |
+| B-20 | P1 | Veri kaynağı kapsam meta verisi: eksik besleme ≠ gerçek sıfır (denetim #19) | 08/09 | Yanlış "0" riskini kapatır |
 | B-17 | P2 | Dinamik rapor oluşturucu, kalan 10 rapor şablonu | 14 | FAZ 4 |

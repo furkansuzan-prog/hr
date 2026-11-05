@@ -25,7 +25,8 @@ def test_turnover_tenant_excludes_internal_transfer(client, auth):
     assert r["status"] == "ok"
     assert r["numerator"] == 2 and r["denominator"] == pytest.approx(27.5)
     assert r["value"] == pytest.approx(7.2727, abs=1e-3)
-    assert r["breakdown"]["by_termination_category"] == {"voluntary": 1, "unknown": 1}
+    # category counts below the publishable minimum (5) are masked, never shown
+    assert r["breakdown"]["by_termination_category"] == {"voluntary": None, "unknown": None}
     assert r["quality_score"] == 50.0  # one of two separations lacks a reason
     assert "not assumed" in r["note"]
     assert r["formula"]["version"] == 1 and r["kind"] == "actual"

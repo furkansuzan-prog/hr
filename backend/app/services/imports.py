@@ -9,6 +9,7 @@
 import csv
 import hashlib
 import io
+import logging
 import re
 import unicodedata
 from datetime import date, datetime
@@ -35,6 +36,8 @@ from app.models import (
 from app.models.people import TERMINATION_CATEGORIES
 from app.security.access import AccessContext
 from app.security.auth import national_id_hash
+
+log = logging.getLogger("hrswi.imports")
 
 
 class ImportError_(Exception):
@@ -67,6 +70,7 @@ FIELDS = {
     "project_code": {"required": False, "aliases": ["proje", "project", "проект"]},
     "occupation_code": {"required": False, "aliases": ["meslek", "meslek kodu", "occupation", "профессия"]},
 }
+MAX_ROWS = 200_000
 CONTRACT_TYPES = {"permanent", "fixed_term", "project", "seasonal"}
 
 
@@ -90,7 +94,10 @@ def suggest_mapping(headers: list[str]) -> dict[str, str | None]:
 def parse_file(filename: str, content: bytes) -> tuple[list[str], list[dict]]:
     name = filename.lower()
     if name.endswith((".xlsx", ".xlsm")):
-        wb = load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+        try:
+            wb = load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+        except Exception:
+            raise ImportError_("File is not a valid .xlsx workbook") from None
         ws = wb.worksheets[0]
         it = ws.iter_rows(values_only=True)
         headers = [str(h).strip() if h is not None else "" for h in next(it)]
@@ -101,8 +108,14 @@ def parse_file(filename: str, content: bytes) -> tuple[list[str], list[dict]]:
             rows.append({headers[i]: _cell(v) for i, v in enumerate(r) if i < len(headers)})
         return headers, rows
     if name.endswith((".csv", ".txt")):
-        text = content.decode("utf-8-sig")
-        dialect = csv.Sniffer().sniff(text[:4096], delimiters=",;\t") if text.strip() else csv.excel
+        try:
+            text = content.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            text = content.decode("cp1254")  # Turkish Excel default; cp1254 decodes any byte sequence
+        try:
+            dialect = csv.Sniffer().sniff(text[:4096], delimiters=",;\t") if text.strip() else csv.excel
+        except csv.Error:
+            dialect = csv.excel
         reader = csv.DictReader(io.StringIO(text), dialect=dialect)
         return [h.strip() for h in (reader.fieldnames or [])], [{k.strip(): (v or "").strip() for k, v in r.items() if k}
                                                                for r in reader]
@@ -142,6 +155,8 @@ def upload(db: Session, ctx: AccessContext, *, entity_type: str, filename: str, 
     if done:
         raise DuplicateFile(done)
     headers, rows = parse_file(filename, content)
+    if len(rows) > MAX_ROWS:
+        raise ImportError_(f"Too many rows ({len(rows)} > {MAX_ROWS}); split the file")
     suggested = suggest_mapping(headers)
     # KVKK: identity numbers are pseudonymised BEFORE the raw row is persisted or echoed back in the preview
     _pseudonymise(rows, suggested.get("national_id"))
@@ -298,6 +313,12 @@ def commit(db: Session, ctx: AccessContext, batch_id: int, *, fail_after_rows: i
                 if fail_after_rows is not None and processed >= fail_after_rows:
                     raise RuntimeError("simulated failure during commit")
                 d = _commit_row(db, ctx, batch, r, ents, projects, occs)
+                if d == "review":  # sent to manual identity review: not committed, not retried automatically
+                    r.has_error = True
+                    r.errors = [*(r.errors or []), {"rule": "identity_review", "severity": "error",
+                                                    "message": "sent to manual identity review"}]
+                    processed += 1
+                    continue
                 if d and (earliest is None or d < earliest):
                     earliest = d
                 r.committed = True
@@ -308,17 +329,31 @@ def commit(db: Session, ctx: AccessContext, batch_id: int, *, fail_after_rows: i
         batch.committed_rows = total_ok
         batch.status = "committed"
         batch.error_message = None
-        if earliest:
-            mark_stale_from(db, ctx.tenant_id, earliest)
+        _invalidate_from_committed(db, ctx, batch.id)
         db.commit()
     except Exception as exc:
         db.rollback()
         b = db.get(ImportBatch, batch_id)
         b.status = "failed"
-        b.error_message = str(exc)[:1000]
+        b.error_message = str(exc)[:1000]  # internal detail stays server-side (batch record + logs)
+        # chunks committed before the failure already changed data: invalidate now, not only on final success
+        _invalidate_from_committed(db, ctx, batch_id)
         db.commit()
-        raise ImportError_(f"Commit failed and can be retried: {exc}") from exc
+        log.warning("import commit failed", extra={"tenant_id": ctx.tenant_id})
+        raise ImportError_("Commit failed; committed chunks are kept and the batch can be retried") from exc
     return summary(db, ctx, batch_id)
+
+
+def _invalidate_from_committed(db: Session, ctx: AccessContext, batch_id: int) -> None:
+    """Earliest affected date across ALL committed rows of the batch (any attempt) -> stale marks + cache bump."""
+    dates = []
+    for (m,) in db.execute(select(ImportStagingRow.mapped).where(ImportStagingRow.batch_id == batch_id,
+                                                                 ImportStagingRow.committed.is_(True))):
+        for k in ("start_date", "end_date"):
+            if m and m.get(k):
+                dates.append(date.fromisoformat(m[k]))
+    if dates:
+        mark_stale_from(db, ctx.tenant_id, min(dates))
 
 
 def _commit_row(db, ctx, batch, row, ents, projects, occs) -> date | None:
@@ -328,17 +363,21 @@ def _commit_row(db, ctx, batch, row, ents, projects, occs) -> date | None:
                                                       PersonIdentifier.source_system == src,
                                                       PersonIdentifier.external_id == m["external_id"])).scalar()
     person = db.get(Person, ident.person_id) if ident else None
+    if person is not None and m.get("national_id_hash") and person.national_id_hash and \
+            person.national_id_hash != m["national_id_hash"]:
+        _review(db, ctx, batch, row, person.id, "external id matches a person with a different national id")
+        return "review"
     if person is None and m.get("national_id_hash"):
         cands = list(db.execute(select(Person).where(Person.tenant_id == ctx.tenant_id,
                                                      Person.national_id_hash == m["national_id_hash"])).scalars())
         if len(cands) > 1:
             _review(db, ctx, batch, row, None, "multiple persons share this national id hash")
-            return None
+            return "review"
         if len(cands) == 1:
             c = cands[0]
             if c.last_name.strip().lower() != m["last_name"].strip().lower():
                 _review(db, ctx, batch, row, c.id, "national id matches but last name differs")
-                return None
+                return "review"
             person = c
     if person is None:
         person = Person(tenant_id=ctx.tenant_id, person_code=f"{src}-{m['external_id']}"[:40],
@@ -387,7 +426,9 @@ def _review(db, ctx, batch, row, cand, reason):
 
 def _batch(db: Session, ctx: AccessContext, batch_id: int) -> ImportBatch:
     b = db.get(ImportBatch, batch_id)
-    if b is None or b.tenant_id != ctx.tenant_id:
+    # entity-scoped importers may only touch batches they created (audit finding #9)
+    if b is None or b.tenant_id != ctx.tenant_id or (
+            ctx.entity_filter("import.write") is not None and b.created_by != ctx.user_id):
         raise ImportError_("Batch not found")
     return b
 

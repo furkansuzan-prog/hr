@@ -1,12 +1,13 @@
 """KPI engine service: the ONLY entry point through which numbers reach the API, reports and the assistant."""
 from datetime import UTC, date, datetime
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from app.analytics.calculators import CALCULATORS, Scope
-from app.analytics.domain import CalcResult, month_end, month_starts
+from app.analytics.domain import OK, SUPPRESSED, CalcResult, month_end, month_starts
 from app.core.cache import cache
+from app.core.config import get_settings
 from app.models import (
     KpiCalculationRun,
     KpiDefinition,
@@ -17,6 +18,9 @@ from app.models import (
     Tenant,
 )
 from app.security.access import AccessContext
+
+# bump whenever calculator output semantics or privacy post-processing change: old cache entries become unreachable
+CACHE_SCHEMA = "v2"
 
 
 class KpiError(Exception):
@@ -161,14 +165,68 @@ def evaluate(
     scope = resolve_scope(ctx, kpi, entity_ids, project_id, occupation_group)
     dv = _memo(db, ("dv", ctx.tenant_id), lambda: db.execute(
         select(Tenant.data_version).where(Tenant.id == ctx.tenant_id)).scalar() or 0)
-    key = f"kpi:{ctx.tenant_id}:{dv}:{f.id}:{scope.key()}:{ps.isoformat()}:{pe.isoformat()}"
-    hit = cache.get(key)
-    if hit is not None:
-        res = CalcResult(**hit)
+    key = f"kpi:{CACHE_SCHEMA}:{ctx.tenant_id}:{dv}:{f.id}:{scope.key()}:{ps.isoformat()}:{pe.isoformat()}"
+    frozen = _frozen_result(db, ctx.tenant_id, kpi, f, scope, ps, pe)
+    if frozen is not None:
+        res, meta = frozen
     else:
-        res = calc(db, scope, ps, pe, f.parameters or {})
-        cache.set(key, res.to_dict())
-    return _payload(kpi, f, scope, ps, pe, res, ctx.locale)
+        meta = None
+        hit = cache.get(key)
+        if hit is not None:
+            res = CalcResult(**hit)
+        else:
+            res = enforce_privacy(calc(db, scope, ps, pe, f.parameters or {}))
+            cache.set(key, res.to_dict())
+    out = _payload(kpi, f, scope, ps, pe, res, ctx.locale)
+    if meta:
+        out.update(meta)
+    return out
+
+
+_LINEAGE_SAFE_KEYS = {"tables", "method", "transfer_gap_days", "proration", "excluded_categories", "event_types_counted",
+                      "window_days", "reporting_currency", "fx_source", "units", "as_of", "average_headcount"}
+
+
+def enforce_privacy(res: CalcResult) -> CalcResult:
+    """Single post-processing step (audit finding #2): a suppressed result - or a result whose population is below
+    the publishable minimum - exposes no counts anywhere (value, numerator, denominator, breakdown, lineage)."""
+    min_n = get_settings().min_group_size
+    persons = (res.lineage or {}).get("persons")
+    small = res.status == SUPPRESSED or (persons is not None and persons < min_n)
+    if small:
+        res.value = res.numerator = res.denominator = res.sample_size = None
+        res.breakdown = {}
+        res.lineage = {k: v for k, v in (res.lineage or {}).items() if k in _LINEAGE_SAFE_KEYS}
+        if res.status == OK:
+            res.status = SUPPRESSED
+            res.note = f"Group smaller than the minimum publishable size ({min_n})"
+    return res
+
+
+def _months_all_closed(db: Session, tenant_id: int, ps: date, pe: date) -> bool:
+    months = month_starts(ps, pe)
+    n = db.execute(select(func.count()).select_from(PeriodClose).where(
+        PeriodClose.tenant_id == tenant_id, PeriodClose.period_month.in_(months), PeriodClose.status == "closed")).scalar()
+    return n == len(months)
+
+
+def _frozen_result(db, tenant_id, kpi, f, scope, ps, pe):
+    """Closed periods are frozen (audit finding #6): serve the persisted result of the latest run instead of a live
+    recalculation. Data arriving later only flags it stale; changing it requires a reopen + recalculation."""
+    if not _memo(db, ("closed", tenant_id, ps, pe), lambda: _months_all_closed(db, tenant_id, ps, pe)):
+        return None
+    r = db.execute(select(KpiResult).where(
+        KpiResult.tenant_id == tenant_id, KpiResult.kpi_id == kpi.id, KpiResult.formula_version_id == f.id,
+        KpiResult.period_start == ps, KpiResult.period_end == pe, KpiResult.scope_key == scope.key(),
+    ).order_by(KpiResult.id.desc()).limit(1)).scalar()
+    if r is None:
+        return None
+    num = lambda v: float(v) if v is not None else None  # noqa: E731
+    res = enforce_privacy(CalcResult(r.status, num(r.value), num(r.numerator), num(r.denominator), r.sample_size,
+                                     num(r.quality_score), r.breakdown or {}, r.lineage or {},
+                                     "Closed period: frozen result" + (" (newer source data exists - reopen to "
+                                                                      "recalculate)" if r.is_stale else "")))
+    return res, {"frozen": True, "is_stale": r.is_stale, "run_id": r.run_id}
 
 
 def monthly_series(db: Session, ctx: AccessContext, code: str, ps: date, pe: date, **kw) -> list[dict]:
@@ -242,10 +300,42 @@ def run_calculation(db: Session, ctx: AccessContext, codes: list[str], ps: date,
     return run
 
 
+# Allowed formula parameters per calculator (audit finding #7): unknown keys / wrong types are rejected.
+_LEAVE_TYPES = {"annual", "sick", "unpaid", "unexcused", "public_holiday", "parental", "other"}
+_EVENT_TYPES = {"fatality", "lost_time_injury", "restricted_work", "medical_treatment", "first_aid", "near_miss"}
+_TERM = {"voluntary", "employer_initiated", "contract_end", "project_end", "retirement", "death", "other", "unknown"}
+PARAM_RULES = {
+    "absence_types": lambda v: isinstance(v, list) and v and set(v) <= _LEAVE_TYPES,
+    "annualize": lambda v: isinstance(v, bool),
+    "min_coverage": lambda v: isinstance(v, int | float) and 0 < v <= 1,
+    "multiplier": lambda v: v in (200_000, 1_000_000),
+    "event_types": lambda v: isinstance(v, list) and v and set(v) <= _EVENT_TYPES,
+    "reporting_currency": lambda v: isinstance(v, str) and len(v) == 3 and v.isalpha() and v.isupper(),
+    "days": lambda v: isinstance(v, int) and 1 <= v <= 365,
+    "exclude_categories": lambda v: isinstance(v, list) and set(v) <= _TERM,
+}
+
+
+def validate_parameters(params: dict) -> None:
+    for k, v in params.items():
+        rule = PARAM_RULES.get(k)
+        if rule is None:
+            raise KpiError(f"Unknown formula parameter '{k}'")
+        if not rule(v):
+            raise KpiError(f"Invalid value for formula parameter '{k}'")
+
+
 def create_formula_version(db: Session, ctx: AccessContext, code: str, *, parameters: dict,
                            formula_text: str | None, change_note: str) -> KpiFormulaVersion:
+    """The KPI catalog is GLOBAL (shared by all tenants), so changing it is a platform-operator action that
+    requires admin.platform in addition to kpi.manage. Tenant-specific overrides are backlog B-09."""
+    if not ctx.has("admin.platform"):
+        raise ScopeDenied("Formula versions are global; admin.platform is required")
+    validate_parameters(parameters)
     kpi = get_definition(db, code)
-    cur = get_formula(db, kpi)
+    # row lock serialises concurrent version bumps; unique(kpi_id, version) is the final guard
+    cur = db.execute(select(KpiFormulaVersion).where(KpiFormulaVersion.kpi_id == kpi.id,
+                                                     KpiFormulaVersion.is_current.is_(True)).with_for_update()).scalar_one()
     cur.is_current = False
     new = KpiFormulaVersion(kpi_id=kpi.id, version=cur.version + 1, calculator_key=cur.calculator_key,
                             formula_text=formula_text or cur.formula_text, numerator_def=cur.numerator_def,

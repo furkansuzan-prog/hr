@@ -57,7 +57,7 @@ TLS denetimli kurumsal proxy arkasında derlerken: `docker build --secret id=ext
 ```bash
 cd backend && createdb hrswi_test && pytest -q
 ```
-61 test: KPI'ların el hesabıyla doğrulanması, 20 zorunlu senaryo, yetki izolasyonu, import (5.000 satır XLSX dahil), asistan, raporlar. Testler gerçek PostgreSQL kullanır ve şemayı migration'larla kurar.
+73 test: KPI'ların el hesabıyla doğrulanması, 20 zorunlu senaryo, yetki izolasyonu, import (5.000 satır XLSX dahil), asistan, raporlar ve bağımsız denetim bulgularının regresyon testleri. Testler gerçek PostgreSQL kullanır ve şemayı migration'larla kurar.
 ```bash
 cd frontend && node e2e/smoke.mjs ../docs/screenshots
 ```

@@ -13,7 +13,7 @@
 ## Kalite kapıları (her birleştirmede — CI)
 1. `ruff check` temiz · `tsc --noEmit` temiz · `eslint` hatasız
 2. `alembic upgrade head` + `alembic check` (model–migration sapması yok)
-3. `pytest` tamamı geçer (şu an 61 test, gerçek PostgreSQL)
+3. `pytest` tamamı geçer (şu an 73 test, gerçek PostgreSQL)
 4. `next build` başarılı · `docker compose build`
 5. Ortak sözleşme değişikliği → ADR + Orchestrator onayı
 

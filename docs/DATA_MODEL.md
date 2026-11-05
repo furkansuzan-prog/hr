@@ -1,6 +1,6 @@
 # HRSWI — Veri Modeli · Agent 05
 
-Tam kolon listesi: [`DATA_DICTIONARY.md`](DATA_DICTIONARY.md) (koddan üretilir). Şema: 58 tablo, Alembic `0001` → `0002`.
+Tam kolon listesi: [`DATA_DICTIONARY.md`](DATA_DICTIONARY.md) (koddan üretilir). Şema: 58 tablo, Alembic `0001` → `0002` → `0003`.
 
 ## Temel ayrımlar (Master Prompt §2)
 | Kavram | Tablo | Not |

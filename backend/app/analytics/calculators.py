@@ -110,7 +110,7 @@ def _separations(db: Session, scope: Scope, ps: date, pe: date) -> dict[str, int
             f"WHERE e.end_date BETWEEN :ps AND :pe {where} "
             "AND NOT EXISTS (SELECT 1 FROM employment_relationships e2 WHERE e2.person_id = e.person_id "
             "AND e2.id <> e.id AND e2.start_date > e.end_date AND e2.start_date <= e.end_date + :gap "
-            f"{where2.replace(':d', 'e.end_date')}) GROUP BY 1"
+            f"{where2}) GROUP BY 1"
         ),
         {**p, "ps": ps, "pe": pe, "gap": TRANSFER_GAP_DAYS},
     ).all()
@@ -153,7 +153,7 @@ def turnover_rate(db: Session, scope: Scope, ps: date, pe: date, params: dict) -
     avg, avg_lineage = average_headcount(db, scope, ps, pe)
     res = ratio(n, avg, sample_size=round(avg), min_sample=_min_group(), has_source_data=avg > 0 or n > 0)
     if res.status == OK:
-        res.breakdown = {"by_termination_category": suppress_small_counts(seps, round(avg), 1)}
+        res.breakdown = {"by_termination_category": suppress_small_counts(seps, round(avg), _min_group())}
     unknown = seps.get("unknown", 0)
     res.quality_score = round(100 * (1 - unknown / n), 1) if n else 100.0
     res.lineage = {"tables": ["employment_relationships", "assignments"], "separations": n,
@@ -179,7 +179,7 @@ def retention_rate(db: Session, scope: Scope, ps: date, pe: date, params: dict) 
         {**p, "ps": ps, "pe": pe},
     ).one()
     start_n, retained = int(r[0]), int(r[1])
-    res = ratio(retained, start_n, sample_size=start_n, min_sample=_min_group(), has_source_data=True)
+    res = ratio(retained, start_n, sample_size=start_n, min_sample=_min_group(), has_source_data=start_n > 0)
     res.quality_score = 100.0
     res.lineage = {"tables": ["employment_relationships"], "start_population": start_n, "retained": retained}
     return res
@@ -281,9 +281,17 @@ def plan_deviation(db: Session, scope: Scope, ps: date, pe: date, params: dict) 
     if scope.project_id:
         where += " AND project_id = :project"
         p["project"] = scope.project_id
+    if scope.occupation_group:
+        # plans without an occupation cannot be compared to an occupation-filtered actual
+        where += " AND occupation_id IN (SELECT id FROM occupations WHERE tenant_id = :tenant AND occupation_group = :occ)"
+        p["occ"] = scope.occupation_group
+    # only the latest plan version per (entity, project, occupation, month) counts - no double counting
     plans = dict(db.execute(
-        text("SELECT period_month, sum(planned_headcount) FROM workforce_plans WHERE tenant_id = :tenant "
-             f"AND period_month BETWEEN :ps AND :pe {where} GROUP BY 1"), p).all())
+        text("SELECT period_month, sum(planned_headcount) FROM workforce_plans w WHERE tenant_id = :tenant "
+             f"AND period_month BETWEEN :ps AND :pe {where} AND plan_version = (SELECT max(plan_version) "
+             "FROM workforce_plans w2 WHERE w2.tenant_id = w.tenant_id AND w2.legal_entity_id = w.legal_entity_id "
+             "AND w2.project_id IS NOT DISTINCT FROM w.project_id AND w2.occupation_id IS NOT DISTINCT FROM w.occupation_id "
+             "AND w2.period_month = w.period_month) GROUP BY 1"), p).all())
     months = month_starts(ps, pe)
     planned_months = [m for m in months if m in plans]
     if not planned_months:
@@ -344,7 +352,7 @@ def competency_coverage(db: Session, scope: Scope, ps: date, pe: date, params: d
             "act AS (SELECT DISTINCT e.person_id, a.occupation_id FROM assignments a JOIN employment_relationships e "
             " ON e.id = a.employment_id WHERE a.valid_from <= :pe AND (a.valid_to IS NULL OR a.valid_to > :pe) "
             f" AND e.start_date <= :pe AND (e.end_date IS NULL OR e.end_date >= :pe) {where}), "
-            "have AS (SELECT act.person_id, act.occupation_id, count(*) h FROM act "
+            "have AS (SELECT act.person_id, act.occupation_id, count(DISTINCT oc.competency_id) h FROM act "
             " JOIN occupation_competencies oc ON oc.occupation_id = act.occupation_id AND oc.mandatory "
             " JOIN employee_competencies ec ON ec.person_id = act.person_id AND ec.competency_id = oc.competency_id "
             "  AND ec.valid_from <= :pe AND (ec.valid_to IS NULL OR ec.valid_to > :pe) GROUP BY 1, 2) "
@@ -408,6 +416,24 @@ def labor_cost_total(db: Session, scope: Scope, ps: date, pe: date, params: dict
     return total, info
 
 
+def _output_units(db: Session, scope: Scope, ps: date, pe: date) -> list[str]:
+    p: dict = {"tenant": scope.tenant_id, "ps": ps, "pe": pe}
+    where = ""
+    if scope.entity_ids is not None:
+        where += " AND w.legal_entity_id = ANY(:ents)"
+        p["ents"] = list(scope.entity_ids) or [-1]
+    if scope.project_id:
+        where += " AND wp.project_id = :project"
+        p["project"] = scope.project_id
+    if scope.occupation_group:
+        where += " AND wp.occupation_group = :occ"
+        p["occ"] = scope.occupation_group
+    return sorted(db.execute(text(
+        "SELECT DISTINCT wp.unit FROM work_outputs w JOIN work_packages wp ON wp.id = w.work_package_id "
+        f"WHERE w.tenant_id = :tenant AND w.output_date BETWEEN :ps AND :pe AND w.accepted_quantity IS NOT NULL {where}"),
+        p).scalars())
+
+
 def unit_labor_cost(db: Session, scope: Scope, ps: date, pe: date, params: dict) -> CalcResult:
     """KPI-010: labour cost allocated to the output / accepted quantity (project-level indicator)."""
     total, info = labor_cost_total(db, scope, ps, pe, params)
@@ -415,6 +441,11 @@ def unit_labor_cost(db: Session, scope: Scope, ps: date, pe: date, params: dict)
     if total is None:
         note = ("Missing FX rate(s): " + ", ".join(info["missing_fx"])) if info["missing_fx"] else "No cost data"
         return CalcResult(INSUFFICIENT, note=note, quality_score=0.0, lineage=info)
+    units = _output_units(db, scope, ps, pe)
+    if len(units) > 1:
+        return CalcResult(INSUFFICIENT, quality_score=0.0, lineage={"tables": ["work_outputs"], "units": units},
+                          note="Output measured in several units (" + ", ".join(units) + "); quantities cannot be "
+                               "added - filter to a project/work type with a single unit")
     res = ratio(total, o["accepted"], scale=1.0, sample_size=info["persons"], min_sample=_min_group(),
                 has_source_data=o["rows"] > 0)
     res.lineage = {**info, "output_rows": o["rows"], "accepted_quantity": o["accepted"]}
@@ -431,7 +462,9 @@ def time_to_hire(db: Session, scope: Scope, ps: date, pe: date, params: dict) ->
         p["ents"] = list(scope.entity_ids) or [-1]
     r = db.execute(
         text("SELECT count(*), coalesce(sum(offer_accepted_on - approved_on),0) FROM requisitions "
-             f"WHERE tenant_id = :tenant AND offer_accepted_on BETWEEN :ps AND :pe {where}"), p).one()
+             f"WHERE tenant_id = :tenant AND offer_accepted_on BETWEEN :ps AND :pe {where}"
+             + (" AND occupation_id IN (SELECT id FROM occupations WHERE tenant_id = :tenant AND occupation_group = :occ)"
+                if scope.occupation_group else "")), {**p, "occ": scope.occupation_group}).one()
     res = ratio(float(r[1]), int(r[0]), scale=1.0, sample_size=int(r[0]), has_source_data=int(r[0]) > 0)
     res.quality_score = 100.0 if r[0] else 0.0
     res.lineage = {"tables": ["requisitions"], "filled_requisitions": int(r[0])}
@@ -450,6 +483,9 @@ def rework_rate(db: Session, scope: Scope, ps: date, pe: date, params: dict) -> 
 
 
 def _safety_rate(db: Session, scope: Scope, ps: date, pe: date, types: list[str], multiplier: float) -> CalcResult:
+    if scope.occupation_group:
+        return CalcResult(INSUFFICIENT, quality_score=0.0, lineage={"tables": ["safety_events"]},
+                          note="Safety events are not recorded per occupation; rate not available for an occupation filter")
     p: dict = {"tenant": scope.tenant_id, "ps": ps, "pe": pe, "types": types}
     where = ""
     if scope.entity_ids is not None:
@@ -463,7 +499,8 @@ def _safety_rate(db: Session, scope: Scope, ps: date, pe: date, types: list[str]
              f"AND event_date BETWEEN :ps AND :pe AND event_type = ANY(:types) {where} GROUP BY 1"), p).all())
     n = sum(rows.values())
     h = _hours(db, scope, ps, pe)
-    res = ratio(n, h["worked"], scale=multiplier, has_source_data=h["rows"] > 0)
+    res = ratio(n, h["worked"], scale=multiplier, has_source_data=h["rows"] > 0, sample_size=h["persons"],
+                min_sample=_min_group())
     res.breakdown = {"events_by_type": rows, "hours_worked": round(h["worked"], 1), "multiplier": multiplier}
     res.quality_score = 100.0 if h["rows"] else 0.0
     res.lineage = {"tables": ["safety_events", "timesheets"], "event_types_counted": types}
@@ -498,7 +535,7 @@ def new_hire_count(db: Session, scope: Scope, ps: date, pe: date, params: dict) 
         text("SELECT count(*) FROM employment_relationships e WHERE e.start_date BETWEEN :ps AND :pe "
              f"{where} AND NOT EXISTS (SELECT 1 FROM employment_relationships e2 WHERE e2.person_id = e.person_id "
              "AND e2.id <> e.id AND e2.end_date < e.start_date AND e2.end_date >= e.start_date - :gap "
-             f"{where2.replace(':d', 'e.start_date')})"),
+             f"{where2})"),
         {**p, "ps": ps, "pe": pe, "gap": TRANSFER_GAP_DAYS},
     ).scalar()
     return CalcResult(OK, float(n), sample_size=int(n), quality_score=100.0,
@@ -509,10 +546,18 @@ def early_turnover_90(db: Session, scope: Scope, ps: date, pe: date, params: dic
     """KPI-018: share of hires (start in period) who left within `days` days of starting."""
     days = params.get("days", 90)
     where, p = _emp_where(scope, date_from=":ps", date_to=":pe")
+    ents = Scope(scope.tenant_id, scope.entity_ids)
+    w_in, _ = _emp_where(ents, alias="e2")
+    w_out, _ = _emp_where(ents, alias="e3")
+    # same transfer rule as KPI-001/017: transfers in are not hires, transfers out are not early leavers
     r = db.execute(
-        text("SELECT count(*), count(*) FILTER (WHERE e.end_date IS NOT NULL AND e.end_date < e.start_date + :days) "
-             f"FROM employment_relationships e WHERE e.start_date BETWEEN :ps AND :pe {where}"),
-        {**p, "ps": ps, "pe": pe, "days": days},
+        text("SELECT count(*), count(*) FILTER (WHERE e.end_date IS NOT NULL AND e.end_date < e.start_date + :days "
+             "AND NOT EXISTS (SELECT 1 FROM employment_relationships e3 WHERE e3.person_id = e.person_id "
+             f"AND e3.id <> e.id AND e3.start_date > e.end_date AND e3.start_date <= e.end_date + :gap {w_out})) "
+             f"FROM employment_relationships e WHERE e.start_date BETWEEN :ps AND :pe {where} "
+             "AND NOT EXISTS (SELECT 1 FROM employment_relationships e2 WHERE e2.person_id = e.person_id "
+             f"AND e2.id <> e.id AND e2.end_date < e.start_date AND e2.end_date >= e.start_date - :gap {w_in})"),
+        {**p, "ps": ps, "pe": pe, "days": days, "gap": TRANSFER_GAP_DAYS},
     ).one()
     hires, early = int(r[0]), int(r[1])
     res = ratio(early, hires, sample_size=hires, min_sample=_min_group(), has_source_data=True)

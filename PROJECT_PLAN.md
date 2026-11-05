@@ -29,7 +29,7 @@ Başlangıçta çalışma dizini **boştu**; korunacak mevcut kod yoktu. Ortam: 
 | FAZ 7 Hardening | Güvenlik, performans, i18n, yedek, izleme | ◐ Önbellek + ölçüm ✔; geri kalanı ✖ |
 
 ## 4. Orchestrator çalışma sırası (ADIM 1–12) — yapılanlar
-1. Envanter ✔ · 2. Varsayımlar ✔ · 3. Ajan ekipleri ve bağımlılık planı → `AGENTS.md` ✔ · 4. PRD, mimari, veri modeli, KPI sözlüğü, ekran haritası → `docs/` ✔ · 5. API sözleşmeleri → `INTEGRATION_CONTRACTS.md` + OpenAPI ✔ · 6. Önceliklendirilmiş backlog → `TASK_BOARD.md` ✔ · 7–8. Çalışan uygulama, bileşenler bağlı ✔ · 9. Sentetik veriyle fonksiyonel + güvenlik testleri (61 backend + 12 E2E) ✔ · 10. Dashboard gerçek API ile ✔ · 11. Bağımsız denetim → `docs/AUDIT_REPORT.md` ✔ · 12. Rapor → `README.md` + `TASK_BOARD.md` ✔
+1. Envanter ✔ · 2. Varsayımlar ✔ · 3. Ajan ekipleri ve bağımlılık planı → `AGENTS.md` ✔ · 4. PRD, mimari, veri modeli, KPI sözlüğü, ekran haritası → `docs/` ✔ · 5. API sözleşmeleri → `INTEGRATION_CONTRACTS.md` + OpenAPI ✔ · 6. Önceliklendirilmiş backlog → `TASK_BOARD.md` ✔ · 7–8. Çalışan uygulama, bileşenler bağlı ✔ · 9. Sentetik veriyle fonksiyonel + güvenlik testleri (73 backend + 12 E2E) ✔ · 10. Dashboard gerçek API ile ✔ · 11. Bağımsız denetim → `docs/AUDIT_REPORT.md` ✔ · 12. Rapor → `README.md` + `TASK_BOARD.md` ✔
 
 ## 5. Riskler
 | Risk | Etki | Önlem |

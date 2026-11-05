@@ -28,7 +28,8 @@
 | G5 | Saklama–imha işleri otomatik değil | Politika tablosu + zamanlanmış anonimleştirme |
 | G6 | Brute-force koruması / rate limit yok | Reverse proxy + hesap kilitleme |
 | G7 | KVKK md.11 başvuru süreci (erişim/düzeltme/silme) için iş akışı yok | Talep kaydı + veri dışa aktarma/anonimleştirme |
-| G8 | Formül versiyonları global (tenant'a özel devamsızlık tanımı yok) | Tenant düzeyinde formül override (P1) |
+| G8 | Formül versiyonları global (tenant'a özel devamsızlık tanımı yok); değişiklik `admin.platform` ister, DB tetikleyicisiyle değişmez | Tenant düzeyinde formül override (P1) |
+| G9 | Alt yüklenici görünürlüğü bugünkü paylaşım iznine göre: bugün verilen izin geçmişi de açar, sona eren ilişki geçmiş dönemleri gizler (denetim #16) ⚖️ | Politika kararı: (a) bugünkü izin (mevcut), (b) yalnızca izin geçerliyken oluşan dönemler |
 
 ## 3. Saklama ve imha politikası (öneri ⚖️)
 | Veri | Öneri | Dayanak (incelenmeli) |
@@ -37,7 +38,7 @@
 | Puantaj, ücret | 10 yıl | Vergi/SGK mevzuatı |
 | İSG olay kayıtları | 15 yıl (toplu, kişisiz) | 6331 s. Kanun |
 | Denetim logları | 2 yıl sıcak + 5 yıl arşiv | Kurum politikası |
-| Import ham satırları (`import_staging_rows.raw`) | Commit'ten sonra 90 gün | Veri minimizasyonu — ⚠️ ham satırlar şu an süresiz tutuluyor |
+| Import ham satırları (`import_staging_rows.raw`) | Commit'ten sonra 90 gün | Veri minimizasyonu — kimlik no saklamadan önce HMAC'lenir; ⚠️ satırlar şu an süresiz tutuluyor |
 | Anket | Yalnızca toplu sonuç; bireysel yanıt tutulmaz | KVKK md.4 |
 
 ## 4. İhlal müdahale prosedürü (özet)

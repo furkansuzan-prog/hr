@@ -18,10 +18,16 @@ from app.models import AiAnalysisRun, ImprovementAction
 from app.security.access import AccessContext
 
 PROHIBITED = [
-    r"işten çıkar", r"kov(ul|al)?", r"kimi çıkar", r"terfi", r"maaş(ını)? belirle", r"ücret(ini)? belirle", r"disiplin",
-    r"\bfire\b", r"\blay ?off\b", r"who should (we|i) (fire|dismiss)", r"promot", r"set (his|her|their) salary",
-    r"disciplin", r"уволи", r"повышени", r"зарплат[уы] (назнач|определ)", r"дисциплин",
-    r"(kişi|çalışan|employee|сотрудник)\w* risk (puan|score)",
+    # TR
+    r"işten (çıkar|at)", r"\bkov(ul|al|ma|mak|duk|alım)", r"kimi çıkar", r"terfi", r"(maaşını|ücretini|maaşı|ücreti) (belirle|ne kadar olmalı)",
+    r"disiplin", r"(kime|kaç para) (ödeme|maaş)", r"(fesih|feshet)",
+    # EN
+    r"\bfire\b", r"\bfired\b", r"\blay ?off", r"\blet (\w+ ){0,3}go\b", r"\bterminat", r"\bdismiss", r"\bsack",
+    r"\bpromot", r"\bdemot", r"set (his|her|their|the) (salary|pay|wage)", r"how much should we pay", r"disciplin",
+    # RU
+    r"(кого|какого|каких)\s+(\w+\s+)?уволи", r"уволить\b", r"увольн\w* (кого|сотрудник)", r"повышени", r"зарплат\w* (кому|сотруднику|ему|ей)", r"дисциплин", r"премир",
+    # individual risk scoring on protected/personal attributes
+    r"(kişi|çalışan|employee|individual|сотрудник)\w* (risk )?(puan|score|скор)",
 ]
 
 INTENTS: list[tuple[str, list[str]]] = [
@@ -34,7 +40,7 @@ INTENTS: list[tuple[str, list[str]]] = [
     ("productivity_loss", ["verimlilik", "iş paket", "productivity", "work package", "производительн"]),
     ("safety", ["kaza", "isg", "iş güvenliği", "safety", "ltifr", "trir", "injur", "травм", "безопасн"]),
     ("absenteeism", ["devamsızlık", "absentee", "absence", "абсентеизм", "прогул"]),
-    ("turnover_trend", ["devir", "ayrılış", "turnover", "attrition", "текучест", "увольнен"]),
+    ("turnover_trend", ["devir", "ayrılış", "turnover", "attrition", "текучест", "увольнен", "уволил"]),
 ]
 
 T = {
@@ -185,6 +191,8 @@ def handle(db: Session, ctx: AccessContext, question: str, as_of: date | None = 
                                  "ru": "В вашей области нет плана персонала."}[lang]
 
         elif intent == "forecast_headcount":
+            if not ctx.has("forecast.read"):  # audit finding #14: assistant may not bypass permissions
+                raise engine.ScopeDenied("Missing permission forecast.read")
             tools.append("forecast.headcount")
             fc = headcount_forecast(db, ctx, as_of=last_full, horizon=3)
             out["kind"] = "forecast"

@@ -15,6 +15,7 @@ from app.models import (
     DataSource,
     EmploymentRelationship,
     FrameworkRequirement,
+    ImportBatch,
     ImprovementAction,
     KpiDefinition,
     LegalEntity,
@@ -188,8 +189,10 @@ def person_history(person_id: int, request: Request, ctx: AccessContext = Depend
     emps = list(db.execute(select(EmploymentRelationship).where(EmploymentRelationship.person_id == person_id)
                            .order_by(EmploymentRelationship.start_date)).scalars())
     visible = [e for e in emps if ctx.can_see_entity("people.read", e.legal_entity_id)]
-    if not visible:
-        deny_entity(ctx, request, "people.read", {e.legal_entity_id for e in emps} or {-1})
+    if not visible:  # 404 (not 403) so person ids cannot be probed; the attempt is still audited
+        write_audit(tenant_id=ctx.tenant_id, user_id=ctx.user_id, action="authz.scope_denied", entity_type="person",
+                    entity_id=str(person_id), outcome="denied")
+        raise HTTPException(404, "Not found")
     names = {e.id: e.name for e in db.execute(select(LegalEntity).where(
         LegalEntity.id.in_({x.legal_entity_id for x in visible}))).scalars()}
     out = []
@@ -204,7 +207,7 @@ def person_history(person_id: int, request: Request, ctx: AccessContext = Depend
                 entity_id=str(person_id))
     pii = ctx.has("people.pii")
     return {"person_id": p.id, "name": f"{p.first_name} {p.last_name}" if pii else None,
-            "hidden_spells": len(emps) - len(visible), "employments": out}
+            "employments": out}
 
 
 # ------------------------------------------------------------------ data quality & integrations
@@ -213,14 +216,17 @@ def person_history(person_id: int, request: Request, ctx: AccessContext = Depend
 @router.get("/api/v1/data-quality/issues", tags=["data"])
 def dq_issues(limit: int = Query(100, le=500), ctx: AccessContext = Depends(require("import.write")),
               db: Session = Depends(get_db)):
-    rows = db.execute(select(DataQualityIssue).where(DataQualityIssue.tenant_id == ctx.tenant_id)
-                      .order_by(DataQualityIssue.id.desc()).limit(limit)).scalars()
+    q = select(DataQualityIssue).where(DataQualityIssue.tenant_id == ctx.tenant_id)
+    if ctx.entity_filter("import.write") is not None:
+        q = q.where(DataQualityIssue.import_batch_id.in_(
+            select(ImportBatch.id).where(ImportBatch.created_by == ctx.user_id)))
+    rows = db.execute(q.order_by(DataQualityIssue.id.desc()).limit(limit)).scalars()
     return [{"id": i.id, "batch_id": i.import_batch_id, "rule": i.rule_code, "severity": i.severity,
              "message": i.message, "row": i.row_number, "status": i.status} for i in rows]
 
 
 @router.get("/api/v1/integrations/sources", tags=["data"])
-def sources(ctx: AccessContext = Depends(require("org.read")), db: Session = Depends(get_db)):
+def sources(ctx: AccessContext = Depends(require("import.write")), db: Session = Depends(get_db)):
     rows = db.execute(select(DataSource).where(DataSource.tenant_id == ctx.tenant_id)).scalars()
     return [{"id": s.id, "code": s.code, "name": s.name, "kind": s.kind, "status": s.status,
              "last_success_at": s.last_success_at, "last_error": s.last_error} for s in rows]

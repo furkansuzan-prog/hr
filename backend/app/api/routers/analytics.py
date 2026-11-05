@@ -11,6 +11,7 @@ from app.ai import assistant
 from app.ai.service import headcount_forecast, kpi_anomalies
 from app.analytics import engine
 from app.api.common import Filters
+from app.core.config import get_settings
 from app.core.db import get_db
 from app.models import (
     ImportBatch,
@@ -32,6 +33,11 @@ def _kpi_call(fn, *a, **kw):
     try:
         return fn(*a, **kw)
     except engine.KpiError as e:
+        if isinstance(e, engine.ScopeDenied):  # audit finding #15: scope denials on analytics are audited too
+            ctx = next((x for x in a if isinstance(x, AccessContext)), None)
+            if ctx is not None:
+                write_audit(tenant_id=ctx.tenant_id, user_id=ctx.user_id, action="authz.scope_denied",
+                            entity_type="kpi", outcome="denied", details={"fn": fn.__name__, "reason": str(e)})
         raise HTTPException(e.status_code, str(e)) from None
 
 
@@ -136,10 +142,19 @@ def kpi_run_get(run_id: int, ctx: AccessContext = Depends(require("kpi.read")), 
     run = db.get(KpiCalculationRun, run_id)
     if run is None or run.tenant_id != ctx.tenant_id:
         raise HTTPException(404, "Not found")
+    # audit finding #1: persisted runs may cover a wider scope than the reader; only tenant-wide readers or the
+    # user who triggered the run may read it, and cost KPIs additionally need tenant-wide cost.read
+    if ctx.entity_filter("kpi.read") is not None and run.triggered_by != ctx.user_id:
+        write_audit(tenant_id=ctx.tenant_id, user_id=ctx.user_id, action="authz.scope_denied", entity_type="kpi_run",
+                    entity_id=str(run_id), outcome="denied")
+        raise HTTPException(404, "Not found")
+    cost_ok = ctx.has("cost.read") and (ctx.entity_filter("cost.read") is None or run.triggered_by == ctx.user_id)
     rows = db.execute(select(KpiResult, KpiDefinition.code, KpiFormulaVersion.version)
                       .join(KpiDefinition, KpiDefinition.id == KpiResult.kpi_id)
                       .join(KpiFormulaVersion, KpiFormulaVersion.id == KpiResult.formula_version_id)
                       .where(KpiResult.run_id == run.id)).all()
+    sensitive = {d.code for d in db.execute(select(KpiDefinition).where(KpiDefinition.sensitive.is_(True))).scalars()}
+    rows = [(r, c, v) for r, c, v in rows if cost_ok or c not in sensitive]
     return {"run_id": run.id, "status": run.status, "period_start": run.period_start, "period_end": run.period_end,
             "started_at": run.started_at, "finished_at": run.finished_at, "error": run.error, "results": [
                 {"code": c, "formula_version": v, "value": float(r.value) if r.value is not None else None,
@@ -284,7 +299,13 @@ def _imp(fn, *a, **kw):
 @router.post("/imports", tags=["imports"], status_code=201)
 async def import_upload(file: UploadFile = File(...), entity_type: str = Form("employment"),
                         ctx: AccessContext = Depends(require("import.write")), db: Session = Depends(get_db)):
-    content = await file.read()
+    limit = get_settings().max_upload_mb * 1024 * 1024
+    buf = bytearray()
+    while chunk := await file.read(1024 * 1024):  # audit finding #18: never buffer more than the limit
+        buf += chunk
+        if len(buf) > limit:
+            raise HTTPException(413, f"File larger than {get_settings().max_upload_mb} MB")
+    content = bytes(buf)
     res = _imp(imp.upload, db, ctx, entity_type=entity_type, filename=file.filename or "upload", content=content)
     write_audit(tenant_id=ctx.tenant_id, user_id=ctx.user_id, action="import.upload", entity_type="import_batch",
                 entity_id=str(res["batch_id"]), details={"rows": res["total_rows"]})
@@ -311,8 +332,10 @@ def import_commit(batch_id: int, ctx: AccessContext = Depends(require("import.wr
 
 @router.get("/imports", tags=["imports"])
 def import_list(ctx: AccessContext = Depends(require("import.write")), db: Session = Depends(get_db)):
-    rows = db.execute(select(ImportBatch).where(ImportBatch.tenant_id == ctx.tenant_id)
-                      .order_by(ImportBatch.id.desc()).limit(50)).scalars()
+    q = select(ImportBatch).where(ImportBatch.tenant_id == ctx.tenant_id)
+    if ctx.entity_filter("import.write") is not None:  # entity-scoped importers only see their own batches
+        q = q.where(ImportBatch.created_by == ctx.user_id)
+    rows = db.execute(q.order_by(ImportBatch.id.desc()).limit(50)).scalars()
     return [imp.summary(db, ctx, b.id) for b in rows]
 
 
