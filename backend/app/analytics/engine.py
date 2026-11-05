@@ -402,11 +402,33 @@ PARAM_RULES = {
 }
 
 
-def validate_parameters(params: dict) -> None:
+# Parameters each calculator actually reads (HR sprint-1 finding: a valid-looking key the calculator ignores, e.g.
+# exclude_categories on early_turnover_90, silently changed nothing). Engine-level keys apply to every calculator.
+_ENGINE_PARAMS = {"annualize", "threshold_min_days"}
+CALCULATOR_PARAMS: dict[str, set[str]] = {
+    "turnover_rate": {"exclude_categories", "include_categories"},
+    "absenteeism_rate": {"absence_types"},
+    "protected_leave_share": {"absence_types"},
+    "annual_leave_usage": {"hours_per_day"},
+    "annual_leave_nonuse": {"hours_per_day"},
+    "capacity_utilization": {"min_coverage"},
+    "unit_labor_cost": {"reporting_currency"},
+    "ltifr": {"event_types", "multiplier"},
+    "trir": {"event_types", "multiplier"},
+    "early_turnover_90": {"days"},
+    "labor_cost_per_employee": {"reporting_currency"},
+    "overtime_cost_share": {"reporting_currency"},
+}
+
+
+def validate_parameters(params: dict, calculator_key: str | None = None) -> None:
+    allowed = None if calculator_key is None else _ENGINE_PARAMS | CALCULATOR_PARAMS.get(calculator_key, set())
     for k, v in params.items():
         rule = PARAM_RULES.get(k)
         if rule is None:
             raise KpiError(f"Unknown formula parameter '{k}'")
+        if allowed is not None and k not in allowed:
+            raise KpiError(f"Formula parameter '{k}' is not used by calculator '{calculator_key}'")
         if not rule(v):
             raise KpiError(f"Invalid value for formula parameter '{k}'")
 
@@ -417,11 +439,11 @@ def create_formula_version(db: Session, ctx: AccessContext, code: str, *, parame
     requires admin.platform in addition to kpi.manage. Tenant-specific overrides are backlog B-09."""
     if not ctx.has("admin.platform"):
         raise ScopeDenied("Formula versions are global; admin.platform is required")
-    validate_parameters(parameters)
     kpi = get_definition(db, code)
     # row lock serialises concurrent version bumps; unique(kpi_id, version) is the final guard
     cur = db.execute(select(KpiFormulaVersion).where(KpiFormulaVersion.kpi_id == kpi.id,
                                                      KpiFormulaVersion.is_current.is_(True)).with_for_update()).scalar_one()
+    validate_parameters(parameters, cur.calculator_key)
     cur.is_current = False
     new = KpiFormulaVersion(kpi_id=kpi.id, version=cur.version + 1, calculator_key=cur.calculator_key,
                             formula_text=formula_text or cur.formula_text, numerator_def=cur.numerator_def,
