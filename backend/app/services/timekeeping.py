@@ -1,5 +1,6 @@
 """Timekeeping rules (Module D). Badge events are PRESENCE evidence only - never productive time or pay entitlement."""
 import hashlib
+import unicodedata
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 
@@ -115,11 +116,22 @@ _LEAVE_RULES: list[tuple[str, tuple[str, ...]]] = [
                   "adoption", "декрет", "беремен", "по уходу за ребенком", "родам")),
     ("public_holiday", ("resmi tatil", "resmî tatil", "bayram", "public holiday", "national holiday", "праздни")),
     ("unexcused", ("habersiz", "mazeretsiz", "devamsız", "devamsiz", "unexcused", "absent without", "awol", "прогул")),
-    ("sick", ("rapor", "hastalık", "hastalik", "istirahat", "iş kazası", "is kazasi", "sick", "medical", "illness",
-              "больничн", "нетрудоспособ")),
+    # work accident / occupational disease stay 'sick' until WP-1 (separate work_injury type) is approved
+    ("sick", ("rapor", "hastalık", "hastalik", "istirahat", "iş kazası", "is kazasi", "meslek hastal", "sick",
+              "medical", "illness", "work injur", "occupational", "больничн", "нетрудоспособ", "производственн")),
     ("annual", ("yıllık", "yillik", "annual", "vacation", "holiday leave", "ежегодн")),
     ("unpaid", ("ücretsiz", "ucretsiz", "unpaid", "without pay", "без сохранения")),
 ]
+
+
+def _fold(text_: str) -> str:
+    """Turkish-safe case/diacritic folding: 'İŞ KAZASI', 'iş kazası' and 'is kazasi' all compare equal.
+    (str.lower() turns 'İ' into 'i' + combining dot, which broke matching of upper-case Turkish labels.)"""
+    t = (text_ or "").strip().replace("İ", "i").replace("I", "i").replace("ı", "i").lower()
+    return "".join(c for c in unicodedata.normalize("NFKD", t) if not unicodedata.combining(c))
+
+
+_FOLDED_RULES = [(lt, tuple(_fold(n) for n in needles)) for lt, needles in _LEAVE_RULES]
 
 
 def normalize_leave_type(label: str | None, sgk_report_code: str | None = None) -> str:
@@ -127,10 +139,10 @@ def normalize_leave_type(label: str | None, sgk_report_code: str | None = None) 
     Unknown labels map to 'other' (counted by KPI-003, flagged for review by the import's data-quality rules)."""
     if sgk_report_code is not None and str(sgk_report_code).strip() in SGK_REPORT_CODES:
         return SGK_REPORT_CODES[str(sgk_report_code).strip()]
-    text_ = (label or "").strip().lower()
+    text_ = _fold(label or "")
     if text_ in {"annual", "sick", "unpaid", "unexcused", "public_holiday", "parental", "other"}:
         return text_
-    for leave_type, needles in _LEAVE_RULES:
+    for leave_type, needles in _FOLDED_RULES:
         if any(n in text_ for n in needles):
             return leave_type
     return "other"

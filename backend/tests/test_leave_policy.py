@@ -151,6 +151,11 @@ def test_approved_thresholds_applied(db, leavex):
     ("İstirahat raporu", "3", "sick"), ("Hastalık raporu", None, "sick"), ("Yıllık izin", None, "annual"),
     ("Ücretsiz izin", None, "unpaid"), ("Habersiz devamsızlık", None, "unexcused"),
     ("Resmi tatil", None, "public_holiday"), ("Evlilik izni", None, "other"), (None, None, "other"),
+    # Turkish-safe folding (Agent 18 finding): upper case and dotted/dotless i must not change the mapping
+    ("İŞ KAZASI", None, "sick"), ("İş kazası istirahati", None, "sick"), ("Meslek hastalığı", None, "sick"),
+    ("Work injury", None, "sick"), ("Производственная травма", None, "sick"), ("ANALIK RAPORU", None, "parental"),
+    ("DOĞUM İZNİ", None, "parental"), ("YILLIK İZİN", None, "annual"), ("SÜT İZNİ", None, "parental"),
+    ("ÜCRETSİZ İZİN", None, "unpaid"), ("HABERSİZ DEVAMSIZLIK", None, "unexcused"),
 ])
 def test_leave_type_mapping_protects_parental(label, code, expected):
     assert normalize_leave_type(label, code) == expected
