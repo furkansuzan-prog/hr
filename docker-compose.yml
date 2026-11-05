@@ -1,0 +1,57 @@
+# Local / test environment. Production secrets MUST come from a secret manager, never from this file.
+name: hrswi
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: hrswi
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hrswi}
+      POSTGRES_DB: hrswi
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hrswi"]
+      interval: 5s
+      retries: 20
+    ports: ["5432:5432"]
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+
+  api:
+    build: ./backend
+    environment:
+      HRSWI_ENV: ${HRSWI_ENV:-development}
+      HRSWI_DATABASE_URL: postgresql+psycopg://hrswi:${POSTGRES_PASSWORD:-hrswi}@db:5432/hrswi
+      HRSWI_JWT_SECRET: ${HRSWI_JWT_SECRET:-dev-only-insecure-secret-change-me}
+      HRSWI_IDENTITY_HMAC_KEY: ${HRSWI_IDENTITY_HMAC_KEY:-dev-only-identity-key}
+      HRSWI_CORS_ORIGINS: ${HRSWI_CORS_ORIGINS:-http://localhost:3000}
+      # shared KPI result cache across API workers (ADR-015); without it each worker keeps its own LRU
+      HRSWI_REDIS_URL: ${HRSWI_REDIS_URL:-redis://redis:6379/0}
+      # optional: if set, GET /metrics requires "Authorization: Bearer <token>" (empty = open, dev only)
+      HRSWI_METRICS_TOKEN: ${HRSWI_METRICS_TOKEN:-}
+    ports: ["8000:8000"]
+
+  # one-shot: docker compose --profile seed run --rm seed
+  seed:
+    build: ./backend
+    profiles: ["seed"]
+    command: ["sh", "-c", "alembic upgrade head && python -m app.seed.synthetic --employees ${SEED_EMPLOYEES:-1200}"]
+    environment:
+      HRSWI_DATABASE_URL: postgresql+psycopg://hrswi:${POSTGRES_PASSWORD:-hrswi}@db:5432/hrswi
+      HRSWI_IDENTITY_HMAC_KEY: ${HRSWI_IDENTITY_HMAC_KEY:-dev-only-identity-key}
+    depends_on:
+      db: { condition: service_healthy }
+
+  web:
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:8000}
+    depends_on: [api]
+    ports: ["3000:3000"]
+
+volumes:
+  pgdata:

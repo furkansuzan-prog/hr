@@ -1,0 +1,62 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --bg: #f5f7fa;
+  --surface: #ffffff;
+  --surface-2: #eef2f7;
+  --border: #dde3ea;
+  --text: #0f1b2d;
+  --muted: #5b6b7f;
+  --primary: #1f5fae;
+  --primary-fg: #ffffff;
+  --good: #1a7f4b;
+  --warn: #b7791f;
+  --crit: #c53030;
+  --sidebar: #0f1b2d;
+  --sidebar-text: #c9d4e3;
+}
+.dark {
+  --bg: #0b1220;
+  --surface: #111a2b;
+  --surface-2: #17233a;
+  --border: #24324a;
+  --text: #e6edf6;
+  --muted: #8fa1b8;
+  --primary: #5b9cf0;
+  --primary-fg: #08111f;
+  --good: #3fb67a;
+  --warn: #e3a948;
+  --crit: #f06b6b;
+  --sidebar: #070d18;
+  --sidebar-text: #a9b8cc;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-border: var(--border);
+  --color-text: var(--text);
+  --color-muted: var(--muted);
+  --color-primary: var(--primary);
+  --color-primary-fg: var(--primary-fg);
+  --color-good: var(--good);
+  --color-warn: var(--warn);
+  --color-crit: var(--crit);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-text: var(--sidebar-text);
+  --font-sans: var(--font-geist-sans), system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+}
+:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}

@@ -1,0 +1,39 @@
+[project]
+name = "hrswi-backend"
+version = "0.1.0"
+description = "HR Sustainability & Workforce Intelligence - backend (modular monolith)"
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi>=0.115",
+  "uvicorn[standard]>=0.30",
+  "pydantic>=2.7",
+  "sqlalchemy>=2.0.30",
+  "alembic>=1.13",
+  "psycopg[binary]>=3.2",
+  "PyJWT>=2.8",
+  "python-multipart>=0.0.9",
+  "openpyxl>=3.1",
+  "numpy>=1.26",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "httpx>=0.27", "ruff>=0.5"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 130
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "RUF"]
+# B008: FastAPI's Depends()/Query() in defaults is the framework idiom
+ignore = ["B008", "RUF001", "RUF002", "RUF003", "RUF012"]
+
+[tool.ruff.lint.per-file-ignores]
+# localized message templates and catalog data rows
+"app/ai/assistant.py" = ["E501"]
+"app/analytics/catalog.py" = ["E501"]
+"app/seed/synthetic.py" = ["E501"]
