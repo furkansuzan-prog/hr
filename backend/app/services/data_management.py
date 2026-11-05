@@ -157,6 +157,28 @@ def create_user(db: Session, ctx: AccessContext, *, email: str, full_name: str, 
     return {"id": u.id, "initial_password": pw}
 
 
+def deactivate_user(db: Session, ctx: AccessContext, user_id: int) -> dict:
+    """Users are never deleted (audit trail integrity). Deactivation blocks login and revokes existing tokens."""
+    u = db.get(User, user_id)
+    if u is None or u.tenant_id != ctx.tenant_id:
+        raise NotFound("User not found")
+    if u.id == ctx.user_id:
+        raise Conflict("You cannot deactivate yourself")
+    today = date.today()
+    for a in db.execute(select(UserRoleAssignment).where(UserRoleAssignment.user_id == u.id,
+                                                         _active_on(UserRoleAssignment, today))).scalars():
+        # an entity-scoped admin may only deactivate users whose every active grant lies inside its own scope
+        if not _covers(ctx, "admin.users", None if a.scope_type == "tenant" else a.legal_entity_id):
+            raise Forbidden("User holds roles outside your administration scope", permission="admin.users",
+                            entity_type="user", entity_id=str(u.id))
+    if not u.is_active:
+        raise Conflict("User is already inactive")
+    u.is_active = False
+    u.token_version = (u.token_version or 0) + 1
+    db.commit()
+    return {"id": u.id, "is_active": False}
+
+
 def _roles_query(ctx: AccessContext):
     return select(Role).where(or_(Role.tenant_id == ctx.tenant_id, Role.tenant_id.is_(None)))
 
@@ -447,6 +469,9 @@ def terminate_employment(db: Session, ctx: AccessContext, employment_id: int, *,
                          termination_category: str, record_version: int,
                          termination_reason_code: str | None = None) -> dict:
     emp = _employment_for_write(db, ctx, employment_id, record_version)
+    if emp.termination_reason_code == TRANSFER_REASON_CODE:
+        # the spell was closed by a transfer; changing it here would desynchronise the follow-up employment
+        raise Conflict("Employment was ended by an internal transfer; correct the transfer instead")
     if end_date < emp.start_date:
         raise Invalid("end_date must not be before the employment start_date")
     old_end = emp.end_date
@@ -472,8 +497,14 @@ def transfer_employment(db: Session, ctx: AccessContext, employment_id: int, *, 
     last_day = transfer_date - timedelta(days=1)
     if last_day < emp.start_date:
         raise Invalid("transfer_date must be after the employment start_date")
-    if emp.end_date is not None and emp.end_date < last_day:
-        raise Conflict("Employment has already ended before the transfer date")
+    if emp.end_date is not None:
+        # only an active (open) employment can be transferred; prevents double transfers creating duplicate spells
+        raise Conflict("Employment has already ended; only an active employment can be transferred")
+    overlap = db.execute(select(EmploymentRelationship.id).where(
+        EmploymentRelationship.person_id == emp.person_id, EmploymentRelationship.legal_entity_id == target.id,
+        or_(EmploymentRelationship.end_date.is_(None), EmploymentRelationship.end_date >= transfer_date))).first()
+    if overlap:
+        raise Conflict("The person already has an employment with the target legal entity on/after the transfer date")
     primary = db.execute(select(Assignment).where(
         Assignment.employment_id == emp.id, Assignment.is_primary.is_(True), Assignment.valid_from <= last_day,
         or_(Assignment.valid_to.is_(None), Assignment.valid_to > last_day)).order_by(Assignment.valid_from.desc())

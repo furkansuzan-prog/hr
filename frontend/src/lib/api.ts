@@ -3,9 +3,17 @@ export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000
 const TOKEN_KEY = "hrswi.token";
 
 export class ApiError extends Error {
-  constructor(public status: number, message: string) {
+  /** `detail` keeps the raw FastAPI detail (it may be an object, e.g. {message, current_record_version}). */
+  constructor(public status: number, message: string, public detail?: unknown) {
     super(message);
   }
+}
+
+function detailMessage(d: unknown, fallback: string): string {
+  if (typeof d === "string") return d;
+  if (d && typeof d === "object" && !Array.isArray(d) && typeof (d as { message?: unknown }).message === "string") return (d as { message: string }).message;
+  if (Array.isArray(d)) return d.map((x) => (x && typeof x === "object" && "msg" in x ? String((x as { msg: unknown }).msg) : JSON.stringify(x))).join("; ");
+  return d === undefined ? fallback : JSON.stringify(d);
 }
 
 export function getToken(): string | null {
@@ -57,13 +65,14 @@ export async function api<T = unknown>(path: string, init: RequestInit = {}): Pr
   }
   if (!res.ok) {
     let msg = res.statusText;
+    let detail: unknown;
     try {
-      const j = await res.json();
-      msg = typeof j.detail === "string" ? j.detail : JSON.stringify(j.detail);
+      detail = (await res.json()).detail;
+      msg = detailMessage(detail, msg);
     } catch {
       /* not json */
     }
-    throw new ApiError(res.status, msg);
+    throw new ApiError(res.status, msg, detail);
   }
   return (await res.json()) as T;
 }

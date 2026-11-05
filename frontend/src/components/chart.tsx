@@ -35,6 +35,9 @@ export function Chart({ option, height = 260, ariaLabel }: { option: EChartsOpti
     a && typeof a === "object" && !Array.isArray(a)
       ? { axisLine: { lineStyle: { color: grid } }, axisLabel: { color: axis }, splitLine: { lineStyle: { color: grid } }, ...a }
       : a;
+  // a page-level legend (e.g. legend.data) must keep the themed text colour - spread would drop it in dark mode
+  if (option.legend && typeof option.legend === "object" && !Array.isArray(option.legend))
+    themed.legend = { top: 0, right: 0, itemWidth: 12, itemHeight: 8, ...option.legend, textStyle: { color: axis, ...(option.legend.textStyle ?? {}) } };
   themed.xAxis = ax(option.xAxis) as EChartsOption["xAxis"];
   themed.yAxis = ax(option.yAxis) as EChartsOption["yAxis"];
   return (

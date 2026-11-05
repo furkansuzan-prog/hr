@@ -4,6 +4,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, download } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
 import { fmt } from "@/lib/utils";
+import { useCan } from "@/components/providers";
+import { IdentityReviewQueue } from "@/components/identity-reviews";
 import { Badge, Button, Card, CardBody, CardHeader, CardTitle, ErrorBox, PageHeader, Select } from "@/components/ui/primitives";
 
 type Upload = { batch_id: number; headers: string[]; total_rows: number; suggested_mapping: Record<string, string | null>; required_fields: string[]; preview: Record<string, string>[] };
@@ -13,6 +15,7 @@ type Source = { id: number; code: string; name: string; kind: string; status: st
 export default function Imports() {
   const { t } = useI18n();
   const qc = useQueryClient();
+  const canReview = useCan("people.write");
   const [up, setUp] = useState<Upload | null>(null);
   const [mapping, setMapping] = useState<Record<string, string | null>>({});
   const [sum, setSum] = useState<Summary | null>(null);
@@ -91,6 +94,7 @@ export default function Imports() {
               <td className="px-3 py-1.5">{fmt(b.total_rows, 0)}</td><td className="px-3 py-1.5">{fmt(b.valid_rows, 0)}</td><td className="px-3 py-1.5">{fmt(b.error_rows, 0)}</td><td className="px-3 py-1.5">{fmt(b.committed_rows, 0)}</td><td className="px-3 py-1.5">{b.attempt_count}</td></tr>
           ))}</tbody></table>
       </Card>
+      {canReview && <IdentityReviewQueue />}
     </>
   );
 }

@@ -4,10 +4,12 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
 import {
   Activity, BarChart3, Bot, Building2, ClipboardList, Cpu, Database, FileText, GraduationCap, HardHat, Leaf, LogOut,
-  Menu, Moon, Settings, ShieldAlert, Sun, TrendingUp, Users, Wallet, X,
+  Menu, MonitorOff, Moon, Settings, ShieldAlert, Sun, TrendingUp, Users, Wallet, X,
 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { getToken, setToken } from "@/lib/api";
+import { api, getToken, setToken } from "@/lib/api";
+import { ConfirmDialog } from "./ui/dialog";
+import { ErrorBox } from "./ui/primitives";
 import { useI18n, type Key, type Locale } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { useMe, useTheme } from "./providers";
@@ -19,17 +21,17 @@ const NAV: Item[] = [
   { href: "/people", key: "nav.people", icon: Users, perm: "people.read" },
   { href: "/sustainability", key: "nav.sustainability", icon: Leaf, perm: "sustainability.read" },
   { href: "/productivity", key: "nav.productivity", icon: Activity, perm: "kpi.read" },
-  { href: "/planning", key: "nav.planning", icon: TrendingUp, planned: true },
+  { href: "/planning", key: "nav.planning", icon: TrendingUp, perm: "forecast.read" },
   { href: "/contractors", key: "nav.contractors", icon: HardHat, perm: "kpi.read" },
-  { href: "/hse", key: "nav.hse", icon: ShieldAlert, planned: true },
-  { href: "/training", key: "nav.training", icon: GraduationCap, planned: true },
-  { href: "/cost", key: "nav.cost", icon: Wallet, planned: true },
+  { href: "/hse", key: "nav.hse", icon: ShieldAlert, perm: "hse.read" },
+  { href: "/training", key: "nav.training", icon: GraduationCap, perm: "training.read" },
+  { href: "/cost", key: "nav.cost", icon: Wallet, perm: "cost.read" },
   { href: "/assistant", key: "nav.ai", icon: Bot, perm: "assistant.use" },
   { href: "/risks", key: "nav.risks", icon: ClipboardList, perm: "risk.read" },
   { href: "/reports", key: "nav.reports", icon: FileText, perm: "report.read" },
   { href: "/imports", key: "nav.integrations", icon: Database, perm: "import.write" },
   { href: "/kpis", key: "nav.kpis", icon: Cpu, perm: "kpi.read" },
-  { href: "/admin", key: "nav.admin", icon: Settings, planned: true },
+  { href: "/admin", key: "nav.admin", icon: Settings, perm: "admin.users" },
 ];
 
 export function AppShell({ children }: { children: ReactNode }) {
@@ -38,6 +40,9 @@ export function AppShell({ children }: { children: ReactNode }) {
   const { t, locale, setLocale } = useI18n();
   const { theme, toggle } = useTheme();
   const [open, setOpen] = useState(false);
+  const [logoutAll, setLogoutAll] = useState(false);
+  const [logoutErr, setLogoutErr] = useState<unknown>(null);
+  const [busy, setBusy] = useState(false);
   const me = useMe();
   const qc = useQueryClient();
 
@@ -96,14 +101,28 @@ export function AppShell({ children }: { children: ReactNode }) {
               {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
             </button>
             <span className="hidden text-sm text-muted md:inline">{me.data?.full_name}</span>
+            <button onClick={() => { setLogoutErr(null); setLogoutAll(true); }} aria-label={t("common.logoutAll")} title={t("common.logoutAll")}
+              className="rounded p-2 hover:bg-surface-2">
+              <MonitorOff size={16} aria-hidden />
+            </button>
             <button
-              onClick={() => { setToken(null); router.replace("/login"); }}
+              onClick={() => { setToken(null); qc.clear(); router.replace("/login"); }}
               className="flex items-center gap-1 rounded p-2 text-sm hover:bg-surface-2" aria-label={t("common.logout")}
             >
               <LogOut size={16} />
             </button>
           </div>
         </header>
+        <ConfirmDialog open={logoutAll} onClose={() => setLogoutAll(false)} busy={busy}
+          title={t("common.logoutAll")} description={t("common.logoutAllHint")} confirmLabel={t("common.logoutAll")}
+          error={logoutErr ? <ErrorBox error={logoutErr} /> : undefined}
+          onConfirm={async () => {
+            setBusy(true);
+            try {
+              await api("/api/v1/auth/logout-all", { method: "POST" });
+              setToken(null); qc.clear(); setLogoutAll(false); router.replace("/login");
+            } catch (e) { setLogoutErr(e); } finally { setBusy(false); }
+          }} />
         <main id="main" className="mx-auto max-w-[1400px] p-4 md:p-6">{children}</main>
       </div>
     </div>

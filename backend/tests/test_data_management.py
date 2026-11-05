@@ -301,6 +301,19 @@ def test_transfer_is_internal_and_termination_invalidates_cache(client, auth, id
     old_hist = next(x for x in hist["employments"] if x["employment_id"] == ended)
     assert old_hist["assignments"][0]["valid_to"] == "2026-03-01"
 
+    # regression (A07 finding): an already-transferred/ended employment cannot be transferred again or terminated
+    again = client.post(url, headers=h, json={**body, "record_version": 2})
+    assert again.status_code == 409, again.text
+    term = client.post(f"{M}/employments/{ended}/terminate", headers=h,
+                       json={"end_date": "2026-02-20", "termination_category": "voluntary", "record_version": 2})
+    assert term.status_code == 409
+    back = client.post(f"{M}/employments/{new}/transfer", headers=h,
+                       json={"target_legal_entity_id": t3, "transfer_date": "2026-03-01", "record_version": 1})
+    assert back.status_code == 422  # transfer date must be after the new spell's start
+    db.expire_all()
+    assert db.execute(select(EmploymentRelationship).where(
+        EmploymentRelationship.person_id == e_old.person_id)).scalars().all().__len__() == 2  # no duplicate spells
+
     both = _kpi001(client, auth, [t3, t4])
     assert both["status"] == "ok" and both["numerator"] == 0  # internal transfer, not a separation
     only_t3 = _kpi001(client, auth, [t3])
@@ -432,3 +445,19 @@ def test_legal_entities_and_contractor_relationships(client, auth, db):
     assert _audit_count(db, "org.legal_entity_create", parent["id"]) == 1
     assert _audit_count(db, "org.contractor_relationship_create", rel["id"]) == 1
     assert _audit_count(db, "org.contractor_relationship_end", rel["id"]) == 1
+
+
+def test_deactivate_user_blocks_login_and_tokens(client, auth, db):
+    h = auth(ADMIN)
+    created = client.post(f"{M}/users", headers=h, json={"email": f"deact.{_uid()}@exact.local", "full_name": "Temp",
+                                                         "locale": "en"}).json()
+    email = next(u["email"] for u in client.get(f"{M}/users", headers=h).json() if u["id"] == created["id"])
+    tok = client.post("/api/v1/auth/login", json={"email": email, "password": created["initial_password"]}).json()
+    me = {"Authorization": f"Bearer {tok['access_token']}"}
+    assert client.get("/api/v1/auth/me", headers=me).status_code == 200
+    assert client.post(f"{M}/users/{created['id']}/deactivate", headers=auth(HRMAN)).status_code == 403
+    r = client.post(f"{M}/users/{created['id']}/deactivate", headers=h)
+    assert r.status_code == 200 and r.json()["is_active"] is False
+    assert client.get("/api/v1/auth/me", headers=me).status_code == 401
+    assert client.post("/api/v1/auth/login", json={"email": email, "password": created["initial_password"]}).status_code == 401
+    assert client.post(f"{M}/users/{created['id']}/deactivate", headers=h).status_code == 409

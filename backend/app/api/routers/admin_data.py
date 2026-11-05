@@ -104,6 +104,14 @@ def roles_revoke(assignment_id: int, request: Request, ctx: AccessContext = Depe
     return res
 
 
+@router.post("/users/{user_id}/deactivate")
+def users_deactivate(user_id: int, request: Request, ctx: AccessContext = Depends(require("admin.users")),
+                     db: Session = Depends(get_db)):
+    res = _call(request, ctx, svc.deactivate_user, db, ctx, user_id)
+    _audit(request, ctx, "admin.user_deactivate", "user", user_id)
+    return res
+
+
 # ------------------------------------------------------------------ identity review queue
 
 
