@@ -28,9 +28,10 @@ services:
       HRSWI_JWT_SECRET: ${HRSWI_JWT_SECRET:-dev-only-insecure-secret-change-me}
       HRSWI_IDENTITY_HMAC_KEY: ${HRSWI_IDENTITY_HMAC_KEY:-dev-only-identity-key}
       HRSWI_CORS_ORIGINS: ${HRSWI_CORS_ORIGINS:-http://localhost:3000}
-    depends_on:
-      db: { condition: service_healthy }
-      redis: { condition: service_healthy }
+      # shared KPI result cache across API workers (ADR-015); without it each worker keeps its own LRU
+      HRSWI_REDIS_URL: ${HRSWI_REDIS_URL:-redis://redis:6379/0}
+      # optional: if set, GET /metrics requires "Authorization: Bearer <token>" (empty = open, dev only)
+      HRSWI_METRICS_TOKEN: ${HRSWI_METRICS_TOKEN:-}
     ports: ["8000:8000"]
 
   # one-shot: docker compose --profile seed run --rm seed

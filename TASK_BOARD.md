@@ -31,7 +31,18 @@ Son doğrulama: backend `pytest` (gerçek PostgreSQL), frontend `tsc` + `eslint`
 | T-022 | Bağımsız denetim | 16 | T-001..T-021 | Bulgu raporu | Done | `docs/AUDIT_REPORT.md` (20 bulgu: 7 yüksek) |
 | T-023 | Denetim bulgularının düzeltilmesi | 06/09/11 | T-022 | Yüksek bulgular kapalı + regresyon testi | Partial | 14 düzeltildi, 5 kısmen, 1 açık (politika) · `test_audit_regressions.py` (11) |
 
-## Backlog (önceliklendirilmiş)
+## Sprint 2 — paralel ajan çalışması (5 uzman alt ajan + orchestrator entegrasyonu)
+| ID | Görev | Ajan | Durum | Test kanıtı |
+|---|---|---|---|---|
+| T-030 | Veri yönetimi API'si (kullanıcı/rol, kişi/istihdam, transfer, kimlik kuyruğu, firma/yüklenici ilişkisi) | A06 | Done | `test_data_management.py` (9) |
+| T-031 | 10 KPI aktivasyonu (020–023, 028, 032, 034, 036, 048, 050), dönem kapanışında dondurma, toplu seri | A09 | Done | `test_kpi_extended.py` (27) |
+| T-032 | Katalog senkronizasyonu (mevcut DB'ler) | 00 | Done | `test_catalog_sync.py` (2); dev DB'ye uygulandı (28 aktif KPI) |
+| T-033 | İSG, Eğitim, Maliyet, Planlama ekranları; yönetim UI; erişilebilir diyalog | A07 | Done | E2E 29/29 |
+| T-034 | Hesap kilitleme, IP limiti, token iptali (`tv`), saklama-imha servisi; migration 0004 | A11 | Done | `test_security_hardening.py` (11) |
+| T-035 | `/metrics`, 15K ölçek testi, yedek/geri yükleme tatbikatı, CI perf işi | A13 | Done (ölçüm) | `test_metrics.py`; tatbikat PASS (4.46M satır) |
+| T-036 | Çift transfer hatası düzeltmesi, kullanıcı pasifleştirme, dev DB onarımı | 00 | Done | `test_data_management.py` |
+
+
 Değerlendirme: iş değeri / kullanıcı önemi / maliyet / bağımlılık / veri bulunabilirliği / güvenlik etkisi / operasyonel risk.
 
 | ID | Öncelik | Görev | Ajan | Gerekçe |
@@ -55,4 +66,8 @@ Değerlendirme: iş değeri / kullanıcı önemi / maliyet / bağımlılık / ve
 | B-18 | P0 | Dönem kapanışından önce KPI çalıştırmasını zorunlu/otomatik yapmak (denetim #6 notu) | 09 | Kapalı dönemin her zaman dondurulmuş değeri olsun |
 | B-19 | P1 | Alt yüklenici görünürlüğü: dönem bazlı mı bugünkü izin mi? (denetim #16, ⚖️) | 01/11 | Politika kararı |
 | B-20 | P1 | Veri kaynağı kapsam meta verisi: eksik besleme ≠ gerçek sıfır (denetim #19) | 08/09 | Yanlış "0" riskini kapatır |
+| B-21 | P0 | Soğuk önbellek performansı: aylık puantaj özet tablosu, maliyet sorgusunda `count(DISTINCT)` kaldırma, tek-hesaplayıcı kilidi, import sonrası önbellek ısıtma (A13 ölçümleri: soğuk dashboard 19.8 sn) | 09/05 | 15K'da soğuk p95 117 sn |
+| B-22 | P0 | Havuz zaman aşımında 500 yerine 503; worker thread sayısı ↔ DB havuzu uyumu / PgBouncer | 13 | Yük altında 500 hataları |
+| B-23 | P1 | Sentetik üreticide akışlı COPY (1.4 GB bellek tepesi) | 12 | Ölçek verisi üretimi |
+| B-24 | P1 | Saklama-imha işinin zamanlanması (Celery beat / cron) | 11/13 | KVKK |
 | B-17 | P2 | Dinamik rapor oluşturucu, kalan 10 rapor şablonu | 14 | FAZ 4 |

@@ -4,7 +4,9 @@ Canlı ve makine tarafından okunabilir sözleşme: **OpenAPI** → `GET /openap
 Bu belge, OpenAPI'nin ifade edemediği **değişmezleri** (invariant) tanımlar. Değişiklik → ADR + Orchestrator onayı.
 
 ## 1. Kimlik doğrulama ve bağlam
-- `Authorization: Bearer <JWT>` (HS256, 60 dk, `sub`=user id, `tid`=tenant id, `iss`=hrswi). FAZ 7: OIDC.
+- `Authorization: Bearer <JWT>` (HS256, 60 dk; zorunlu claim'ler: `sub`=user id, `tid`=tenant id, `tv`=token version, `iss`=hrswi, `exp`, `iat`). FAZ 7: OIDC.
+- `tv` kullanıcının güncel `token_version` değeriyle eşleşmezse 401. `POST /api/v1/auth/logout-all` ve kullanıcı pasifleştirme sürümü artırır → tüm eski tokenlar geçersiz.
+- Giriş koruması: üst üste 5 hatalı denemede hesap 15 dk kilitlenir (yanıt yanlış parola ile aynı genel 401 — hesap varlığı sızdırılmaz); IP başına başarısız deneme sınırı aşılırsa **429 + `Retry-After`**.
 - `X-Locale: tr|en|ru` → yalnızca görüntüleme dili (KPI adları, asistan dili). Yetkiyi etkilemez.
 - `X-Request-ID` (opsiyonel) → yanıtta ve loglarda aynen döner.
 - Hata gövdesi: `{"detail": string | object}`; 401 kimlik, 403 yetki/kapsam, 404 yok, 409 durum çakışması (taslak KPI, kapalı dönem, mükerrer dosya), 422 doğrulama, 503 kaynak sistem erişilemez.
@@ -53,3 +55,19 @@ Alanlar: `external_id*`, `source_system`, `first_name*`, `last_name*`, `national
 
 ## 7. Bağlayıcı sözleşmesi (FAZ 2+)
 `Connector.fetch(since) -> Iterable[RawRecord]`; yalnızca belgelenmiş ve yetkili API'ler. Erişilemezlik → `data_sources.last_error`, **kısmi veri yazılmaz**, 503 + yeniden deneme (üstel geri çekilme).
+
+## 8. Veri yönetimi API'si (`/api/v1/manage`, A06)
+| Uç | İzin | Not |
+|---|---|---|
+| `GET/POST /users`, `POST /users/{id}/deactivate` | admin.users | Oluşturma 201 + tek seferlik parola; kullanıcı **silinmez**, pasifleştirilir (token iptali dahil) |
+| `GET /roles`, `POST /users/{id}/roles`, `DELETE /role-assignments/{id}` | admin.users | Yetki yükseltme koruması: veren kullanıcı rolün tüm izinlerine ve hedef kapsama sahip olmalı; geri alma `valid_to` ile |
+| `GET /identity-reviews`, `POST /identity-reviews/{id}/resolve` | people.write | merge / create_new / reject; payload hiçbir zaman kimlik hash'i içermez |
+| `POST /people` | people.write (firma kapsamı) | Aynı kimlik hash'i → 409 `{message, candidate_person_id}` |
+| `POST /employments/{id}/terminate` | people.write | İyimser kilit (`record_version`, uyuşmazlık 409 + `current_record_version`); transferle kapanmış dönem değiştirilemez (409) |
+| `POST /employments/{id}/transfer` | people.write (iki firmada) | Yalnızca açık istihdam; hedefte çakışan istihdam 409; KPI-001 için iç transfer sayılır |
+| `POST /legal-entities` | tenant geneli org.write | |
+| `POST /contractor-relationships`, `.../{id}/end` | org.write (ebeveyn **ve** çocuk) | Paylaşım bağı ile kapsam genişletmeyi engeller |
+Tüm yazmalar denetlenir ve analitiği etkileyenler `mark_stale_from` çağırır (§5).
+
+## 9. KPI kataloğu senkronizasyonu
+Kod kataloğu değişince mevcut veritabanları `python -m app.seed.reference` (kuru) / `--apply` ile eşitlenir. Formül satırları değiştirilemez olduğundan değişen hesaplayıcı/parametre **yeni formül versiyonu** olarak eklenir. Dağıtım adımıdır.

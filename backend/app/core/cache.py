@@ -12,6 +12,8 @@ import threading
 import time
 from collections import OrderedDict
 
+from app.core.metrics import KPI_CACHE_ERRORS, KPI_CACHE_HITS, KPI_CACHE_MISSES
+
 log = logging.getLogger("hrswi.cache")
 TTL = int(os.getenv("HRSWI_KPI_CACHE_TTL", "900"))
 
@@ -68,7 +70,12 @@ class Cache:
             raw = self._redis.get(key) if self._redis else self._local.get(key)
         except Exception:
             raw = None
-        return json.loads(raw) if raw else None
+            KPI_CACHE_ERRORS.inc()
+        if raw:
+            KPI_CACHE_HITS.inc()
+            return json.loads(raw)
+        KPI_CACHE_MISSES.inc()
+        return None
 
     def set(self, key: str, value: dict) -> None:
         if not self.enabled:
@@ -80,7 +87,7 @@ class Cache:
             else:
                 self._local.set(key, raw, TTL)
         except Exception:
-            pass
+            KPI_CACHE_ERRORS.inc()
 
     def clear_local(self) -> None:
         self._local.clear()

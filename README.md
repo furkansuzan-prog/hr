@@ -57,11 +57,11 @@ TLS denetimli kurumsal proxy arkasında derlerken: `docker build --secret id=ext
 ```bash
 cd backend && createdb hrswi_test && pytest -q
 ```
-73 test: KPI'ların el hesabıyla doğrulanması, 20 zorunlu senaryo, yetki izolasyonu, import (5.000 satır XLSX dahil), asistan, raporlar ve bağımsız denetim bulgularının regresyon testleri. Testler gerçek PostgreSQL kullanır ve şemayı migration'larla kurar.
+130 test: KPI'ların el hesabıyla doğrulanması, 20 zorunlu senaryo, yetki izolasyonu, import (5.000 satır XLSX dahil), asistan, raporlar ve bağımsız denetim bulgularının regresyon testleri. Testler gerçek PostgreSQL kullanır ve şemayı migration'larla kurar.
 ```bash
 cd frontend && node e2e/smoke.mjs ../docs/screenshots
 ```
-Çalışan sisteme karşı 12 kontrollü Playwright uçtan uca testi (giriş, dashboard, KPI detayı, asistan, kapsam izolasyonu, dil, tema, mobil, konsol hataları).
+Çalışan sisteme karşı 29 kontrollü Playwright uçtan uca testi (giriş, dashboard, KPI detayı, asistan, kapsam izolasyonu, dil, tema, mobil, konsol hataları).
 ```bash
 cd backend && python scripts/perf_smoke.py --concurrency 30 --requests 600
 ```
