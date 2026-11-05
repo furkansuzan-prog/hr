@@ -68,3 +68,8 @@ Yapılandırılmış JSON log (request id, user id, tenant id — kişisel veri 
 
 ## ADR-014 — Para birimi (Kabul)
 Maliyet kayıtları `amount`, `currency` (ISO 4217), `cost_date`, `cost_scope` taşır. Raporlama para birimine çevrim `fx_rates(date, from, to, rate, source)` ile; kur bulunamazsa sonuç `insufficient_data` (sessiz varsayım yok).
+
+## ADR-015 — KPI sonuç önbelleği ve kesin geçersizleştirme (Kabul)
+**Bağlam:** İlk ölçümde 30 eşzamanlı istekte dashboard p95 9.8 sn (bkz. `docs/PERFORMANCE_REPORT.md`); bir dashboard ~75 KPI hesaplaması yapıyor.
+**Karar:** KPI hesap sonucu (dil bağımsız `CalcResult`) şu anahtarla önbelleklenir: `tenant : tenants.data_version : formula_version_id : scope_key : period`. Kapsam anahtarı yetki çözümlemesinden **sonra** üretildiği için farklı kapsamlar aynı girdiyi paylaşamaz. Analitiği etkileyen her yazma yolu `data_version`'ı artırır (`engine.mark_stale_from`) → eski girdiler bir daha okunmaz; TTL (15 dk) yalnızca güvenlik ağıdır. Redis (`HRSWI_REDIS_URL`) worker'lar arası paylaşım sağlar; yoksa süreç içi sınırlı LRU. İstek içinde KPI tanımı/formül/data_version için oturum düzeyi memo.
+**Sonuç:** Sıcak önbellekte dashboard p95 1.06 sn (30 eşzamanlı). Yeni bir yazma ucu `mark_stale_from` çağırmazsa bayat sonuç döner — `INTEGRATION_CONTRACTS.md §5` bu kuralı sözleşme olarak tanımlar ve import testi geçersizleştirmeyi doğrular.

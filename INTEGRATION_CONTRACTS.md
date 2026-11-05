@@ -1,0 +1,55 @@
+# HRSWI — Entegrasyon Sözleşmeleri
+
+Canlı ve makine tarafından okunabilir sözleşme: **OpenAPI** → `GET /openapi.json`, etkileşimli: `/docs`.
+Bu belge, OpenAPI'nin ifade edemediği **değişmezleri** (invariant) tanımlar. Değişiklik → ADR + Orchestrator onayı.
+
+## 1. Kimlik doğrulama ve bağlam
+- `Authorization: Bearer <JWT>` (HS256, 60 dk, `sub`=user id, `tid`=tenant id, `iss`=hrswi). FAZ 7: OIDC.
+- `X-Locale: tr|en|ru` → yalnızca görüntüleme dili (KPI adları, asistan dili). Yetkiyi etkilemez.
+- `X-Request-ID` (opsiyonel) → yanıtta ve loglarda aynen döner.
+- Hata gövdesi: `{"detail": string | object}`; 401 kimlik, 403 yetki/kapsam, 404 yok, 409 durum çakışması (taslak KPI, kapalı dönem, mükerrer dosya), 422 doğrulama, 503 kaynak sistem erişilemez.
+
+## 2. Ortak filtre (tablo = grafik = rapor)
+`period_start`, `period_end` (ISO tarih, dahil; boşsa son 12 tam ay), `entity_ids` (virgülle), `project_id`, `occupation_group`.
+Aynı filtre `/kpi/evaluate`, `/kpi/series`, `/kpi/by-entity`, `/dashboard/*`, `/reports/*` uçlarında **aynı** `Filters` sınıfıyla çözülür.
+Kapsam dışı `entity_ids` istenirse **403** (sessizce daraltılmaz).
+
+## 3. `KpiResult` (tek sayı kaynağı)
+```json
+{ "code": "KPI-001", "name": "…", "unit": "%", "direction": "lower_better",
+  "status": "ok | not_computable | insufficient_data | suppressed",
+  "value": 7.27, "annualized_value": 29.5, "threshold_status": "good|warning|critical|null",
+  "numerator": 2, "denominator": 27.5, "sample_size": 27, "quality_score": 50.0,
+  "breakdown": {}, "lineage": {"tables": [], "...": "..."}, "note": "…",
+  "period_start": "2025-01-01", "period_end": "2025-03-31",
+  "scope": {"entity_ids": [..] | null, "project_id": null, "occupation_group": null},
+  "kind": "actual", "formula": {"version": 1, "calculator": "turnover_rate", "text": "…", "parameters": {}},
+  "thresholds": {"target": null, "warning": 30, "critical": 45}, "calculated_at": "…" }
+```
+Değişmezler:
+1. `status != "ok"` ⇒ `value == null`. İstemci asla 0 göstermez.
+2. `suppressed` ⇒ `value`, `numerator`, `denominator`, `sample_size`, `breakdown` boş.
+3. Tahminler `kind: "forecast"` taşır ve gerçekleşen serilerle aynı dizide karıştırılmaz.
+4. Asistan yanıtındaki her sayı, aynı yanıtın `data` / `sources` alanındaki servis çıktısından gelir.
+5. `formula.version` sonuç üretildiği versiyondur; formül versiyonları değişmezdir (yeni sürüm = yeni satır).
+
+## 4. Yetki değişmezleri (Security ↔ herkes)
+- Her iş verisi sorgusu `tenant_id` + `AccessContext.entity_filter(perm)` ile filtrelenir.
+- Alt yüklenici görünürlüğü yalnızca **tarihte geçerli** ve `data_sharing_granted = true` olan `contractor_relationships` ile genişler.
+- `sensitive` KPI'lar (maliyet) `kpi.read` **ve** `cost.read` kapsamlarının kesişimiyle hesaplanır.
+- Reddedilen her erişim `audit_logs`'a `outcome='denied'` olarak ayrı transaction'da yazılır.
+
+## 5. Veri yazma değişmezleri (Integration/Backend ↔ Analytics)
+- Analitiği etkileyen **her** yazma yolu `engine.mark_stale_from(db, tenant, earliest_date)` çağırmalıdır. Bu, (a) kalıcı KPI sonuçlarını `is_stale` yapar, (b) `tenants.data_version`'ı artırarak KPI önbelleğini kesin olarak geçersiz kılar. **Bu kuralı atlayan yeni bir yazma ucu bayat sonuç döndürür** (ADR-015).
+- Tarihsel kayıtlar güncellenmez; kapatılır + yeni kayıt (istihdam, görevlendirme, yüklenici ilişkisi). Geriye dönük ayrılış: `end_date` güncellenir, `record_version` artar.
+- Ham kimlik numarası hiçbir tabloya yazılmaz; yalnızca `national_id_hash` (HMAC).
+
+## 6. Import sözleşmesi
+`POST /imports` (multipart: `file`, `entity_type=employment`) → `{batch_id, headers, suggested_mapping, required_fields, preview}`
+`POST /imports/{id}/validate` `{mapping}` → özet; hatalar `data_quality_issues` + `GET /imports/{id}/errors.csv`
+`POST /imports/{id}/commit` → idempotent; `failed` durumundaki batch tekrar commit edilince kaldığı chunk'tan devam eder.
+Aynı dosya (SHA-256) aynı tenant ve tipte ikinci kez commit edilemez (409).
+Alanlar: `external_id*`, `source_system`, `first_name*`, `last_name*`, `national_id`, `birth_year`, `gender`, `legal_entity_code*`, `employee_number`, `contract_type`, `start_date*`, `end_date`, `termination_category`, `project_code`, `occupation_code`.
+
+## 7. Bağlayıcı sözleşmesi (FAZ 2+)
+`Connector.fetch(since) -> Iterable[RawRecord]`; yalnızca belgelenmiş ve yetkili API'ler. Erişilemezlik → `data_sources.last_error`, **kısmi veri yazılmaz**, 503 + yeniden deneme (üstel geri çekilme).

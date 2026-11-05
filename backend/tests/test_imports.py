@@ -130,3 +130,23 @@ def test_large_excel_import(client, auth, db):
     assert c["committed_rows"] == 5000
     assert elapsed < 120, f"import took {elapsed:.1f}s"
     print(f"\n5000-row xlsx import: {elapsed:.1f}s")
+
+
+def test_raw_national_id_never_persisted_or_echoed(client, auth, db):
+    """KVKK: the identity number is pseudonymised before staging and is not returned in the preview."""
+    from app.models import ImportStagingRow
+
+    raw_tc = "12345678950"
+    up = _upload(client, auth, ADMIN, "tc.csv", _csv([["T1", "Tc", "Test", raw_tc, "A", "2025-05-01", "", ""]]))
+    assert raw_tc not in str(up["preview"])
+    client.post(f"/api/v1/imports/{up['batch_id']}/validate", json={}, headers=auth(ADMIN))
+    rows = db.execute(select(ImportStagingRow).where(ImportStagingRow.batch_id == up["batch_id"])).scalars().all()
+    assert rows and all(raw_tc not in str(r.raw) and raw_tc not in str(r.mapped) for r in rows)
+    # a column mapped manually as national id (not auto-suggested) is pseudonymised at validation
+    up2 = _upload(client, auth, ADMIN, "tc2.csv", _csv([["T2", "Tc", "Test", "", "A", "2025-05-01", "", "", raw_tc]],
+                  header="Sicil;Ad;Soyad;TC Kimlik;Firma;İşe Giriş;Çıkış;Çıkış Nedeni;Kimlik Belgesi"))
+    client.post(f"/api/v1/imports/{up2['batch_id']}/validate",
+                json={"mapping": {**up2["suggested_mapping"], "national_id": "Kimlik Belgesi"}}, headers=auth(ADMIN))
+    db.expire_all()
+    rows = db.execute(select(ImportStagingRow).where(ImportStagingRow.batch_id == up2["batch_id"])).scalars().all()
+    assert all(raw_tc not in str(r.raw) for r in rows)

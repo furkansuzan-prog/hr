@@ -142,9 +142,12 @@ def upload(db: Session, ctx: AccessContext, *, entity_type: str, filename: str, 
     if done:
         raise DuplicateFile(done)
     headers, rows = parse_file(filename, content)
+    suggested = suggest_mapping(headers)
+    # KVKK: identity numbers are pseudonymised BEFORE the raw row is persisted or echoed back in the preview
+    _pseudonymise(rows, suggested.get("national_id"))
     batch = ImportBatch(tenant_id=ctx.tenant_id, entity_type=entity_type, file_name=filename[:255], file_sha256=sha,
                         status="uploaded", total_rows=len(rows), created_by=ctx.user_id,
-                        mapping=suggest_mapping(headers))
+                        mapping=suggested)
     db.add(batch)
     db.flush()
     chunk = get_settings().import_chunk_size
@@ -154,6 +157,18 @@ def upload(db: Session, ctx: AccessContext, *, entity_type: str, filename: str, 
     db.commit()
     return {"batch_id": batch.id, "headers": headers, "total_rows": len(rows), "suggested_mapping": batch.mapping,
             "required_fields": [f for f, m in FIELDS.items() if m["required"]], "preview": rows[:20]}
+
+
+_HMAC_PREFIX = "hmac:"
+
+
+def _pseudonymise(rows: list[dict], column: str | None) -> None:
+    if not column:
+        return
+    for r in rows:
+        v = str(r.get(column) or "").strip()
+        if v and not v.startswith(_HMAC_PREFIX):
+            r[column] = _HMAC_PREFIX + national_id_hash(v)
 
 
 def validate(db: Session, ctx: AccessContext, batch_id: int, mapping: dict[str, str | None] | None) -> dict:
@@ -174,8 +189,14 @@ def validate(db: Session, ctx: AccessContext, batch_id: int, mapping: dict[str, 
     seen: set[tuple] = set()
     valid = errors = 0
     issues = []
+    nid_col = mapping.get("national_id")
     for row in db.execute(select(ImportStagingRow).where(ImportStagingRow.batch_id == batch.id)
                           .order_by(ImportStagingRow.row_number)).scalars():
+        if nid_col and str(row.raw.get(nid_col) or "").strip() and not str(row.raw[nid_col]).startswith(_HMAC_PREFIX):
+            # user mapped a different column than suggested: pseudonymise it in the stored raw row too
+            raw = dict(row.raw)
+            _pseudonymise([raw], nid_col)
+            row.raw = raw
         m = {f: (row.raw.get(src, "") if src else "") for f, src in mapping.items()}
         errs: list[dict] = []
 
@@ -228,7 +249,8 @@ def validate(db: Session, ctx: AccessContext, batch_id: int, mapping: dict[str, 
         seen.add(key)
         # national id is pseudonymised immediately; raw value never leaves this function
         if m.get("national_id"):
-            m["national_id_hash"] = national_id_hash(str(m.pop("national_id")))
+            v = str(m.pop("national_id"))
+            m["national_id_hash"] = v[len(_HMAC_PREFIX):] if v.startswith(_HMAC_PREFIX) else national_id_hash(v)
         else:
             m.pop("national_id", None)
         row.mapped = m
