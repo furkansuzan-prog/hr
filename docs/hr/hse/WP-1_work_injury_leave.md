@@ -328,3 +328,56 @@ Genel kural: `work_injury` ile ilgili hiçbir sayı kişi, ustabaşı, şantiye 
 ## 12. Statü
 
 **Taslak — İK Direktörü incelemesi bekliyor.** Onaylı değildir. "İK Direktörü incelemesi" bölümü Agent 17 tarafından eklenecektir.
+
+---
+
+## İK Direktörü incelemesi (2026-11-05)
+
+**İnceleyen:** Agent 17 (İK Direktörü) · **Karar: ŞARTLI ONAY** · Ölçütler: `HR_TEAM_PLAN.md` §2.4 ve §4.2.
+
+### A. El hesaplarının yeniden hesaplanması (bağımsız)
+
+| Örnek | Benim hesabım | Belgedeki | Sonuç |
+|---|---|---|---|
+| Örnek 1 KPI-053 | (50+150+80)/10.000 = %2,80 → (50+150)/10.000 = %2,00 | %2,80 → %2,00 | ✔ eşleşiyor |
+| Örnek 1 KPI-028 | 230/10.000 = %2,30 → 150/10.000 = %1,50 | aynı | ✔ |
+| Örnek 1 KPI-003 | A: 730/10.000 = %7,30; B/C: 650/10.000 = %6,50; renk: 7,30 < 9 (uyarı) → `good` (motor: `v >= w` sarı) | aynı | ✔ |
+| Örnek 1b | KPI-053 450 → %4,50 (3,5 ≤ x < 5 sarı) → 330 → %3,30 (yeşil); KPI-028 %3,50 (sarı) → %2,30 (yeşil) | aynı | ✔ |
+| Örnek 2 | 02.03.2026 Pazartesi (doğrulandı); 02–11.03 = 10 takvim günü, Pzt–Cum 8 gün × 9 = 72 sa; (50+150+72)/10.000 = %2,72 | aynı | ✔ (bkz. koşul 3: düzen 5×9 açık yazılmalı) |
+| Örnek 3 KPI-056 | 2/20 = %10,0 (= uyarı → sarı) → 1/19 = %5,263 (< 10 → `good`) | aynı | ✔ |
+
+### B. Orchestrator doğrulama notlarının etkisi
+
+- **(a) Türkçe güvenli katlama ORCHESTRATOR TARAFINDAN UYGULANDI** (`timekeeping._fold`). §2.1'deki "İŞ KAZASI → `other`", "Meslek hastalığı → `other`", "work injury / Производственная травма → `other`" satırları **artık geçerli değil**: bu etiketlerin hepsi bugün tutarlı biçimde `sick`'e düşüyor (geçici durum, WP-1 uygulanana kadar). Dolayısıyla A08'in işi küçüldü: katlama yazılmayacak; yalnızca `work_injury` kuralı `sick`'ten **önce** eklenecek ve iş kazası/meslek hastalığı iğneleri `sick` listesinden bu kurala **taşınacak**.
+- `test_leave_type_mapping_protects_parental` içine geçici olarak eklenen 5 satır (`"İŞ KAZASI"`, `"İş kazası istirahati"`, `"Meslek hastalığı"`, `"Work injury"`, `"Производственная травма"` → `sick`) WP-1 ile **bilinçli olarak** `work_injury` beklentisine çevrilecek. Bu nedenle §5 kabul kriteri 11 ("mevcut testler değişmeden geçer") aynen uygulanamaz → koşul 2.
+
+### C. Onay koşulları (mühendisliğe gitmeden önce Orchestrator görev kaydına yazılır; belge yeniden yazılmak zorunda değil)
+
+1. **KPI-003 kararı:** İK Direktörü kararı **Seçenek C**'dir (aşağıda D). D-3'ü değiştirdiği için **ürün sahibi onayı** gerekir. Onay gelene kadar uygulama yapılacaksa KPI-003 yeni versiyonu `work_injury`'yi **açıkça dahil eder (Seçenek A)** — sessiz dışlama yasak; ürün sahibi C'yi onaylayınca bir sonraki formül versiyonuyla dışlanır.
+2. Kabul kriteri 11 şu şekilde değişir: "Mevcut testler geçer; yalnızca katlama testindeki 5 geçici satır `work_injury`'ye çevrilir ve değişiklik test yorumunda gerekçelendirilir."
+3. Örnek 2'ye çalışma düzeni yazılır: "5×9 düzen". WP-4 uygulandıktan sonra saat türetimi düzene göre yapılacağı için 6 günlük düzende aynı istirahat 9 gün × 7,5 = 67,5 sa olur; test fixture'ı düzeni açıkça vermelidir.
+4. **RU iğnesi daraltılır:** tek başına `несчастн` kullanılmaz (ev/trafik kazasını da yakalar — §3.2'nin "tek başına kaza kullanılmaz" ilkesine aykırı). Kullanılacak: `производствен`, `на производстве`, `профзаболев`, `профессиональное заболев`. EN için tek başına `occupational` (Orchestrator'ın geçici `sick` listesinde var) da kullanılmaz; §3.2'deki iki sözcüklü ifadeler kullanılır.
+5. **Kural kodları ortaklaştırılır** (WP-6 İSG ile aynı): yeniden sınıflandırma yönü `reclassified_up` / `reclassified_down`; korunan izin geçişi `leave_reclassified_protected`; çelişki `leave_label_code_conflict`; belirsizlik `leave_label_ambiguous`; tanınmayan kod `unmapped_sgk_report_code`.
+6. Referanslar düzeltilir: "Agent 19 DATA-03" → `docs/hr/data/WP-6_import_field_dictionaries.md`; "LEGAL-01" → `docs/hr/legal/WP-3_legal_question_file_01.md` (KV-01…04, OHS-01/02/09).
+7. §3.5 uyum sinyalindeki `K`, WP-6 İSG `worker_category = own_employee` alanına bağlıdır → sinyal, İSG import'u (WP-6 İSG) uygulanmadan devreye alınmaz; WP-1'in geri kalanı bunu beklemez.
+
+### D. Açık sorulara kararlarım
+
+| # | Karar | Gerekçe |
+|---|---|---|
+| Q1 | **Tek tür `work_injury`** (iş kazası + meslek hastalığı) | Veri minimizasyonu (KVKK md. 4); bildirim teşviki açısından iki tür arasında fark yok. Uyum sinyalindeki gürültü kabul edilir — sinyal zaten renk değil, inceleme tetikleyicisi |
+| Q2 | **Seçenek C** (KPI-003 dışı + eşiksiz izleme) — ürün sahibine D-3 revizyonu olarak gider | Hiçbir eşikli devamsızlık göstergesinde kaza istirahati kalmamalı (bildirimi caydırmama ilkesi, HR_DIRECTOR_RECOMMENDATIONS §3.3); kapasite kaybı yine görünür |
+| Q3 | **Ayrı, eşiksiz KPI kodu** (KPI-054 deseni: `neutral`, eşik yok, iki koşullu bastırma); kod numarasını A09/Orchestrator verir | KPI-044 `safety_events.lost_days` kaynağından hesaplanır; izin kaydı kaynaklı figürü aynı sayfada karıştırmak iki farklı kaynağı tek sayı gibi gösterir |
+| Q4 | Görünürlük: **İK Direktörü, İK Müdürü, İSG Uzmanı** rolleri; proje müdürü **görmez** (KV-04 yanıtına kadar) | WP-3 KV-04 güvenli varsayılanı (B) ile tutarlı; sağlık türevli veri |
+| Q5 | **Evet, geçmiş veri taşınır** — yalnızca ham satırı olan kayıtlar ve **yalnızca açık dönemler**; kapalı dönemler dondurulmuş kalır, not düşülür | D-2 dönem kapatma ile tutarlı; WP-4 S-5 kararıyla aynı ilke |
+| Q6 | 30 gün başlangıç değeri kabul; gerçek veride 12 ay sonra kalibre edilir (güven: düşük) | Yargı değeri; sinyal renk üretmediği için yanlış değerin bedeli düşük |
+
+### E. Çapraz tutarlılık kontrolü
+
+- Uzun yokluk türleri (KPI-056): `sick`, `parental`, `unpaid`, `work_injury` — WP-4 §3.4 ile **aynı**. `work_injury` bu listeye **WP-1 paketinde** küçük bir KPI-055/056 formül versiyonuyla eklenir (Örnek 3'teki ters teşvik WP-4'ü beklemesin); WP-4'ün KPI-055/056 versiyonu aynı listeyi devralır. Liste tek sabitte tutulur (iki yerde tanımlanmaz).
+- `work_injury` çevrimi WP-4 §3.2'deki gün/saat kurallarına tabidir (tür bağımsız) — tutarlı.
+- D-6 önceliği (`parental` önce) korunuyor — tutarlı. D-5 KPI-053 parametresi değişmiyor — tutarlı.
+
+### F. Statü
+
+**İK Direktörü onaylı (şartlı)** — koşullar 1–7. Uygulama paketleri ve sıra: `docs/hr/SPRINT1_REVIEW.md` §5. ADR gerekli (izin türü kümesi + yeniden sınıflandırma). İnsan onayı gerekenler: ürün sahibi (D-3), İSG Kurulu görüşü (WP-3 OHS-08), KVKK irtibat kişisi (KV-01/02/04).

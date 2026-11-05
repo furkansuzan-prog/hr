@@ -290,3 +290,49 @@ Kurgusal şantiye, 6 günlük düzen, ayda 24 iş günü × 7,5 = 180 sa/kişi.
 ## 11. Statü
 
 **Taslak — İK Direktörü incelemesi bekliyor.** (İK Direktörü incelemesi bölümü bu satırın altına eklenecek.)
+
+---
+
+## İK Direktörü incelemesi (2026-11-05)
+
+**İnceleyen:** Agent 17 (İK Direktörü) · **Karar: ŞARTLI ONAY** · Ölçütler: `HR_TEAM_PLAN.md` §2.4 ve §4.2. Ek dosya `WP-4_examples.csv` bu incelemenin kapsamındadır (CSV'ye inceleme satırı eklenmedi; dosya fixture olarak bozulmasın diye).
+
+### A. El hesaplarının yeniden hesaplanması
+
+| Örnek | Benim hesabım | Sonuç |
+|---|---|---|
+| E1 | 105/9 = 11,67 → 11,67/14 = %83,3; v2 105/7,5 = 14 → %100 | ✔ |
+| E3 | 2019-03-01–2022-02-28 = 1.096 gün; 2023-06-01–2026-10-31 = 1.249 gün; toplam 2.345 (6,42 yıl → 20 gün); (c) 2026-10-31 − 2020-05-31 + 1 = 2.345 ✔; (a) 150/9 = 16,67/20 = %83,3 → 150/7,5 = 20/20 = %100; (b) 16,67/14 = %119,0 → 20/14 = %142,9 | ✔ |
+| E4 | 135/9 = 15/14 = %107,1 → 18/18 = %100; (b) 14/18 = %77,8 → motor `higher_better`: 77,8 > 75 (uyarı) → `good` | ✔ |
+| E6 | 26.10.2026 Pazartesi, 07.11.2026 Cumartesi (doğrulandı), 13 takvim günü, 1 Pazar (01.11); 6 gün: 12 − 1 (29 Ekim, Perşembe) − 0,5 (28 Ekim arife) = 10,5 gün × 7,5 = 78,75 sa; 5 gün: 10 − 1 − 0,5 = 8,5 × 9 = 76,5 sa | ✔ |
+| M3a | 2024 artık yıl: 366 gün; 2024-07-01–2025-06-30 = 365; toplam 731; birleşim 2024-01-01–2025-06-30 = 547 | ✔ |
+| E9 / E10 | 60/1.800 = %3,33, 15/1.800 = %0,83; Senaryo B 60/1.740 = %3,45, 15/1.740 = %0,86; KPI-054 900/9.000 = %10,0, 900/8.100 = %11,1 | ✔ |
+| E12 | 12 × 9 = 108 sa → 12 × 7,5 = 90 sa | ✔ |
+
+### B. Onay koşulları
+
+1. **Parametre adı çakışması:** düzen kapsamı için `min_coverage` kullanılmaz (bu anahtar KPI-004'te "üretken saat kapsamı" anlamında). Yeni anahtar **`min_pattern_coverage = 0,8`**. WP-6 veri belgesi besleme kapsamı için zaten ayrı anahtar (`min_feed_coverage`) seçti; WP-5'in "hesaplayıcı başına parametre beyaz listesi" ile birlikte her anahtarın tek anlamı olur.
+2. **Senaryo B payda düzeltmesi gün düzeyinde yapılır:** izin/devamsızlık saati paydaya yalnızca **o kişi-gün için `planned_hours > 0` puantaj satırı yoksa** eklenir. Kaynak-düzeyi `excluded` beyanı tek başına yeterli değildir — "mixed" kaynaklarda ve habersiz devamsızlık günlerinde (çoğu puantaj planlı saati yazar) çift sayımı önler. Günlük granülerlik yoksa (`period_days > 1`, WP-6 veri) `unknown` yolu uygulanır (kalite 50 + not). E9/E10 sonuçları bu kuralla değişmez; yeni test: `test_absence_denominator_addback_only_for_days_without_planned_row`.
+3. "Raporlu istirahat" ailesi `{sick, work_injury}` ve uzun yokluk türleri `{sick, parental, unpaid, work_injury}` WP-1 ile **tek sabitte** tanımlanır. `work_injury`'nin uzun yokluk listesine eklenmesi WP-1 paketinde küçük bir KPI-055/056 versiyonuyla gelir; bu belgenin KPI-055/056 versiyonu (gün tabanlı pay, sözleşmesel hak, kıdem birleşimi) bir sonraki versiyondur ve aynı listeyi devralır. Örneklerdeki "v1/v2" adları "önceki/yeni versiyon" olarak okunur.
+4. ⚖️ L-1…L-7 WP-3'e aktarılmış (AL-02, AL-03, AL-04, AL-06, WT-03) — doğrulandı. L-3 ve L-5'teki iki güvenli varsayılan farkı aşağıda (D) karara bağlandı; WP-4 ve WP-3 bu kararla hizalanır.
+
+### C. Açık sorulara kararlarım
+
+| # | Karar | Gerekçe |
+|---|---|---|
+| S-1 | **0,8**, geçiş için düşürme yok | KPI-055/056 zaten yalnızca ≥12 aylık pencerede renk alır; düşük kapsamda değer üretmek D-7'nin "izin cezalandırılmaz" ilkesini yanlış sayılarla zayıflatır. `insufficient_data` dürüst sonuçtur |
+| S-2 | **Kabul: kalite 50 + not** (`insufficient_data` değil) | Bu hata yönü devamsızlığı **olduğundan yüksek** gösterir (gizlemez); tüm devamsızlık KPI'larını beyan gelene kadar kaybetmek daha kötü. Not panoda görünür olmalı |
+| S-3 | **KPI değil; yalnızca lineage'da sayı** (`advance_leave_persons`) | Avans izin bireysel anlaşma konusudur; ayrı gösterge kişiye yönelik baskı aracı olabilir |
+| S-4 | **Evet, sprint 2: rotasyon düzen tipi** — WP-3 AL-14, AL-RU-01, WT-RU-02 yanıtlarına bağlı | Yurt dışı şantiyelerde v1 "bilinmiyor" kalır ve kapsam kuralıyla `insufficient_data` döner; bu bilinçli |
+| S-5 | **Yalnızca açık dönemler** yeniden çevrilir; kapalı dönemler v1 sonuçlarıyla kalır | D-2 ile tutarlı; WP-1 Q5 kararıyla aynı ilke |
+
+### D. WP-3 ile güvenli varsayılan farkları — kararım
+
+| Konu | WP-4 | WP-3 | Karar |
+|---|---|---|---|
+| L-3 / AL-02 tünel +4 gün | Kural tanımlanmaz | İzleme hesabında +4 uygula | **WP-4 varsayılanı + görünür not:** hukuk yanıtına kadar +4 kuralı açılmaz (WP-4 §3.1(d) gereği her hak kuralı bir kaynak belgeye ve İK yönetimi onayına bağlıdır; doğrulanmamış bir yasa okuması kaynak belge değildir). Tünel projelerinin KPI-055 sonucunda not: "yer altı +4 gün hukuki teyit bekliyor — kullanım oranı olduğundan yüksek olabilir". Böylece eksik kullanım gizlenmez, yanlış hak da yazılmaz |
+| L-5 / AL-04 grup içi kıdem | Yalnızca aynı tüzel kişilik; kaynak `leave_seniority_date` öncelikli | Grup içi transferle bağlanmış dönemleri birleştir | **Kaynak `leave_seniority_date` esas (bordro bireysel hakkın kayıt sistemidir); platform kendiliğinden tüzel kişilikler arası birleştirme yapmaz.** Grup içi geçişler (bir tüzel kişilikten çıkış + 7 gün içinde gruptaki başka tüzel kişilikte giriş) `group_transfer_spells` sayısı olarak lineage'da görünür. Grup kıdeminin şirket politikası olarak tanınması **ürün sahibi / İK yönetimi kararıdır** (`SPRINT1_REVIEW.md` §4) ve WP-3 AL-04'e bağlıdır |
+
+### E. Statü
+
+**İK Direktörü onaylı (şartlı)** — koşullar 1–4. Uygulama üç küçük pakete bölünür (düzen + tatil + izin günü çevrimi → KPI-055/056 v2 → devamsızlık paydası), bkz. `SPRINT1_REVIEW.md` §5. ADR gerekli. İnsan girdisi: TİS/sözleşme ek gün kuralları ve kaynak belgeleri (İK yönetimi + sendika), resmî tatil takvimi kaynağı, gerçek çalışma düzeni kaynağı (bordro/puantaj sistemi).

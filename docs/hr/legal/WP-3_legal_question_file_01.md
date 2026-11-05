@@ -876,3 +876,51 @@ ignored, transitive tiers, no contract evidence), work-injury/occupational-disea
 KPI-053/028, health-derived KPIs open to any `kpi.read` role, retention job unscheduled, unknown leave labels counted
 in KPI-003, single global overtime thresholds applied to RU entities, statutory-only entitlement possibly overstating
 KPI-055.
+
+---
+
+## İK Direktörü incelemesi (2026-11-05)
+
+**İnceleyen:** Agent 17 (İK Direktörü) · **Karar: ŞARTLI ONAY — 1. gönderim paketi (aciliyet A) hukukçuya gönderilebilir** · Ölçütler: `HR_TEAM_PLAN.md` §2.3 (soru kapalı uçlu ve yanıtlanabilir mi, kaynak doğru işaretli mi, güvenli varsayılan çalışan/veri sahibi lehine mi) ve §4.2.
+
+### A. Kontroller
+
+- 64 soru başlığı sayıldı (`####`), her birinde Soru / Kaynak / Bugünkü davranış / Mevzuat (teyit durumu) / Güvenli varsayılan / Yanıtlayacak / Aciliyet var. "Uyumludur / yasaldır" ifadesi yok; içtihat numarası yok. ✔
+- Bugünkü davranış kanıtları P2 (kademeli görünürlük) ve P3 (`project_id` yok sayılıyor) **Orchestrator tarafından kodda doğrulandı** (doğrulama notu b). P5'teki "iş kazası → `sick`" durumu, Orchestrator'ın Türkçe güvenli katlama düzeltmesiyle artık **tüm yazımlarda** tutarlı (doğrulama notu a); soru metinleri değişmez.
+
+### B. El hesaplarının yeniden hesaplanması (§6)
+
+| Örnek | Benim hesabım | Sonuç |
+|---|---|---|
+| WT-RU-01 | 120 / (2.000 + 120) = %5,66; KPI-007 eşikleri 5/8/10 → 5,66 < 8 → `good` ("sarı bile görünmeyebilir") | ✔ eşleşiyor |
+| AL-02 | 14/14 = %100; 14/18 = %77,8 | Değer ✔, **etiket ✖**: KPI-055 `higher_better` (90/75/60), motor `v ≤ 75` ise sarı → 77,8 **`good`** (hedefin altında ama uyarı bandında değil). "Uyarı bandı, 75–90" ifadesi "hedefin altında, renk yeşil" olarak düzeltilir (koşul 1). Sonuç argümanı değişmez — eksik kullanım bugün gizleniyor |
+
+### C. Onay koşulları
+
+1. §6 AL-02 etiketi düzeltilir (yukarıda).
+2. §7 son satırdaki "Taslaklar henüz yok" ifadesi §1 ile çelişiyor (§1 WP-1/2/4 taslaklarının okunduğunu söylüyor) → "WP-1, WP-2, WP-4 ⚖️ bölümleri bağlandı; WP-5/WP-6'nın L-8…L-17'si dosya no. 2'de" olarak düzeltilir.
+3. **Dosya no. 2** (sprint 2 başında, gönderim paketi 2 ile birlikte): WP-5 L-8…L-12, WP-6 veri L-13…L-17, WP-6 İSG ⚖️ (4857 md. 7 geçici iş ilişkisi işçileri; kimliksiz vaka satırının küçük projede belirlenebilirliği — KV-04'e ek). **L-8 aciliyet A.**
+4. **İK kararıyla hizalanacak güvenli varsayılanlar** (soru metni aynen kalır, güvenli varsayılan satırı güncellenir):
+   - OHS-07: uyarının görünürlüğü "yalnızca 3 rol" değil, **KPI-014A'yı o kapsamda görebilen herkes** (sayı + proje + ay; WP-2 Q7 kararı). (b), (d) varsayılanları aynen.
+   - AL-02: tünel +4 gün **kural olarak açılmaz; tünel projelerinde KPI-055 notu** (WP-4 incelemesi D).
+   - AL-04: **kaynak `leave_seniority_date` esas; platform tüzel kişilikler arası kendiliğinden birleştirme yapmaz**, grup içi geçişler sayı olarak görünür; grup kıdemi politikası ürün sahibi/İK yönetimi kararı (WP-4 incelemesi D).
+5. **İş kararı alınmış sorular "yalnızca engel teyidi" olarak işaretlenir** (hukukçunun zamanını korumak için; aciliyet C'ye iner): OHS-02 (İK kararı A — `work_injury` ayrı tür ve eşikli göstergelerden dışlama, WP-1 onaylandı), PAY-03(a) (Hayır — şirket politikası), PAY-04 (A — kişi bazlı skor/sıralama yasak; bu zaten platform ilkesi).
+6. **SUB-03 aciliyeti A'ya yükselir:** kademeli yayılım kodda doğrulandı ve bugün çalışıyor.
+
+### D. Açık sorulara (§11) kararlarım
+
+| # | Karar | Gerekçe |
+|---|---|---|
+| 1 — gönderim sırası | **Paket 1 (A, hemen):** SUB-01, SUB-02, SUB-03, SUB-04, KV-01, KV-02, KV-04, PL-04, OHS-01, KV-05, KV-06, KV-07, KV-08, KV-09, KV-RU-01. **Paket 2 (B, WP uygulamasıyla paralel):** OHS-03, OHS-07, OHS-08, OHS-09, OHS-10, KV-03, AL-02, AL-03, AL-04, AL-06, AL-14, WT-01/02/04/07, WT-RU-01, AL-RU-01, PL-01/02/03, PAY-01/02/05 + dosya no. 2'nin L-8'i (A). **Paket 3 (C):** kalanlar + iş kararı alınmış teyitler (koşul 5) | Önce bugün çalışan ve veri ifşası riski taşıyan davranışlar (alt yüklenici görünürlüğü, sağlık türevli KPI erişimi), sonra açık WP'leri bloklayanlar |
+| 2 — yerel avukat | Ürün sahibi/şirket hukuk birimi seçer; **ülke listesi şirket girdisidir** (demo veride yalnızca RU sentetik). Her ek ülke için WT-RU/AL-RU/KV-RU setinin kopyası | Ajan avukat seçemez; ülke listesi gerçek organizasyondan gelmeli |
+| 3 — dosya adı | **`WP-3_legal_question_file_01.md` kalır**; sonraki: `WP-<n>_legal_question_file_02.md`. Plandaki `LEGAL-01_...` adı kullanılmaz | `SPRINT1_REVIEW.md` §3 adlandırma kararı |
+| 4 — WP-4 farkları | Karara bağlandı (koşul 4) | WP-4 incelemesi D |
+| 5 — WP-1 risk notu | **Ayrı belge gerekmez**; KV-01…KV-04, OHS-09 ve §5 S3/S4 risk notudur. WP-1'deki "LEGAL-01" atfı bu dosyaya çevrilir (WP-1 koşul 6) | Tekrarı önlemek |
+
+### E. Güvenli varsayılanların mühendisliğe gidişi
+
+§5 tablosundan **S1 (alt yüklenici görünürlüğü)** ürün sahibi kararına gider (D-1 revizyonu; `SPRINT1_REVIEW.md` §4); **S3** WP-1 ile karşılandı; **S4** (sağlık türevli KPI'lara ayrı izin) ürün sahibi kararına gider; **S6** (tanınmayan izin etiketi eşikli KPI'lara girmeden kuyrukta) **bu sprintte uygulanmaz** — KPI-003 tanımı (D-3) "diğer izinler"i zaten içerir, `unmapped_leave_label` uyarısı kuyruğa düşer; KPI-053'e girmez. **S8** (çıktılar prim/bireysel değerlendirmede kullanılmaz) şirket politikası olarak İK yönetimine gider. S2, S5, S7, S9 gerçek veri öncesi ön koşullardır.
+
+### F. Statü
+
+**İK Direktörü onaylı (şartlı)** — koşullar 1–6 yazıldıktan sonra Paket 1 ürün sahibi aracılığıyla insan hukuk danışmanı ve KVKK irtibat kişisine gönderilir. Hukuki görüş değildir; hiçbir soru yanıtlanmış sayılmaz.

@@ -266,3 +266,54 @@ Eşikler: KPI-014A 1,5 / 3,0 / 5,0; KPI-014B 1,0 / 2,0 / 3,5 (lower_better; uyar
 ## 12. Statü
 
 **Taslak — İK Direktörü incelemesi bekliyor.** Onaylı değildir.
+
+---
+
+## İK Direktörü incelemesi (2026-11-05)
+
+**İnceleyen:** Agent 17 (İK Direktörü) · **Karar: ŞARTLI ONAY** · Ölçütler: `HR_TEAM_PLAN.md` §2.4 ve §4.2.
+
+### A. El hesaplarının ve istatistik gerekçenin yeniden hesaplanması
+
+| Örnek | Benim hesabım | Sonuç |
+|---|---|---|
+| A | 1/80.000 × 10⁶ = 12,50 | ✔ |
+| B | 2/1.050.000 × 10⁶ = 1,905 → `good` (< 3,0) | ✔ |
+| C / D | 2/999.999 × 10⁶ = 2,000002 (renk yok); 3/1.000.000 × 10⁶ = 3,00 = uyarı → `warning` | ✔ |
+| E | 1/400.000 × 10⁶ = 2,50; 2/1.200.000 × 10⁶ = 1,667 | ✔ |
+| G / H | 15/2.100.000 × 200.000 = 1,429 (`good`); 4/210.000 × 200.000 = 3,810 (≥ 3,5 `critical`) | ✔ |
+| M / N | 63/1.050.000 × 200.000 = 12,00; 3/80.000 × 200.000 = 7,50 | ✔ |
+| S1-a/b/c | NM oranı 12,0 → 6,0 (−%50) / 8,4 (−%30) / 9,0 (−%25) | ✔ (koşul 4: sınır hesabı) |
+| Poisson tablosu | λ=0,12: 1−e^−0,12 = %11,3; 12 ay: 1−e^−1,44 = %76,3. λ=1,5: P(≥3) = %19,1, P(≥5) = %1,9. λ=3: P(≥6) = %8,4. λ=1: P(≥2) = %26,4, P(≥4) = %1,9. λ=2,5: P(≥5) = %10,9. λ=5: P(≥10) = %3,2 | ✔ tamamı |
+
+### B. Onay koşulları
+
+1. **Tek renk bastırma mekanizması:** R1'in `status_reason = "low_exposure"` alanı, WP-5'in KPI-020 bantlarındaki "değer var, renk yok" işaretiyle (`threshold_suppressed`) ve mevcut `threshold_min_days` davranışıyla **aynı** genel mekanizma olarak tasarlanır: `threshold_status = null` + `status_reason ∈ {short_window, low_exposure, unknown_category_share, low_coverage}`. Tek ADR (bkz. `SPRINT1_REVIEW.md` ADR-a). İki ayrı bayrak icat edilmez.
+2. **TRIR H_min = 500.000 sa** (Q2 kararı, aşağıda); kabul kriteri 1 ve Örnek H buna göre: H (210.000 sa) → **renk yok**; G değişmez. Örnek F değişmez.
+3. **S5 "iş günü" tanımı yazılır:** Pazartesi–Cuma, ülkenin resmî tatilleri hariç (WP-4 `public_holidays` tablosu). Bu bir iç kayıt sinyalidir; SGK bildirim süresine uyum yargısı **değildir** (⚖️ OHS-03). WP-6 İSG Örnek 4.1 satır 2 bu tanımla tutarlıdır (5 iş günü > 3).
+4. **S1 sınırı deterministik hesaplanır:** yüzde değişim kayan noktalı orandan değil, `NM_now × H_prev ≤ 0,70 × NM_prev × H_now` biçiminde tam sayı/Decimal karşılaştırmasıyla değerlendirilir; aksi halde S1-b (tam −%30) yuvarlama hatasıyla "yok" çıkabilir.
+5. Ölümlü kaza uyarısı (R2) **kapsam kapısından da bağımsızdır** (WP-6 veri §3.6 `insufficient_data` durumunda da görünür) — R2 madde 2'ye eklenir.
+6. Kabul kriteri 9'daki "KPI-014A/B eşiklerinin aktif sayılması için KPI-043'ün aktif olması şartı" katalog notu olarak yazılır; eşik **değerleri** (D-5) değişmez.
+7. R2 madde 3 ve Q4 (alt yüklenici ölümlü kazası, paylaşım izni olmadan) **ürün sahibi kararına** gider (D-1 istisnası). Karar gelene kadar güvenli varsayılan uygulanır: proje düzeyinde yalnızca **sayı**, firma adı yok.
+
+### C. Açık sorulara kararlarım
+
+| # | Karar | Gerekçe |
+|---|---|---|
+| Q1 | **C1 — küçük kapsam renk almaz**; renkli değerlendirme firma/tenant toplamında | Dürüst ve basit; C2'nin 36 aylık penceresi proje fazlarını karıştırır ve yeni bozulmayı eski iyi dönemle örter |
+| Q2 | **TRIR H_min = 500.000 sa** (200.000 değil) | 200.000 sa'te hedefteki bir kapsamın yanlış sarı alma olasılığı ≈ %26; 500.000 sa'te ≈ %11 — LTIFR'ın 1.000.000 sa'teki ≈ %19'uyla aynı mertebe. Tek olayın rengi belirlemesi, kaza gizleme baskısının ana kaynağıdır. Yaklaşık 200 kişilik bir proje (≈ 2.600 sa/kişi/yıl) R12'de bu eşiği aşar. Güven: orta (yargı). Bu, kendi önceki "öneri başlangıcı" değerimin revizyonudur; D-5 eşik değerleri değişmez |
+| Q3 | **Evet — KPI-043 kalıcı olarak `neutral`** | `higher_better` kota ve uydurma bildirim üretir; değişiklik ancak İSG Kurulu görüşüyle (OHS-08) ve İK Direktörü kararıyla gündeme gelir |
+| Q4 | Güvenli varsayılan: **evet, proje düzeyinde yalnızca sayı, firma adı yok** — nihai karar ürün sahibi + WP-3 OHS-07(d) | Ölümlü kaza gizlenemez; asıl işverenin koordinasyon yükümlülüğü (6331 md. 23 ⚖️ teyit edilmeli) |
+| Q5 | S1–S5 başlangıç değerleri **kabul**, güven düşük; gerçek veride 12 ay sonra kalibre | Hepsi renk değil inceleme tetikleyicisi; yanlış pozitifin bedeli düşük |
+| Q6 | **Evet — tehlikeli durum/davranış gözlemleri KPI-043'e girmez**; ayrı gösterge şimdilik yok | Ramak kala tanımını sulandırır; gözlem kartı kotası riski |
+| Q7 | **Evet — KPI-014A'yı o kapsamda görebilen herkes ölümlü kaza bandını görür** (sayı + proje + ay; kişi bilgisi yok) | Ölümlü kazanın hat yönetiminden saklanması güvenlik kültürüne aykırı; eklenen tanımlama riski sahada zaten bilinen bilgiye göre ihmal edilebilir. **Not:** WP-3 OHS-07 güvenli varsayılanı ("yalnızca 3 rol") bu kararla hizalanır ve hukukçuya bu haliyle sorulur |
+
+### D. Çapraz tutarlılık
+
+- S6 sayacı WP-1 §3.4 ve WP-6 İSG V15 ile aynı kural kodlarını kullanır (`reclassified_up/down`) — WP-1 koşul 5.
+- R3 "eksik veri" satırı WP-6 veri §3.6 kapısına bağlıdır; İSG için `min_feed_coverage = 0,9` (WP-6 veri kararı).
+- `worker_category` değerleri WP-6 İSG §3.3 ile aynıdır.
+
+### E. Statü
+
+**İK Direktörü onaylı (şartlı)** — koşullar 1–7. R1 + R2 (kategorisiz) ilk uygulama dalgasına alınabilir; KPI-043 ve R2 kategori kırılımı WP-6 İSG import'una, S1–S7 sinyalleri 12 aylık veriye bağlıdır. İnsan onayı: İSG profesyoneli ve İSG Kurulu (H_min, S1–S5 değerlerinin prosedüre alınması — OHS-08), ürün sahibi (Q4).

@@ -399,3 +399,45 @@ Tümü kurgusal. Firma A ortalama 100 kişi, firma B 50 kişi, aylar boyunca sab
 ## 11. Statü
 
 **Taslak — İK Direktörü incelemesi bekliyor.** (İK Direktörü incelemesi bölümü bu satırın altına eklenecek.)
+
+---
+
+## İK Direktörü incelemesi (2026-11-05)
+
+**İnceleyen:** Agent 17 (İK Direktörü) · **Karar: ŞARTLI ONAY** · Ölçütler: `HR_TEAM_PLAN.md` §2.4 ve §4.2.
+
+### A. El hesaplarının yeniden hesaplanması
+
+| Örnek | Benim hesabım | Sonuç |
+|---|---|---|
+| K1 | 1.200/150 = 8,0 sa; × 365/92 = 31,74 (KPI-008 30/20/16 → `good`) | ✔ |
+| K2 | Gerekli kişi-ay 100×3 + 50×3 = 450; kapsanan 300 → C = 0,667 < 0,8 → `insufficient_data`, kalite 66,7 | ✔ |
+| K3 | Kapsanan 300 + 50×2 = 400 → C = 0,889; ort. kişi 400/3 = 133,33; 1.290/133,33 = 9,675; × 365/92 = 38,38 | ✔ |
+| K7 | 900/18.000 = %5,0; 300/18.000 = %1,67 | ✔ |
+| K8 | 5.000.000/150 = 33.333; C = 100/150 = 0,667; 7.000.000/150 = 46.667 | ✔ |
+| Örnek dosyalar | Puantaj satır 4: gece 8 > çalışılan 6 → hata ✔ (ayrıca > 7,5 uyarı koşulu da oluşur); eğitim satır 4: −4 sa → hata ✔, satır 2 İSG + `ISG_TEMEL` → `is_statutory_hse = true` ✔; maliyet satır 4: −500 düzeltmesiz → hata + `TL → TRY` uyarısı ✔ | ✔ |
+
+### B. Onay koşulları
+
+1. **Kapsam modeli tektir ve bu belgededir** (§3.4–3.6). WP-6 İSG belgesinin batch beyanı bu modele eşlenir; ortak ad kümesi: `period_start` / `period_end`, `completeness ∈ {complete, partial, none}` (+ satır yoksa `undeclared`), `confirmed_empty`, `attributes` (İSG: `includes_subcontractor_cases`, `includes_near_miss`), `feed_type = safety`, import tipi `safety_event`.
+2. Renk/durum bastırma nedeni WP-2 koşul 1'deki ortak `status_reason` mekanizmasıyla döner (`low_coverage`); `KpiResult` şekli değişmez kuralı korunur.
+3. Kapsam kapısı (§3.6) **İSG ölümlü kaza uyarısını bastırmaz** (WP-2 koşul 5).
+4. §3.3.2'deki "yasal İSG eğitim asgarisi karşılanmıyor olabilir" notu, işyeri tehlike sınıfı alanı (`hazard_class`, sprint 2'de Agent 18 tanımlar — WP-6 İSG koşul 3) gelene kadar **üretilmez**; yalnızca `hours_by_category` ve `statutory_hse_hours_per_employee` kırılımı gösterilir.
+5. Maliyet önizleme maskesi (§3.7.1) `cost.read` olmayan kullanıcıda **zorunlu** kabul kriteridir (L-13 yanıtına kadar güvenli varsayılan); ham maliyet satırlarının staging saklama süresi B-24 kararına bağlanır.
+6. ⚖️ L-13…L-17 WP-3 dosya no. 1'de yok → hukuk soru dosyası no. 2'ye girer.
+
+### C. Açık sorulara kararlarım
+
+| # | Karar | Gerekçe |
+|---|---|---|
+| S-1 | **Genel 0,8; İSG 0,9** (1,0 değil) | 1,0 olursa tek bir geç kalan alt yüklenici tüm şirketin LTIFR'ını boşaltır ve "kayıt yok — onaylı" (`confirmed_empty`) yanlış beyanı için baskı üretir — tam da önlemek istediğimiz kaza gizleme yolu. 0,9 + "kapsam dışı firma-ay: n" notu + ölümlü kaza uyarısının kapıdan bağımsız olması daha güvenli |
+| S-2 | **İSG beslemesi tüm tenant'larda hemen `enforce`**; diğer beslemeler `warn` ile başlar, 3 ay kapsam beyanı biriktikten sonra `enforce` | Bugün gerçek bir İSG import'u yok (yalnızca seed) → `enforce`'un geriye dönük kaybettirdiği bir şey yok; İSG'de yanlış sıfır en tehlikeli hatadır (M3). Diğerlerinde ani "veri eksik" dalgası kullanıcı güvenini sarsar |
+| S-3 | **Engel değil, uyarı:** eksik zorunlu besleme listesi kapanış kaydına yazılır; o kapsamların dondurulmuş sonucu `insufficient_data` kalır | Kapanışı engellemek, ay sonunu kurtarmak için sahte `confirmed_empty` beyanı teşviki yaratır (özellikle İSG). D-2 (kapatma yetkisi) değişmez |
+| S-4 | **v1 dışı**; KPI-019 açıklamasına "şantiye düzeyi toplu maliyetler (kamp, servis) hariç" notu | Kişiye bölünmemiş maliyeti kişiye dağıtmak keyfi anahtar ister; sprint 2 adayı |
+| S-5 | **Evet:** `implausible_zero` veri kalite uyarısı — kapsamı `complete` ve ≥ 50 kişilik bir firma-ayda 0 izin kaydı (grup düzeyi, engelleyici değil). İSG karşılığı WP-2 S2 sinyalidir | Ucuz ve yanlış "tam" beyanını yakalar |
+| S-6 | **Şirket girdisi gerekir** (gerçek puantaj kaynak sistemi) — `SPRINT1_REVIEW.md` §6 | Ajan karar veremez |
+| S-7 | **Terim ve dosya adı kararı:** koşul 1'deki ad kümesi; dosya adları teslim edildiği gibi `WP-<n>_<konu>.md` kalır (`SPRINT1_REVIEW.md` §3) | Yeniden adlandırma çapraz referansları ve inceleme izini bozar |
+
+### D. Statü
+
+**İK Direktörü onaylı (şartlı)** — koşullar 1–6. Kapsam meta verisi çekirdeği (tablo + upload beyanı + kapı) yeni import tiplerinden **önce** ve ayrı paket olarak uygulanır; sonra İSG, puantaj, eğitim, maliyet sırasıyla (bkz. `SPRINT1_REVIEW.md` §5). ADR gerekli. İnsan girdisi: gerçek kaynak sistemler (puantaj, LMS, bordro), alt yüklenici sözleşmelerine veri bildirme şartı (satın alma).

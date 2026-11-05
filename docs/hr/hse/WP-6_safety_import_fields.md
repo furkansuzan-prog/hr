@@ -302,3 +302,43 @@ Mart 2026, PRJ-01 + PRJ-02: FIRMA-A puantajı 70.000 sa; **FIRMA-B puantajı yok
 ## 12. Statü
 
 **Taslak — İK Direktörü incelemesi bekliyor.** Onaylı değildir. Agent 19'un DATA-03 belgesiyle birleştirilmesi Agent 17 üzerinden yapılır.
+
+---
+
+## İK Direktörü incelemesi (2026-11-05)
+
+**İnceleyen:** Agent 17 (İK Direktörü) · **Karar: ŞARTLI ONAY** · Ölçütler: `HR_TEAM_PLAN.md` §2.4 ve §4.2.
+
+### A. El hesaplarının yeniden hesaplanması
+
+| Örnek | Benim hesabım | Sonuç |
+|---|---|---|
+| 4.1 satır sonuçları | 1 ✔ LTI; 2 ✔ MTC (05.03.2026 Perşembe → 12.03 Perşembe: 6, 9, 10, 11, 12 Mart = 5 iş günü > 3 → S5 girdisi); 3 ✔ NM; 4 ✖ FAC + 4 gün; 5 ✔ türetilmiş LTI (3 gün); 6 ✖ `severity_required`; 7 ✖ 2026-12-01 > 2026-11-05 → 4 geçerli / 3 hatalı | ✔ eşleşiyor |
+| 4.2 LTIFR | 2/70.000 × 10⁶ = 28,57 | ✔ |
+| 4.2 TRIR | 2/70.000 × 200.000 = 5,71; bugünkü kod 3/70.000 × 200.000 = 8,57 | ✔ |
+| 4.2 KPI-043 | 1/70.000 × 200.000 = 2,857 | ✔ |
+| 4.3 | Vaka düzeyinde LTIFR payı 1 (LTI), TRIR payı 2 (LTI + MTC); FAC hiçbir oranda yok | ✔ |
+
+### B. Onay koşulları
+
+1. **Kapsam beyanı alan adları WP-6 veri belgesiyle birleşir** (terim kararı, `SPRINT1_REVIEW.md` §3): `coverage_from/coverage_to` → `period_start/period_end`; `includes_subcontractor_cases`, `includes_near_miss` → `data_feed_coverage.attributes`; tablo/alan sahibi WP-6 veri §3.4. Import tipi adı `safety_event`, kapsam besleme tipi `safety`.
+2. **Türkçe ve Rusça sözcük iğneleri katlamadan sonra sözcük sınırında eşleşir** (kısa kodlar için zaten öyle). Gerekçe: aksan sökme sonrası çakışmalar — ör. "ölümlü" → `olumlu` ("olumlu" = pozitif), "ölüm" → `olum` ("olumsuz" içinde geçer); RU `почти` tek başına "neredeyse" demektir → `почти происш` / `почти-происш` kullanılır. Belirsizlik zaten hata üretir (kural 3) ama yanlış **tekil** eşleşme sessiz kalır.
+3. **İşyeri tehlike sınıfı (`hazard_class`)** alanı WP-6 veri §3.3.2'de "Agent 18'in alanı" olarak atıf alıyor ama bu belgede tanımlı değil. Sprint 2'de Agent 18 tanımlar (proje veya işveren düzeyi, etkin tarihli, değerler az/tehlikeli/çok tehlikeli ⚖️ WP-3 OHS-04). O zamana kadar KPI-008 "yasal asgari karşılanmıyor olabilir" notu üretilmez; yalnızca kırılım gösterilir.
+4. Yasaklı sütun listesinde `sorumlu` gibi iğneler meşru firma sütunlarını ("Sorumlu firma") düşürebilir; §3.9'daki "eşlenmiş sütun yasak listeye takılırsa hata ve yeniden adlandırma" kuralı **zorunlu** kabul kriteri olur (sessiz düşürme yok), test: `test_prohibited_column_mapped_field_raises_rename_error`.
+5. Alt yüklenici vakaları (`legal_entity_code` = etkilenen çalışanın işvereni) bugünkü erişim hatası düzeltilmeden (Orchestrator doğrulaması (b): `access.py` `ContractorRelationship.project_id`'yi yok sayıyor ve paylaşım kademeli yayılıyor) **gerçek veriyle** yüklenmez: aksi halde bir projede verilen paylaşım izni, firmanın tüm projelerdeki vaka satırlarını açar. Uygulama sırası: erişim düzeltmesi önce (`SPRINT1_REVIEW.md` §5).
+6. V15/S6 yön kodları WP-1 ile ortak (`reclassified_up` / `reclassified_down`).
+
+### C. Açık sorulara kararlarım
+
+| # | Karar | Gerekçe |
+|---|---|---|
+| Q1 | **Vaka düzeyi onaylandı** (bir satır = bir etkilenen kişinin sonucu, kimliksiz) | GRI 403-9 / OSHA vaka sayar; olay düzeyi çok yaralılı olaylarda oranı eksik gösterir (4.3). Seed/demo geçişi ADR'de |
+| Q2 | **v1'de reddedilir (`illness_not_supported_v1`) ama kaybolmaz:** kuyruktaki bekleyen sayı İSG rolüne her ay gösterilir; meslek hastalığı istirahati izin tarafında `work_injury` ile zaten görünür (WP-1). Ayrı `occupational_illness` türü sprint 2 adayı (GRI 403-10) | TRIR "injury" tanımını bozmamak; vakanın sessizce düşmemesi |
+| Q3 | `commuting_policy_required` kuyruğu WP-3 OHS-10(b) yanıtına kadar kalır. Yanıttan sonra iş tercihim: **işverenin sağladığı servis kazaları oranlara dahil**, kişisel ulaşım kazaları oran dışı; ikisi de ayrı alt sayımla raporlanır | 5510 md. 13 ve GRI 403-9 "organize taşıma" ile uyumlu; servis kazası işverenin kontrolündedir |
+| Q4 | KPI-044 aktive edilirse **vaka başına 180 gün tavanı oranda**; tavansız toplam ayrıca saklanır ve gösterilir | Uluslararası karşılaştırılabilirlik + ağır vakanın görünmezleşmemesi |
+| Q5 | **Evet, sprint 2:** alt yüklenici çalışanları için ayrı oran (GRI 403-9) | Alt yüklenici vakası ana yüklenici oranında kaybolmamalı; önce puantaj kapsamı oturmalı |
+| Q6 | **Evet, alınır — yalnızca toplu dağılım** ("bildirildi / beklemede / gerekmiyor" sayıları); platform uyum yargısı üretmez | OHS-03(a) güvenli varsayılanı ile tutarlı |
+
+### D. Statü
+
+**İK Direktörü onaylı (şartlı)** — koşullar 1–6. Bağımlılıklar: WP-6 veri kapsam meta verisi (önce), erişim düzeltmesi (önce). ADR gerekli (SafetyEvent vaka düzeyi şeması + import tipi). İnsan onayı: iş güvenliği uzmanı — gerçek kaynak sınıf etiketlerinin §3.4 eşlemesi ve LTI gün tanımı (WP-3 OHS-10), KVKK — vaka düzeyi liste görünümü (KV-04).

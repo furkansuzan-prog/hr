@@ -277,3 +277,53 @@ KPI-001 değişmez (tüm kategoriler sayılır); bilinmeyen payı yalnızca kali
 ## 11. Statü
 
 **Taslak — İK Direktörü incelemesi bekliyor.** (İK Direktörü incelemesi bölümü bu satırın altına eklenecek.)
+
+---
+
+## İK Direktörü incelemesi (2026-11-05)
+
+**İnceleyen:** Agent 17 (İK Direktörü) · **Karar: ŞARTLI ONAY** · Ölçütler: `HR_TEAM_PLAN.md` §2.4 ve §4.2. Ek dosya `WP-5_sgk_exit_code_map.csv` bu incelemenin kapsamındadır (CSV'ye satır eklenmedi).
+
+### A. El hesaplarının yeniden hesaplanması
+
+| Örnek | Benim hesabım | Sonuç |
+|---|---|---|
+| Gün sayıları | H1 46, H2 78, H3 72, H4 156, H5 226 | ✔ |
+| W1 | <30: 0/10; <90: H1, H2, H3 = %30 (≥ 20 `critical`); <180: + H4 = %40 (≥ 32 `critical`) | ✔ |
+| W2 | KPI-018: H1 = %10 (< 15 `good`); KPI-022: H1, H4 = %20 (< 25 `good`); dışlanan 2/10 | ✔ — plan örneğiyle (%30 → %10, 2/10) aynı |
+| W3 / W4 | 2/10 = %20 → eşik 20'ye **eşit = `critical`** (belgede renk yazılmamış; testte `critical` beklenmeli); KPI-022 %30 (`warning`) | ✔ (koşul 6) |
+| W5 | 1 belirsiz / 3 v1 erken ayrılış → kalite 66,7 | ✔ |
+| V1 / V3 / V6 | 30/400 = %7,5, aralık (30+10)/400 = %10,0; u = %25 > %20 → `insufficient_data`; 38/400 = %9,5, u = %2, kalite 98 | ✔ |
+| R1 / R3 | 128/200 = %64 (≤ 65 `warning`); 2025-11-06–2026-10-31 = 360 gün, 2025-11-07 = 359 gün (motor `(pe − ps).days + 1`) | ✔ |
+| Bileşik not | 0,97^(365/30) = e^(12,17 × ln 0,97) ≈ %69,0 | ✔ |
+
+### B. Onay koşulları
+
+1. **CSV ↔ belge çelişkisi:** CSV kod 22 notu "> %10 uyarı", belge §3.5 "(unknown + other) / tüm ayrılışlar > %15". **Karar: %15, (unknown + other) birlikte.** CSV notu buna göre düzeltilir.
+2. **Kod listesi eksik:** CSV 01–34 ve 42–50'yi kapsıyor; e-Bildirge listesinde 35 ve sonrası kodlar da var (aralarında doğum nedeniyle işten ayrılmaya ilişkin bir kod bulunduğunu düşünüyorum — numarası ve metni teyit edilmeli). Doğrulama sırasında **tüm güncel kodlar** eklenir. Doğum/analıkla ilişkili ayrılış kodları **D-6 gereği KPI-020 gönüllü devire girmez** (`other`) ve `health_related` gibi hassas işaretlenir (ham kod saklanmaz). Doğrulanana kadar tablo etkin değil (L-12) — belgenin kendi kuralı, aynen kalır.
+3. **Kod 11 tutarlılık kontrolü ↔ KVKK varsayılanı:** L-8 güvenli varsayılanı kod 11'in ham değerini saklamıyor; o halde `fatality_not_in_hse_feed` kontrolü sonradan gelen İSG beslemesiyle tekrar çalışamaz. Çözüm: import sırasında yalnızca **tüzel kişilik × ay düzeyinde sayı** (`work_accident_death_exits`) tutulur (kişi bağı yok); kontrol iki besleme de `complete` olduğunda bu sayıyla çalışır.
+4. **Gönüllü alt kırılım** (S-3 kararı): yeni platform kategorisi açılmaz (`TERMINATION_CATEGORIES` ortak sözleşmesi değişmez); KPI-020 `breakdown.voluntary_just_cause` = kod 23/25 sayısı (kod 24 sağlık kodu olduğu için ayrı gösterilmez, yalnızca toplamda), `suppress_small_counts` ile.
+5. ⚖️ L-8…L-12 WP-3 dosya no. 1'de **yok** (o dosya L-1…L-7'yi aldı) → hukuk soru dosyası no. 2'ye girer; **L-8 aciliyet A** (çıkış kodu import'u gerçek veriden önce).
+6. Kabul testlerinde W3/W4 KPI-018 için `threshold_status = "critical"` (sınır: değer = kritik eşik) açıkça beklenir.
+7. **İzleme notu (bu WP'yi bloklamaz):** R5 — planlı demobilizasyonda KPI-002 %0 `critical` gösterir. Matematik doğru, sinyal yanlış (inşaat gerçekliği). Sprint 2'de KPI-002 için de doğrulanmış planlı bitişlerin ayrı gösterilmesi spesifikasyonu (Agent 19) yazılır; o zamana kadar proje kapanış ayında not.
+
+### C. Açık sorulara kararlarım
+
+| # | Karar | Gerekçe |
+|---|---|---|
+| S-1 | **`verified`** | Planlı bitiş ancak kanıtla dışlanır; işveren feshinin "proje sonu" kodlanması en büyük risk. İlk aylardaki fazla kırmızı, veri sağlama teşvikidir ve not ile açıklanır |
+| S-2 | **Evet, dışlama sürer**; `repeated_short_fixed_term_persons` lineage'da ve KPI-018 notunda sayı olarak görünür; L-11 yanıtı "hayır" ise bir sonraki formül versiyonunda kapatılır | Hukuk yanıtından önce kuralı değiştirmek kararsızlık yaratır; sayı görünür olduğu için gizleme yok |
+| S-3 | **23–25 `voluntary` kalır + alt kırılım** (koşul 4); **13 → `other`** (L-9 güvenli varsayılanı) | İşçinin haklı nedenle feshi işçi başlatımlıdır ve işverenin kontrol alanındadır (ücretin ödenmemesi dahil) — KPI-020'de görünmesi doğru teşviktir. Kod 13'ü gönüllü devire katmak kadın çalışanlar üzerinden dolaylı ayrımcılık riski taşır |
+| S-4 | **0,05 / 0,20 kabul** | %5 benim §3.1 eşiğim; %20 üstü değer yanıltıcı (V3) |
+| S-5 | **Kabul:** 3 dönemde ≥ 10 puan artış; kapsam **proje ve tüzel kişilik (alt yüklenici dahil)** | Kodlama davranışı firma düzeyinde oluşur; proje düzeyi demobilizasyonu yakalar |
+| S-6 | **Hayır** | KPI-020 + kategori kırılımı yeterli; yeni gösterge eklemek inceleme yükü |
+
+### D. Çapraz tutarlılık
+
+- "Veri yok ↔ gerçek sıfır" kuralı WP-6 veri §3.6 kapısına (`employment` beslemesi) bağlı — V5 tutarlı.
+- `planned_end_exclusion` + "hesaplayıcı başına parametre beyaz listesi" WP-4 koşul 1 (`min_pattern_coverage`) ve WP-6 veri (`min_feed_coverage`, `required_feeds`) için de geçerli olur — tek ADR (ADR-d).
+- KPI-020 renk bastırması WP-2 koşul 1'deki ortak `status_reason` mekanizmasıyla yapılır (`unknown_category_share`) — ayrı `threshold_suppressed` bayrağı açılmaz.
+
+### E. Statü
+
+**İK Direktörü onaylı (şartlı)** — koşullar 1–7. KPI-002 `threshold_min_days: 360` (yalnızca parametre) ilk dalgaya alınabilir; çıkış kodu eşlemesi doğrulanmadan etkinleşmez. ADR gerekli. İnsan girdisi: bordro/SGK uygulayıcısı + İK — güncel çıkış kodu listesinin satır satır doğrulanması (`verified_by`); hukuk — L-8…L-12.
