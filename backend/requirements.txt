@@ -1,0 +1,13 @@
+# Runtime dependencies (pinned; verified with the test suite)
+fastapi==0.162.0
+uvicorn[standard]==0.54.0
+pydantic==2.13.5
+SQLAlchemy==2.1.8
+alembic==1.20.1
+psycopg[binary]==3.3.8
+PyJWT==2.15.0
+python-multipart==0.0.32
+openpyxl==3.1.5
+numpy==2.5.3
+reportlab==5.0.1
+redis==5.2.1
