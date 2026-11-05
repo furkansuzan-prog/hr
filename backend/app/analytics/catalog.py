@@ -37,6 +37,15 @@ def _k(code, family, module, tr, en, ru, unit, direction, calculator=None, *, fo
     }
 
 
+# WP-2 R1/R2 (HR Director approved with conditions, 2026-11-05); ADR-018.
+_SAFETY_PURPOSE = (
+    "Colour only when hours worked in the window reach the minimum exposure (formula parameter "
+    "threshold_min_exposure_hours); below it the value and event counts are shown without colour (status_reason "
+    "low_exposure) - small scopes are never coloured, judge them at company/tenant level. Any fatality in scope "
+    "surfaces an alert independent of the rate. The thresholds count as active only once KPI-043 (near-miss "
+    "reporting rate) is active (HR Director section 3.3 rule 2; docs/hr/hse/WP-2)."
+)
+
 KPI_CATALOG: list[dict] = [
     # ---------------------------------------------------------------- Workforce sustainability / turnover
     _k("KPI-001", "workforce_stability", "E", "Personel Devir Oranı", "Employee Turnover Rate", "Текучесть кадров", "%",
@@ -55,7 +64,10 @@ KPI_CATALOG: list[dict] = [
        formula="Persons employed in scope at period start and still employed in scope at period end / persons at start x 100",
        num="Start population still employed at period end", den="Distinct persons employed at period start",
        sources=["employment_relationships"], owner="HR_DIRECTOR", standards=["ISO 30414 (retention rate)"],
-       target=80, warn=70, crit=60),
+       purpose="Workforce stability. Judged only on >= 12-month windows (colour from 360 days; shorter windows show "
+       "the value without colour, status_reason short_window). Never annualised: retention does not scale linearly "
+       "(docs/hr/data/WP-5 section 3.6)",
+       target=80, warn=70, crit=60, params={"threshold_min_days": 360}),
     _k("KPI-003", "attendance", "D", "Devamsızlık Oranı", "Absenteeism Rate", "Уровень абсентеизма", "%",
        "lower_better", "absenteeism_rate",
        formula="Absence hours of included types / planned working hours x 100",
@@ -128,12 +140,15 @@ KPI_CATALOG: list[dict] = [
        formula="(Lost-time injuries + fatalities) / hours worked x 1,000,000",
        num="LTI + fatality events", den="Hours worked (timesheets)", sources=["safety_events", "timesheets"],
        owner="HSE_SPECIALIST", standards=["ISO 45001 (context)", "GRI 403-9", "ESRS S1-14", "ISO 30414"],
-       params={"multiplier": 1_000_000}),
+       purpose="Lost-time injury frequency. " + _SAFETY_PURPOSE + " Minimum exposure: 1,000,000 h.",
+       params={"multiplier": 1_000_000, "threshold_min_exposure_hours": 1_000_000}),
     _k("KPI-014B", "health_safety", "G", "Toplam Kaydedilebilir Olay Oranı (TRIR)", "Total Recordable Incident Rate",
        "TRIR", "per 200k h", "lower_better", "trir",
        formula="Recordable injuries (fatality, LTI, restricted work, medical treatment) / hours worked x 200,000",
        num="Recordable events", den="Hours worked", sources=["safety_events", "timesheets"], owner="HSE_SPECIALIST",
-       standards=["GRI 403-9 (rate basis must be disclosed)"], params={"multiplier": 200_000}),
+       standards=["GRI 403-9 (rate basis must be disclosed)"],
+       purpose="Recordable injury frequency. " + _SAFETY_PURPOSE + " Minimum exposure: 500,000 h (HR Director WP-2 Q2).",
+       params={"multiplier": 200_000, "threshold_min_exposure_hours": 500_000}),
     _k("KPI-015", "sustainable_employment", "B", "Sürdürülebilir İstihdam Göstergeleri",
        "Sustainable Employment Indicator Family", "Показатели устойчивой занятости", "family", "neutral", None,
        formula="Indicator FAMILY (KPI-002, 008, 009, 014A/B, survey wellbeing, social protection) - not a single score",

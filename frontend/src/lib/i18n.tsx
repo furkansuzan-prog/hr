@@ -295,6 +295,18 @@ const dict = {
   "term.death": { tr: "Vefat", en: "Death", ru: "Смерть" },
   "term.other": { tr: "Diğer", en: "Other", ru: "Другое" },
   "term.unknown": { tr: "Bilinmiyor", en: "Unknown", ru: "Неизвестно" },
+  // ADR-018: why a computed value has no colour (KpiResult.status_reason)
+  "reason.short_window": { tr: "Kısa pencere — renk yok", en: "Short window — no colour", ru: "Короткий период — без цвета" },
+  "reason.low_exposure": { tr: "Düşük maruziyet — renk yok", en: "Low exposure — no colour", ru: "Малая экспозиция — без цвета" },
+  "reason.unknown_category_share": { tr: "Kategori bilgisi eksik — renk yok", en: "Category data missing — no colour", ru: "Нет категорий — без цвета" },
+  "reason.low_coverage": { tr: "Veri kapsamı düşük — renk yok", en: "Low data coverage — no colour", ru: "Низкое покрытие данных — без цвета" },
+  "reason.hours": { tr: "sa çalışma; renk için en az", en: "h worked; colour needs at least", ru: "ч отработано; для цвета нужно не менее" },
+  "alert.fatality": { tr: "Ölümlü kaza", en: "Fatality", ru: "Смертельный случай" },
+  "alert.fatalityBand": {
+    tr: "Bu dönemde ve kapsamda ölümlü kaza kaydı var. Bu uyarı oran, renk ve küçük grup kurallarından bağımsızdır.",
+    en: "A fatality is recorded in this period and scope. This alert is independent of the rate, colour and small-group rules.",
+    ru: "В этом периоде и охвате зарегистрирован смертельный случай. Предупреждение не зависит от показателя, цвета и правила малых групп.",
+  },
 } as const;
 
 export type Key = keyof typeof dict;

@@ -107,6 +107,9 @@ export async function download(path: string, filename: string) {
   URL.revokeObjectURL(url);
 }
 
+export type KpiStatusReason = "short_window" | "low_exposure" | "unknown_category_share" | "low_coverage";
+export type KpiAlert = { type: "fatality"; count: number; by_month: Record<string, number> };
+
 export type KpiResult = {
   code: string;
   name: string;
@@ -116,6 +119,10 @@ export type KpiResult = {
   value: number | null;
   annualized_value: number | null;
   threshold_status: "good" | "warning" | "critical" | null;
+  /** ADR-018: set when a computed value is deliberately not coloured (threshold_status is then null). */
+  status_reason?: KpiStatusReason | null;
+  /** ADR-018: rate-independent alerts (e.g. fatality on KPI-014A/B); never suppressed by small-group rules. */
+  alerts?: KpiAlert[];
   numerator: number | null;
   denominator: number | null;
   sample_size: number | null;

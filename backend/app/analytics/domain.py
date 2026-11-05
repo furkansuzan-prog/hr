@@ -8,6 +8,11 @@ NOT_COMPUTABLE = "not_computable"  # denominator is zero -> value undefined (nev
 INSUFFICIENT = "insufficient_data"  # source data missing / coverage too low
 SUPPRESSED = "suppressed"  # group too small to publish (privacy)
 
+# ADR-018: why a computed value carries no colour (threshold_status = null). One mechanism for every rule.
+SHORT_WINDOW = "short_window"  # window shorter than formula parameter threshold_min_days
+LOW_EXPOSURE = "low_exposure"  # hours worked below formula parameter threshold_min_exposure_hours (WP-2 R1)
+STATUS_REASONS = (SHORT_WINDOW, LOW_EXPOSURE, "unknown_category_share", "low_coverage")
+
 
 @dataclass
 class CalcResult:
@@ -20,6 +25,7 @@ class CalcResult:
     breakdown: dict = field(default_factory=dict)
     lineage: dict = field(default_factory=dict)
     note: str | None = None
+    status_reason: str | None = None  # set by a calculator when the value must not be coloured (STATUS_REASONS)
 
     def to_dict(self) -> dict:
         return asdict(self)

@@ -43,6 +43,14 @@ Son doğrulama: backend `pytest` (gerçek PostgreSQL), frontend `tsc` + `eslint`
 | T-036 | Çift transfer hatası düzeltmesi, kullanıcı pasifleştirme, dev DB onarımı | 00 | Done | `test_data_management.py` |
 | T-038 | Alt yüklenici görünürlüğü `contractor_relationships.project_id` ile sınırlandı (HR sprint-1 dalga 1 #2, SUB-02, ADR-017): proje sınırlı varlık hibesi, kademeli yayılım aynı projede, NULL proje = bütün varlık; tüm iş verisi yolları + KPI/panel önbellek anahtarı; yazma bütün varlık ister. Kademe (PO-2(b)) ve geçmiş (PO-2(c)) kuralları **kapsam dışı** | A11/A06 | Done (PO-2(a) teyidi bekleniyor) | `test_project_scoped_access.py` (12), tam paket |
 
+## HR Sprint 1 — mühendislik dalgası 1 (`docs/hr/SPRINT1_REVIEW.md` §5)
+| ID | Görev | Ajan | Ön koşul | Kabul kriteri | Durum | Test kanıtı |
+|---|---|---|---|---|---|---|
+| HR-S1-3 | İSG R1 minimum maruziyet (`threshold_min_exposure_hours`: LTIFR 1.000.000, TRIR 500.000 sa; C1 — küçük kapsam renksiz) + R2 ölümlü kaza uyarısı (kategorisiz, bastırmadan/dondurmadan/meslek filtresinden bağımsız) + "kazasız gün" sayacı yok; `status_reason` + `alerts` sözleşmesi (ADR-018); `/hse` bandı ve kutu rozeti | 09 (+07 UI) | Paket 1 (beyaz liste) | WP-2 A–D, F–H (H renksiz), I, J; kabul kriteri 1, 2, 5, 6 | Done (L açık) | `test_safety_exposure.py` (A–D, F–H, I, J, meslek filtresi, Q7, dondurulmuş dönem, sayaç yok, parametre doğrulama); `test_catalog_sync.py`; frontend `tsc` + `eslint` |
+| HR-S1-4 | KPI-002 `threshold_min_days: 360`, yıllıklaştırma yok (yeni formül versiyonu, katalog senkronizasyonu) | 09 | Paket 1 | WP-5 R1–R3; kabul kriteri 9, 10 | Done | `test_retention_no_colour_below_360_days`, `test_retention_never_annualised`, `test_retention_v1_behaviour_preserved_after_catalog_sync` |
+
+Açık (HR-S1-3): WP-2 Örnek L (ölümlü kaydın yeniden sınıflandırma işareti) ve uyarıda `by_worker_category` — `safety_event` import'u/vaka şeması (Paket 9, ADR-f) olmadan veri yok. R1.b (`/hse` başlıkta R12 varsayılanı, aylık noktaların renksizliği) A07 işi; aylık noktalar zaten maruziyet kuralıyla renksiz döner. Alt yüklenici ölümlü kazasının paylaşım izni olmadan gösterimi PO-3 + A11 (ADR-c). Kabul kriteri 9 katalog notu yazıldı (KPI-014A/B `purpose`).
+
 
 Değerlendirme: iş değeri / kullanıcı önemi / maliyet / bağımlılık / veri bulunabilirliği / güvenlik etkisi / operasyonel risk.
 

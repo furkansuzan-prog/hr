@@ -21,6 +21,8 @@ Kapsam dışı `entity_ids` istenirse **403** (sessizce daraltılmaz).
 { "code": "KPI-001", "name": "…", "unit": "%", "direction": "lower_better",
   "status": "ok | not_computable | insufficient_data | suppressed",
   "value": 7.27, "annualized_value": 29.5, "threshold_status": "good|warning|critical|null",
+  "status_reason": "short_window | low_exposure | unknown_category_share | low_coverage | null",
+  "alerts": [{"type": "fatality", "count": 1, "by_month": {"2026-03": 1}}],
   "numerator": 2, "denominator": 27.5, "sample_size": 27, "quality_score": 50.0,
   "breakdown": {}, "lineage": {"tables": [], "...": "..."}, "note": "…",
   "period_start": "2025-01-01", "period_end": "2025-03-31",
@@ -34,6 +36,8 @@ Değişmezler:
 3. Tahminler `kind: "forecast"` taşır ve gerçekleşen serilerle aynı dizide karıştırılmaz.
 4. Asistan yanıtındaki her sayı, aynı yanıtın `data` / `sources` alanındaki servis çıktısından gelir.
 5. `formula.version` sonuç üretildiği versiyondur; formül versiyonları değişmezdir (yeni sürüm = yeni satır).
+6. **Renk bastırma (ADR-018):** `status_reason != null` ⇔ değer var ama bilerek renklendirilmedi; o zaman `threshold_status == null`. `status != "ok"` ⇒ `status_reason == null`. Tek mekanizmadır; istemci başka bir bayrak aramaz, nedeni eşik rozetinin yerinde gösterir. Kurallar formül parametresidir: `threshold_min_days` → `short_window`; `threshold_min_exposure_hours` (KPI-014A 1.000.000, KPI-014B 500.000 sa; eşitlik renkli) → `low_exposure`.
+7. **Uyarılar (ADR-018):** `alerts` her zaman listedir (çoğu KPI'da boş). `fatality` uyarısı KPI-014A/B'de kapsam × penceredeki tüm ölümlü kaza kayıtlarını sayar; `suppressed`, `low_exposure`, meslek filtresi `insufficient_data` ve dondurulmuş dönem durumlarında da döner (ADR-009 istisnası). Yalnızca `count` ve ay düzeyinde `by_month`; kişi, açıklama veya gün içermez. İstemci uyarıyı kapatılamaz biçimde gösterir ve rengi değiştirmez. Alanlar geriye uyumlu eklemedir; eski istemciler yok sayabilir.
 
 ## 4. Yetki değişmezleri (Security ↔ herkes)
 - Her iş verisi sorgusu `tenant_id` + kapsamla filtrelenir: ORM'de `AccessContext.entity_clause(perm, entity_col, project_col=… | employment_col=…)`, KPI motorunda `resolve_scope` → `calculators.Scope` (`entity_ids` + `project_limits`) → `_ent_sql` / `_emp_where`. `entity_filter(perm)` tek başına **yeterli değildir** (proje sınırlı varlıkları da içeren varlık kümesini döner); yalnızca varlık düzeyi kararlar için kullanılır (ADR-017).

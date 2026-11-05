@@ -87,13 +87,13 @@ Ortak kurallar: payda 0 → `not_computable` (asla 0); kaynak veri yok → `insu
 - **Formül:** Persons employed in scope at period start and still employed in scope at period end / persons at start x 100
 - **Pay:** Start population still employed at period end
 - **Payda:** Distinct persons employed at period start
-- **Amaç:** Track retention rate
+- **Amaç:** Workforce stability. Judged only on >= 12-month windows (colour from 360 days; shorter windows show the value without colour, status_reason short_window). Never annualised: retention does not scale linearly (docs/hr/data/WP-5 section 3.6)
 - **Dahil:** All records in scope and period
 - **Hariç:** None
 - **Veri kaynakları:** employment_relationships · **Veri sahibi:** HR_DIRECTOR
 - **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
 - **Eşikler (hedef/uyarı/kritik):** 75 / 65 / 55
-- **Parametreler (v1):** `{}`
+- **Parametreler (v1):** `{'threshold_min_days': 360}`
 - **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE
 
 ### KPI-003 — Devamsızlık Oranı / Absenteeism Rate / Уровень абсентеизма
@@ -241,13 +241,13 @@ Ortak kurallar: payda 0 → `not_computable` (asla 0); kaynak veri yok → `insu
 - **Formül:** (Lost-time injuries + fatalities) / hours worked x 1,000,000
 - **Pay:** LTI + fatality events
 - **Payda:** Hours worked (timesheets)
-- **Amaç:** Track lost time injury frequency rate
+- **Amaç:** Lost-time injury frequency. Colour only when hours worked in the window reach the minimum exposure (formula parameter threshold_min_exposure_hours); below it the value and event counts are shown without colour (status_reason low_exposure) - small scopes are never coloured, judge them at company/tenant level. Any fatality in scope surfaces an alert independent of the rate. The thresholds count as active only once KPI-043 (near-miss reporting rate) is active (HR Director section 3.3 rule 2; docs/hr/hse/WP-2). Minimum exposure: 1,000,000 h.
 - **Dahil:** All records in scope and period
 - **Hariç:** None
 - **Veri kaynakları:** safety_events, timesheets · **Veri sahibi:** HSE_SPECIALIST
 - **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
 - **Eşikler (hedef/uyarı/kritik):** 1.5 / 3.0 / 5.0
-- **Parametreler (v1):** `{'multiplier': 1000000}`
+- **Parametreler (v1):** `{'multiplier': 1000000, 'threshold_min_exposure_hours': 1000000}`
 - **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE
 
 ### KPI-014B — Toplam Kaydedilebilir Olay Oranı (TRIR) / Total Recordable Incident Rate / TRIR
@@ -255,13 +255,13 @@ Ortak kurallar: payda 0 → `not_computable` (asla 0); kaynak veri yok → `insu
 - **Formül:** Recordable injuries (fatality, LTI, restricted work, medical treatment) / hours worked x 200,000
 - **Pay:** Recordable events
 - **Payda:** Hours worked
-- **Amaç:** Track total recordable incident rate
+- **Amaç:** Recordable injury frequency. Colour only when hours worked in the window reach the minimum exposure (formula parameter threshold_min_exposure_hours); below it the value and event counts are shown without colour (status_reason low_exposure) - small scopes are never coloured, judge them at company/tenant level. Any fatality in scope surfaces an alert independent of the rate. The thresholds count as active only once KPI-043 (near-miss reporting rate) is active (HR Director section 3.3 rule 2; docs/hr/hse/WP-2). Minimum exposure: 500,000 h (HR Director WP-2 Q2).
 - **Dahil:** All records in scope and period
 - **Hariç:** None
 - **Veri kaynakları:** safety_events, timesheets · **Veri sahibi:** HSE_SPECIALIST
 - **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
 - **Eşikler (hedef/uyarı/kritik):** 1.0 / 2.0 / 3.5
-- **Parametreler (v1):** `{'multiplier': 200000}`
+- **Parametreler (v1):** `{'multiplier': 200000, 'threshold_min_exposure_hours': 500000}`
 - **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE
 
 ### KPI-016 — Aktif Personel Sayısı / Active Headcount / Численность персонала
