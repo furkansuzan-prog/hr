@@ -13,7 +13,7 @@ People (Q1 2025 = 2025-01-01..2025-03-31):
 KPI-001 tenant Q1: headcount at 01-01=25, 01-31=25 (+F 3 = 28,28), 02-28: 27, 03-31: 27  (F included)
    -> avg = (28+28+27+27)/4 = 27.5 ; separations = P1 + P3 = 2 (P2 is an internal transfer) -> 7.2727 %
 KPI-001 entity A Q1: headcount 13,13,12,11 -> avg 12.25 ; separations P1,P2,P3 = 3 -> 24.4898 %
-KPI-003 A Jan 2025: sick 9h / planned 450h = 2.0 %  (annual leave 18h excluded by v1 definition)
+KPI-003 A Jan 2025: (sick 9h + annual 18h) / planned 450h = 6.0 %  (company definition counts annual leave)
 KPI-007 A Jan 2025: overtime 50h / worked 500h = 10.0 %
 KPI-019 B Mar 2025: 7 persons x 1000 EUR x 45.0 = 315000 TRY / avg headcount 7 = 45000.0
 """

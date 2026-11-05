@@ -246,7 +246,7 @@ def retention_rate(db: Session, scope: Scope, ps: date, pe: date, params: dict) 
 
 def absenteeism_rate(db: Session, scope: Scope, ps: date, pe: date, params: dict) -> CalcResult:
     """KPI-003: absence hours (types in params.absence_types) / planned hours * 100."""
-    absence_types = params.get("absence_types", ["sick", "unexcused", "unpaid"])
+    absence_types = params.get("absence_types", ["unexcused", "sick", "annual", "unpaid", "other"])
     hours = _hours(db, scope, ps, pe)
     where, p = _emp_where(scope, date_from=":ps", date_to=":pe")
     rows = db.execute(

@@ -345,28 +345,40 @@ def run_calculation(db: Session, ctx: AccessContext, codes: list[str], ps: date,
     return run
 
 
+def can_close_periods(db: Session, ctx: AccessContext) -> bool:
+    """Product decision (2026-11-05): closing/reopening reporting periods belongs to the MAIN CONTRACTOR.
+    Allowed for tenant-wide period.close holders, or when the period.close scope contains a main_contractor entity;
+    users scoped only to subcontractors cannot close or reopen."""
+    if not ctx.has("period.close"):
+        return False
+    scope = ctx.entity_filter("period.close")
+    if scope is None:
+        return True
+    return db.execute(select(LegalEntity.id).where(
+        LegalEntity.tenant_id == ctx.tenant_id, LegalEntity.id.in_(scope or {-1}),
+        LegalEntity.entity_type == "main_contractor")).first() is not None
+
+
 def freeze_period(db: Session, ctx: AccessContext, period_month: date) -> int:
     """B-18: persist results for a month that is about to be closed, so a closed period always serves frozen values
-    (see `_frozen_result`). Runs every active, validated KPI at tenant scope (the closer's scope) and for each legal
-    entity the closer can see. Sensitive (cost) KPIs are only frozen when the closer holds TENANT-WIDE cost.read, so a
-    close never persists cost numbers wider than the closer may read. Returns the number of persisted results."""
-    if not ctx.has("kpi.read"):
-        return 0
+    (see `_frozen_result`). The closer is the main contractor (can_close_periods), so the month is frozen for EVERY
+    scope readers can use: tenant-wide and each legal entity, cost KPIs included. Freezing stores results; it never
+    returns them - reading still goes through each reader's own scope (resolve_scope / kpi_run_get). The runs are
+    recorded as system runs (triggered_by NULL), so the closer cannot read wider data through GET /kpi/runs/{id}.
+    Returns the number of persisted results."""
     ps = date(period_month.year, period_month.month, 1)
     pe = month_end(ps)
     defs = db.execute(select(KpiDefinition).where(KpiDefinition.status == "active", KpiDefinition.validated.is_(True))
                       .order_by(KpiDefinition.code)).scalars().all()
-    cost_ok = ctx.has("cost.read") and ctx.entity_filter("cost.read") is None
-    codes = [d.code for d in defs if (not d.sensitive or cost_ok)
-             and get_formula(db, d).calculator_key in CALCULATORS]
+    codes = [d.code for d in defs if get_formula(db, d).calculator_key in CALCULATORS]
     if not codes:
         return 0
-    own_scope = ctx.entity_filter("kpi.read")  # None = tenant-wide closer
+    system = AccessContext(user_id=None, tenant_id=ctx.tenant_id, email="system:period_close", locale=ctx.locale,
+                           grants={"kpi.read": None, "cost.read": None})
     scopes: list[set[int] | None] = [None]
-    # one run per visible legal entity; skipped when identical to the closer's own (single-entity) scope
-    scopes += [{le.id} for le in visible_entities(db, ctx, "kpi.read") if own_scope != {le.id}]
+    scopes += [{le.id} for le in visible_entities(db, system, "kpi.read") if le.entity_type != "client"]
     for ents in scopes:
-        run_calculation(db, ctx, codes, ps, pe, entity_ids=ents, trigger="period_close")
+        run_calculation(db, system, codes, ps, pe, entity_ids=ents, trigger="period_close")
     return len(codes) * len(scopes)
 
 

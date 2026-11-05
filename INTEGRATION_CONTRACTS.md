@@ -47,7 +47,7 @@ Değişmezler:
 - Ham kimlik numarası hiçbir tabloya yazılmaz; yalnızca `national_id_hash` (HMAC).
 
 - **Puantaj (timesheets) yazmaları:** özet tablo (`timesheet_monthly`) veritabanı tetikleyicileriyle kirli işaretlenir; doğruluk için ek çağrı gerekmez. Hızlı yolun geri gelmesi için `mark_stale_from` (commit sonrası prewarm özeti yeniler) veya `app.analytics.summary.refresh` çağrılmalıdır.
-- **Dönem kapatma/açma** veri sürümünü artırır (dondurulmuş değerler panel önbelleğine yansır).
+- **Dönem kapatma/açma** veri sürümünü artırır (dondurulmuş değerler panel önbelleğine yansır) ve yalnızca **ana yüklenici** yetkisiyle yapılabilir (karar D-2): tenant geneli `period.close` veya kapsamında `main_contractor` firması olan kullanıcı; aksi 403.
 
 ## 6. Import sözleşmesi
 `POST /imports` (multipart: `file`, `entity_type=employment`) → `{batch_id, headers, suggested_mapping, required_fields, preview}`

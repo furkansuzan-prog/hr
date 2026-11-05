@@ -98,12 +98,12 @@ Ortak kurallar: payda 0 → `not_computable` (asla 0); kaynak veri yok → `insu
 - **Pay:** Leave hours prorated to period for types in parameter absence_types
 - **Payda:** Planned hours on approved timesheets
 - **Amaç:** Track absenteeism rate
-- **Dahil:** Default included types: sick, unexcused, unpaid
-- **Hariç:** Annual leave, public holidays, parental leave
+- **Dahil:** Unexcused absence, sick-note days (raporlu), annual leave, unpaid leave, other leave
+- **Hariç:** Public holidays (not working days); parental/maternity leave (legally protected - pending HR confirmation)
 - **Veri kaynakları:** leave_records, timesheets · **Veri sahibi:** HR_MANAGER
 - **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
-- **Eşikler (hedef/uyarı/kritik):** None / 4 / 6
-- **Parametreler (v1):** `{'absence_types': ['sick', 'unexcused', 'unpaid']}`
+- **Eşikler (hedef/uyarı/kritik):** None / None / None
+- **Parametreler (v1):** `{'absence_types': ['unexcused', 'sick', 'annual', 'unpaid', 'other']}`
 - **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE
 
 ### KPI-004 — İş Gücü Kapasite Kullanımı / Workforce Capacity Utilisation / Использование мощности персонала

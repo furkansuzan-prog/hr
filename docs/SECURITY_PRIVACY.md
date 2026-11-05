@@ -34,7 +34,7 @@
 | G6 | **Uygulandı** (bölüm 1). Kalan riskler: (a) hesap kilitleme, e-postayı bilen saldırganın hesabı 15 dk'lık aralıklarla kilitli tutmasına izin verir (DoS) — IP limiti ve kilidin uzatılmaması ile sınırlandı; (b) IP penceresi Redis yoksa işçi başınadır; (c) ters proxy arkasında `--proxy-headers`/`--forwarded-allow-ips` ayarlanmazsa tüm istemciler proxy IP'si görünür; (d) dağıtık (çok IP'li) parola püskürtme yalnızca hesap kilidiyle sınırlanır; CAPTCHA/MFA yok (G1) | Edge/WAF rate limit, OIDC + MFA (G1) |
 | G7 | KVKK md.11 başvuru süreci (erişim/düzeltme/silme) için iş akışı yok | Talep kaydı + veri dışa aktarma/anonimleştirme |
 | G8 | Formül versiyonları global (tenant'a özel devamsızlık tanımı yok); değişiklik `admin.platform` ister, DB tetikleyicisiyle değişmez | Tenant düzeyinde formül override (P1) |
-| G9 | Alt yüklenici görünürlüğü bugünkü paylaşım iznine göre: bugün verilen izin geçmişi de açar, sona eren ilişki geçmiş dönemleri gizler (denetim #16) ⚖️ | Politika kararı: (a) bugünkü izin (mevcut), (b) yalnızca izin geçerliyken oluşan dönemler |
+| G9 | ✔ **Karar verildi (2026-11-05):** alt yüklenici görünürlüğü bugünkü paylaşım iznine göre — izin verildiğinde firmanın geçmiş verisi de görünür (bilinçli kabul). ⚖️ Hukuki dayanak: paylaşım sözleşmesi geçmiş dönemleri kapsamalı | Sözleşme kanıtının kayıt altına alınması (organizasyonel kontrol) |
 
 ## 3. Saklama ve imha politikası (öneri ⚖️)
 | Veri | Öneri | Dayanak (incelenmeli) |

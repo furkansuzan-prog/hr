@@ -167,11 +167,19 @@ class PeriodIn(BaseModel):
     reason: str | None = Field(None, max_length=500)
 
 
+def _require_main_contractor(db: Session, ctx: AccessContext, action: str) -> None:
+    if not engine.can_close_periods(db, ctx):
+        write_audit(tenant_id=ctx.tenant_id, user_id=ctx.user_id, action="authz.scope_denied", entity_type="period",
+                    outcome="denied", details={"action": action, "reason": "main contractor authority required"})
+        raise HTTPException(403, "Closing or reopening periods is reserved for the main contractor")
+
+
 @router.post("/kpi/periods/{period_month}/close", tags=["kpi"])
 def close_period(period_month: date, ctx: AccessContext = Depends(require("period.close")),
                  db: Session = Depends(get_db)):
     from sqlalchemy.exc import IntegrityError
 
+    _require_main_contractor(db, ctx, "period.close")
     pm = date(period_month.year, period_month.month, 1)
     row = db.execute(select(PeriodClose).where(PeriodClose.tenant_id == ctx.tenant_id,
                                                PeriodClose.period_month == pm)).scalar()
@@ -205,6 +213,7 @@ def close_period(period_month: date, ctx: AccessContext = Depends(require("perio
 @router.post("/kpi/periods/{period_month}/reopen", tags=["kpi"])
 def reopen_period(period_month: date, body: PeriodIn, ctx: AccessContext = Depends(require("period.close")),
                   db: Session = Depends(get_db)):
+    _require_main_contractor(db, ctx, "period.reopen")
     if not body.reason:
         raise HTTPException(422, "A reason is required to reopen a closed period")
     pm = date(period_month.year, period_month.month, 1)

@@ -62,8 +62,11 @@ KPI_CATALOG: list[dict] = [
        num="Leave hours prorated to period for types in parameter absence_types",
        den="Planned hours on approved timesheets", sources=["leave_records", "timesheets"], owner="HR_MANAGER",
        standards=["ISO 30414 (absenteeism)"],
-       incl="Default included types: sick, unexcused, unpaid", excl="Annual leave, public holidays, parental leave",
-       params={"absence_types": ["sick", "unexcused", "unpaid"]}, warn=4, crit=6),
+       # Company definition (decision 2026-11-05): unexcused absence, sick-note days, annual leave, unpaid leave and
+       # other leave count as absence. Thresholds are left to the HR manager (docs/KPI_TARGETS_REQUEST.md).
+       incl="Unexcused absence, sick-note days (raporlu), annual leave, unpaid leave, other leave",
+       excl="Public holidays (not working days); parental/maternity leave (legally protected - pending HR confirmation)",
+       params={"absence_types": ["unexcused", "sick", "annual", "unpaid", "other"]}),
     _k("KPI-004", "productivity", "C", "İş Gücü Kapasite Kullanımı", "Workforce Capacity Utilisation",
        "Использование мощности персонала", "%", "higher_better", "capacity_utilization",
        formula="Productive (work-package booked) hours / planned available hours x 100",
