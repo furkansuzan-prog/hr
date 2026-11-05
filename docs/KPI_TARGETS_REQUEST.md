@@ -15,33 +15,37 @@ Dönem: 2025-11-01 – 2026-10-31
 
 | Kod | KPI | Birim | Yön | Mevcut hedef / uyarı / kritik | Demo değer | **Hedef** | **Uyarı** | **Kritik** | **Not / Yön** |
 |---|---|---|---|---|---|---|---|---|---|
-| KPI-001 | Personel Devir Oranı | % | ↓ düşük iyi | — / 30 / 45 | 46.28 | | | | |
-| KPI-002 | Personel Devamlılık Oranı | % | ↑ yüksek iyi | 80 / 70 / 60 | 64.88 | | | | |
-| KPI-003 | Devamsızlık Oranı | % | ↓ düşük iyi | — / — / — | 4.27 | | | | |
-| KPI-004 | İş Gücü Kapasite Kullanımı | % | ↑ yüksek iyi | — / — / — | 75.67 | | | | |
+| KPI-001 | Personel Devir Oranı | % | ↓ düşük iyi | 35 / 45 / 60 | 46.28 | | | | |
+| KPI-002 | Personel Devamlılık Oranı | % | ↑ yüksek iyi | 75 / 65 / 55 | 64.88 | | | | |
+| KPI-003 | Devamsızlık Oranı | % | ↓ düşük iyi | 7 / 9 / 11 | 4.27 | | | | |
+| KPI-004 | İş Gücü Kapasite Kullanımı | % | ↑ yüksek iyi | 85 / 80 / 70 | 75.67 | | | | |
 | KPI-005 | İş Gücü Verimlilik Endeksi | index | ↑ yüksek iyi | 100 / 90 / 80 | 89.33 | | | | |
 | KPI-006 | İş Gücü Plan Sapması | persons | nötr | — / — / — | 47.08 | | | | |
-| KPI-007 | Fazla Çalışma Oranı | % | ↓ düşük iyi | — / 10 / 15 | 9.53 | | | | |
-| KPI-008 | Çalışan Başına Eğitim Saati | hours | ↑ yüksek iyi | 24 / 16 / 8 | 12.68 | | | | |
-| KPI-009 | Yetkinlik Kapsama Oranı | % | ↑ yüksek iyi | 95 / 90 / 80 | 80.27 | | | | |
+| KPI-007 | Fazla Çalışma Oranı | % | ↓ düşük iyi | 5 / 8 / 10 | 9.53 | | | | |
+| KPI-008 | Çalışan Başına Eğitim Saati | hours | ↑ yüksek iyi | 30 / 20 / 16 | 12.68 | | | | |
+| KPI-009 | Yetkinlik Kapsama Oranı | % | ↑ yüksek iyi | 100 / 98 / 95 | 80.27 | | | | |
 | KPI-010 | İş Gücü Birim Maliyeti | TRY/unit | ↓ düşük iyi | — / — / — | insufficient_data | | | | |
-| KPI-011 | İşe Alım Süresi | days | ↓ düşük iyi | — / — / — | 38.68 | | | | |
-| KPI-013 | Yeniden İş Yapma Oranı | % | ↓ düşük iyi | — / 5 / 8 | 5.02 | | | | |
-| KPI-014A | Kayıp Günlü Kaza Sıklık Oranı (LTIFR) | per 1M h | ↓ düşük iyi | — / — / — | 4.57 | | | | |
-| KPI-014B | Toplam Kaydedilebilir Olay Oranı (TRIR) | per 200k h | ↓ düşük iyi | — / — / — | 4.77 | | | | |
+| KPI-011 | İşe Alım Süresi | days | ↓ düşük iyi | 30 / 45 / 60 | 38.68 | | | | |
+| KPI-013 | Yeniden İş Yapma Oranı | % | ↓ düşük iyi | 3 / 5 / 8 | 5.02 | | | | |
+| KPI-014A | Kayıp Günlü Kaza Sıklık Oranı (LTIFR) | per 1M h | ↓ düşük iyi | 1.5 / 3 / 5 | 4.57 | | | | |
+| KPI-014B | Toplam Kaydedilebilir Olay Oranı (TRIR) | per 200k h | ↓ düşük iyi | 1 / 2 / 3.5 | 4.77 | | | | |
 | KPI-016 | Aktif Personel Sayısı | persons | nötr | — / — / — | 1,272 | | | | |
 | KPI-017 | İşe Giriş Sayısı | persons | nötr | — / — / — | 596 | | | | |
-| KPI-018 | İlk 90 Gün Ayrılış Oranı | % | ↓ düşük iyi | — / — / — | 14.26 | | | | |
+| KPI-018 | İlk 90 Gün Ayrılış Oranı | % | ↓ düşük iyi | 10 / 15 / 20 | 14.26 | | | | |
 | KPI-019 | Çalışan Başına İşgücü Maliyeti | TRY | nötr | — / — / — | 956,295.14 | | | | |
-| KPI-020 | Gönüllü Devir Oranı | % | ↓ düşük iyi | — / — / — | 20.6 | | | | |
-| KPI-021 | İlk 30 Gün Ayrılış Oranı | % | ↓ düşük iyi | — / — / — | 2.85 | | | | |
-| KPI-022 | İlk 180 Gün Ayrılış Oranı | % | ↓ düşük iyi | — / — / — | 23.99 | | | | |
+| KPI-020 | Gönüllü Devir Oranı | % | ↓ düşük iyi | 12 / 18 / 25 | 20.6 | | | | |
+| KPI-021 | İlk 30 Gün Ayrılış Oranı | % | ↓ düşük iyi | 3 / 5 / 8 | 2.85 | | | | |
+| KPI-022 | İlk 180 Gün Ayrılış Oranı | % | ↓ düşük iyi | 18 / 25 / 32 | 23.99 | | | | |
 | KPI-023 | Ortalama Kıdem | years | nötr | — / — / — | 2.13 | | | | |
-| KPI-028 | Hastalık Devamsızlık Oranı | % | ↓ düşük iyi | — / — / — | 1.24 | | | | |
-| KPI-032 | Gece Çalışması Oranı | % | ↓ düşük iyi | — / — / — | 9.34 | | | | |
+| KPI-028 | Hastalık Devamsızlık Oranı | % | ↓ düşük iyi | 2 / 3 / 4.5 | 1.24 | | | | |
+| KPI-032 | Gece Çalışması Oranı | % | ↓ düşük iyi | 5 / 10 / 15 | 9.34 | | | | |
 | KPI-034 | Duruş Kaynaklı Kayıp Saat Oranı | % | ↓ düşük iyi | — / — / — | 0.12 | | | | |
-| KPI-036 | Fazla Mesai Maliyet Oranı | % | ↓ düşük iyi | — / — / — | 10.68 | | | | |
+| KPI-036 | Fazla Mesai Maliyet Oranı | % | ↓ düşük iyi | 7 / 11 / 14 | 10.68 | | | | |
 | KPI-048 | Kadın Çalışan Oranı | % | nötr | — / — / — | 15.25 | | | | |
 | KPI-050 | Alt Yüklenici İş Gücü Payı | % | nötr | — / — / — | 86.24 | | | | |
+| KPI-053 | Plansız Devamsızlık Oranı | % | ↓ düşük iyi | 2.5 / 3.5 / 5 | 1.37 | | | | |
+| KPI-054 | Korunan İzin Payı | % | nötr | — / — / — | 0 | | | | |
+| KPI-055 | Yıllık İzin Kullanım Oranı | % | ↑ yüksek iyi | 90 / 75 / 60 | 54.42 | | | | |
+| KPI-056 | Yıllık İzin Kullanmayan Çalışan Oranı | % | ↓ düşük iyi | 5 / 10 / 15 | 12.98 | | | | |
 
 Doldurulan değerler sisteme `kpi_definitions` eşik alanları olarak girilir (katalog güncellemesi + `python -m app.seed.reference --apply`). Formül değişmediği için yeni formül versiyonu oluşmaz.

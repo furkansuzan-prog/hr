@@ -2,7 +2,7 @@
 
 # KPI Kataloğu / KPI Catalogue
 
-53 tanım; 28 aktif ve doğrulanmış. `draft` tanımlar üretimde hesaplanamaz (ADR-008). Standart referansları **gösterge niteliğinde eşleştirmedir, uyum iddiası değildir.**
+57 tanım; 32 aktif ve doğrulanmış. `draft` tanımlar üretimde hesaplanamaz (ADR-008). Standart referansları **gösterge niteliğinde eşleştirmedir, uyum iddiası değildir.**
 
 Ortak kurallar: payda 0 → `not_computable` (asla 0); kaynak veri yok → `insufficient_data`; kişi sayısı < `HRSWI_MIN_GROUP_SIZE` (5) → `suppressed`; her sonuç formül versiyonu, pay/payda, örneklem, veri kalite puanı ve veri kökeni (lineage) taşır.
 
@@ -61,6 +61,10 @@ Ortak kurallar: payda 0 → `not_computable` (asla 0); kaynak veri yok → `insu
 | KPI-050 | Alt Yüklenici İş Gücü Payı | Subcontractor Workforce Share | % | neutral | active | `subcontractor_share` | ESRS S1-7 (non-employees) |
 | KPI-051 | Alt Yüklenici Belge Uyum Oranı | Subcontractor Document Compliance | % | neutral | draft | `—` | — |
 | KPI-052 | Çalışan Başına Ulaşım Emisyonu (Tahmini) | Estimated Commuting Emissions per Employee | kgCO2e | neutral | draft | `—` | GHG Protocol Scope 3 Cat. 7, ISO 14064-1 |
+| KPI-053 | Plansız Devamsızlık Oranı | Unplanned Absence Rate | % | lower_better | active | `absenteeism_rate` | ISO 30414 (absenteeism) |
+| KPI-054 | Korunan İzin Payı | Protected Leave Share | % | neutral | active | `protected_leave_share` | 4857 md. 74, Ek md. 2, 6701 (non-discrimination), KVKK md. 6 |
+| KPI-055 | Yıllık İzin Kullanım Oranı | Annual Leave Utilisation | % | higher_better | active | `annual_leave_usage` | 4857 md. 53-59, ISO 30414 (wellbeing) |
+| KPI-056 | Yıllık İzin Kullanmayan Çalışan Oranı | Employees Without Annual Leave | % | lower_better | active | `annual_leave_nonuse` | 4857 md. 53-59 |
 
 ## Aktif KPI ayrıntıları
 
@@ -74,7 +78,7 @@ Ortak kurallar: payda 0 → `not_computable` (asla 0); kaynak veri yok → `insu
 - **Hariç:** Internal transfers between in-scope entities
 - **Veri kaynakları:** employment_relationships · **Veri sahibi:** HR_DIRECTOR
 - **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
-- **Eşikler (hedef/uyarı/kritik):** None / 30 / 45 (yıllıklaştırılmış değere uygulanır)
+- **Eşikler (hedef/uyarı/kritik):** 35 / 45 / 60 (yıllıklaştırılmış değere uygulanır)
 - **Parametreler (v1):** `{'annualize': True}`
 - **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE
 
@@ -88,7 +92,7 @@ Ortak kurallar: payda 0 → `not_computable` (asla 0); kaynak veri yok → `insu
 - **Hariç:** None
 - **Veri kaynakları:** employment_relationships · **Veri sahibi:** HR_DIRECTOR
 - **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
-- **Eşikler (hedef/uyarı/kritik):** 80 / 70 / 60
+- **Eşikler (hedef/uyarı/kritik):** 75 / 65 / 55
 - **Parametreler (v1):** `{}`
 - **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE
 
@@ -102,7 +106,7 @@ Ortak kurallar: payda 0 → `not_computable` (asla 0); kaynak veri yok → `insu
 - **Hariç:** Public holidays (not working days); parental/maternity leave (legally protected - pending HR confirmation)
 - **Veri kaynakları:** leave_records, timesheets · **Veri sahibi:** HR_MANAGER
 - **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
-- **Eşikler (hedef/uyarı/kritik):** None / None / None
+- **Eşikler (hedef/uyarı/kritik):** 7 / 9 / 11
 - **Parametreler (v1):** `{'absence_types': ['unexcused', 'sick', 'annual', 'unpaid', 'other']}`
 - **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE
 
@@ -116,7 +120,7 @@ Ortak kurallar: payda 0 → `not_computable` (asla 0); kaynak veri yok → `insu
 - **Hariç:** Rows with unknown productive time
 - **Veri kaynakları:** timesheets · **Veri sahibi:** OPERATIONS_DIRECTOR
 - **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
-- **Eşikler (hedef/uyarı/kritik):** None / None / None
+- **Eşikler (hedef/uyarı/kritik):** 85 / 80 / 70
 - **Parametreler (v1):** `{'min_coverage': 0.5}`
 - **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE
 
@@ -158,7 +162,7 @@ Ortak kurallar: payda 0 → `not_computable` (asla 0); kaynak veri yok → `insu
 - **Hariç:** None
 - **Veri kaynakları:** timesheets · **Veri sahibi:** HR_MANAGER
 - **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
-- **Eşikler (hedef/uyarı/kritik):** None / 10 / 15
+- **Eşikler (hedef/uyarı/kritik):** 5 / 8 / 10
 - **Parametreler (v1):** `{}`
 - **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE
 
@@ -172,7 +176,7 @@ Ortak kurallar: payda 0 → `not_computable` (asla 0); kaynak veri yok → `insu
 - **Hariç:** None
 - **Veri kaynakları:** training_records · **Veri sahibi:** HR_MANAGER
 - **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
-- **Eşikler (hedef/uyarı/kritik):** 24 / 16 / 8 (yıllıklaştırılmış değere uygulanır)
+- **Eşikler (hedef/uyarı/kritik):** 30 / 20 / 16 (yıllıklaştırılmış değere uygulanır)
 - **Parametreler (v1):** `{'annualize': True}`
 - **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE
 
@@ -186,7 +190,7 @@ Ortak kurallar: payda 0 → `not_computable` (asla 0); kaynak veri yok → `insu
 - **Hariç:** None
 - **Veri kaynakları:** assignments, occupation_competencies, employee_competencies · **Veri sahibi:** HR_MANAGER
 - **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
-- **Eşikler (hedef/uyarı/kritik):** 95 / 90 / 80
+- **Eşikler (hedef/uyarı/kritik):** 100 / 98 / 95
 - **Parametreler (v1):** `{}`
 - **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE
 
@@ -214,7 +218,7 @@ Ortak kurallar: payda 0 → `not_computable` (asla 0); kaynak veri yok → `insu
 - **Hariç:** None
 - **Veri kaynakları:** requisitions · **Veri sahibi:** HR_MANAGER
 - **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
-- **Eşikler (hedef/uyarı/kritik):** None / None / None
+- **Eşikler (hedef/uyarı/kritik):** 30 / 45 / 60
 - **Parametreler (v1):** `{}`
 - **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE
 
@@ -228,7 +232,7 @@ Ortak kurallar: payda 0 → `not_computable` (asla 0); kaynak veri yok → `insu
 - **Hariç:** None
 - **Veri kaynakları:** work_outputs · **Veri sahibi:** OPERATIONS_DIRECTOR
 - **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
-- **Eşikler (hedef/uyarı/kritik):** None / 5 / 8
+- **Eşikler (hedef/uyarı/kritik):** 3 / 5 / 8
 - **Parametreler (v1):** `{}`
 - **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE
 
@@ -242,7 +246,7 @@ Ortak kurallar: payda 0 → `not_computable` (asla 0); kaynak veri yok → `insu
 - **Hariç:** None
 - **Veri kaynakları:** safety_events, timesheets · **Veri sahibi:** HSE_SPECIALIST
 - **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
-- **Eşikler (hedef/uyarı/kritik):** None / None / None
+- **Eşikler (hedef/uyarı/kritik):** 1.5 / 3.0 / 5.0
 - **Parametreler (v1):** `{'multiplier': 1000000}`
 - **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE
 
@@ -256,7 +260,7 @@ Ortak kurallar: payda 0 → `not_computable` (asla 0); kaynak veri yok → `insu
 - **Hariç:** None
 - **Veri kaynakları:** safety_events, timesheets · **Veri sahibi:** HSE_SPECIALIST
 - **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
-- **Eşikler (hedef/uyarı/kritik):** None / None / None
+- **Eşikler (hedef/uyarı/kritik):** 1.0 / 2.0 / 3.5
 - **Parametreler (v1):** `{'multiplier': 200000}`
 - **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE
 
@@ -298,7 +302,7 @@ Ortak kurallar: payda 0 → `not_computable` (asla 0); kaynak veri yok → `insu
 - **Hariç:** None
 - **Veri kaynakları:** employment_relationships · **Veri sahibi:** HR_MANAGER
 - **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
-- **Eşikler (hedef/uyarı/kritik):** None / None / None
+- **Eşikler (hedef/uyarı/kritik):** 10 / 15 / 20
 - **Parametreler (v1):** `{'days': 90}`
 - **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE
 
@@ -326,7 +330,7 @@ Ortak kurallar: payda 0 → `not_computable` (asla 0); kaynak veri yok → `insu
 - **Hariç:** Internal transfers; separations with no recorded reason are NOT assumed voluntary (lowers quality score)
 - **Veri kaynakları:** employment_relationships · **Veri sahibi:** HR_DIRECTOR
 - **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
-- **Eşikler (hedef/uyarı/kritik):** None / None / None (yıllıklaştırılmış değere uygulanır)
+- **Eşikler (hedef/uyarı/kritik):** 12 / 18 / 25 (yıllıklaştırılmış değere uygulanır)
 - **Parametreler (v1):** `{'annualize': True, 'include_categories': ['voluntary']}`
 - **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE
 
@@ -340,7 +344,7 @@ Ortak kurallar: payda 0 → `not_computable` (asla 0); kaynak veri yok → `insu
 - **Hariç:** None
 - **Veri kaynakları:** employment_relationships · **Veri sahibi:** HR_MANAGER
 - **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
-- **Eşikler (hedef/uyarı/kritik):** None / None / None
+- **Eşikler (hedef/uyarı/kritik):** 3 / 5 / 8
 - **Parametreler (v1):** `{'days': 30}`
 - **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE
 
@@ -354,7 +358,7 @@ Ortak kurallar: payda 0 → `not_computable` (asla 0); kaynak veri yok → `insu
 - **Hariç:** None
 - **Veri kaynakları:** employment_relationships · **Veri sahibi:** HR_MANAGER
 - **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
-- **Eşikler (hedef/uyarı/kritik):** None / None / None
+- **Eşikler (hedef/uyarı/kritik):** 18 / 25 / 32
 - **Parametreler (v1):** `{'days': 180}`
 - **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE
 
@@ -382,7 +386,7 @@ Ortak kurallar: payda 0 → `not_computable` (asla 0); kaynak veri yok → `insu
 - **Hariç:** All other leave types
 - **Veri kaynakları:** leave_records, timesheets · **Veri sahibi:** HR_MANAGER
 - **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
-- **Eşikler (hedef/uyarı/kritik):** None / None / None
+- **Eşikler (hedef/uyarı/kritik):** 2.0 / 3.0 / 4.5
 - **Parametreler (v1):** `{'absence_types': ['sick']}`
 - **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE
 
@@ -396,7 +400,7 @@ Ortak kurallar: payda 0 → `not_computable` (asla 0); kaynak veri yok → `insu
 - **Hariç:** None
 - **Veri kaynakları:** timesheets · **Veri sahibi:** HR_MANAGER
 - **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
-- **Eşikler (hedef/uyarı/kritik):** None / None / None
+- **Eşikler (hedef/uyarı/kritik):** 5 / 10 / 15
 - **Parametreler (v1):** `{}`
 - **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE
 
@@ -424,7 +428,7 @@ Ortak kurallar: payda 0 → `not_computable` (asla 0); kaynak veri yok → `insu
 - **Hariç:** Any missing FX rate -> insufficient_data
 - **Veri kaynakları:** payroll_costs, fx_rates · **Veri sahibi:** FINANCE_ANALYST
 - **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
-- **Eşikler (hedef/uyarı/kritik):** None / None / None
+- **Eşikler (hedef/uyarı/kritik):** 7 / 11 / 14
 - **Parametreler (v1):** `{'reporting_currency': 'TRY'}`
 - **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE
 
@@ -454,4 +458,60 @@ Ortak kurallar: payda 0 → `not_computable` (asla 0); kaynak veri yok → `insu
 - **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
 - **Eşikler (hedef/uyarı/kritik):** None / None / None
 - **Parametreler (v1):** `{}`
+- **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE
+
+### KPI-053 — Plansız Devamsızlık Oranı / Unplanned Absence Rate / Незапланированное отсутствие
+
+- **Formül:** (Unexcused absence + sick-note hours) / planned working hours x 100
+- **Pay:** Unexcused and sick leave hours prorated to period
+- **Payda:** Planned hours on approved timesheets
+- **Amaç:** Standard (unplanned) absenteeism, comparable with sector practice; complements the company KPI-003
+- **Dahil:** Unexcused absence, sick-note days
+- **Hariç:** Annual leave, unpaid leave, other leave, public holidays, maternity/parental and other protected leave
+- **Veri kaynakları:** leave_records, timesheets · **Veri sahibi:** HR_MANAGER
+- **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
+- **Eşikler (hedef/uyarı/kritik):** 2.5 / 3.5 / 5.0
+- **Parametreler (v1):** `{'absence_types': ['unexcused', 'sick']}`
+- **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE
+
+### KPI-054 — Korunan İzin Payı / Protected Leave Share / Доля охраняемых отпусков
+
+- **Formül:** Maternity / parental and related protected leave hours / planned working hours x 100
+- **Pay:** Protected leave hours prorated to period (leave type 'parental')
+- **Payda:** Planned hours on approved timesheets
+- **Amaç:** Capacity-planning figure only. Never part of absenteeism, never a target (decision D-6)
+- **Dahil:** Leave type 'parental' (maternity, paternity, parental, nursing, pregnancy check-ups - mapped on import)
+- **Hariç:** All other leave
+- **Veri kaynakları:** leave_records, timesheets · **Veri sahibi:** HR_DIRECTOR
+- **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
+- **Eşikler (hedef/uyarı/kritik):** None / None / None
+- **Parametreler (v1):** `{'absence_types': ['parental']}`
+- **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE
+
+### KPI-055 — Yıllık İzin Kullanım Oranı / Annual Leave Utilisation / Использование ежегодного отпуска
+
+- **Formül:** Annual-leave days taken / statutory entitlement days (4857 md.53, prorated to the period) x 100
+- **Pay:** Annual-leave days taken in the period (hours / hours_per_day)
+- **Payda:** Statutory entitlement of persons active at period end with >= 1 year tenure, prorated to period length
+- **Amaç:** Sustainable, humane leave practice: leave is taken, not accumulated (decision D-7). Group level only
+- **Dahil:** Persons with >= 1 year of service with the current employer (all spells, 4857 md.54)
+- **Hariç:** Persons with < 1 year of service
+- **Veri kaynakları:** leave_records, employment_relationships, people · **Veri sahibi:** HR_DIRECTOR
+- **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
+- **Eşikler (hedef/uyarı/kritik):** 90 / 75 / 60
+- **Parametreler (v1):** `{'hours_per_day': 9, 'threshold_min_days': 360}`
+- **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE
+
+### KPI-056 — Yıllık İzin Kullanmayan Çalışan Oranı / Employees Without Annual Leave / Доля сотрудников без отпуска
+
+- **Formül:** Eligible persons with no annual leave taken in the period / eligible persons x 100
+- **Pay:** Eligible persons with zero annual-leave days in the period
+- **Payda:** Persons active at period end with >= 1 year tenure
+- **Amaç:** Early warning for workload / burnout at team level (decision D-7); never used to rank individuals
+- **Dahil:** Persons whose one-year date is on/before the period start
+- **Hariç:** Persons with < 1 year of service at period start; persons on long sick/parental/unpaid absence (> half of the window; reported as a count)
+- **Veri kaynakları:** leave_records, employment_relationships · **Veri sahibi:** HR_DIRECTOR
+- **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
+- **Eşikler (hedef/uyarı/kritik):** 5 / 10 / 15
+- **Parametreler (v1):** `{'hours_per_day': 9, 'threshold_min_days': 360}`
 - **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE
