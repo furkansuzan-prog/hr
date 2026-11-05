@@ -28,6 +28,11 @@ Bu dosya, ileride gerçek paralel ajanlarla (ayrı branch/worktree) çalışmak 
 | 15 | Documentation | `README.md`, `docs/*` (üretilen dosyalar hariç) | tümü | kılavuzlar, sözlük |
 | 16 | Independent Review | yalnızca `docs/AUDIT_REPORT.md` | tümü (salt okunur) | denetim raporu |
 | 17 | HR Director (iş tarafı karar sahibi) | `docs/HR_DIRECTOR_RECOMMENDATIONS.md` | tümü (kod yazmaz) | KPI hedef/eşik önerileri, İK politika kararları, tanım onayı — persona: `.claude/agents/hr-director.md` |
+| 18 | İSG Uzmanı (HR ekibi, Agent 17'ye bağlı) | `docs/hr/hse/` | tümü (kod yazmaz) | İSG olay sınıflandırması, SGK rapor eşlemesi, güvenlik oranı maruziyet kuralları, İSG import spesifikasyonu — persona: `.claude/agents/hse-specialist.md` |
+| 19 | İK Veri ve Metrik Analisti (HR ekibi) | `docs/hr/data/` | tümü (kod yazmaz) | import alan sözlükleri, kod eşlemeleri, el hesaplı KPI formül spesifikasyonları — persona: `.claude/agents/hr-data-analyst.md` |
+| 20 | Çalışma Hukuku ve KVKK Analisti (HR ekibi) | `docs/hr/legal/` | tümü (kod yazmaz) | ⚖️ maddelerini insan hukukçu için kapalı uçlu soru dosyalarına çevirir; hukuki görüş/onay vermez — persona: `.claude/agents/labour-law-analyst.md` |
+
+**HR ekibi akışı** (`docs/HR_TEAM_PLAN.md` §2.4): Agent 18/19/20 spesifikasyon yazar → Agent 17 inceler (Onay / Şartlı onay / İade) → Orchestrator görev ve gerekirse ADR açar → mühendislik ajanı uygular → A12 el hesaplarını teste çevirir → Agent 17 demo veride salt okunur kabul kontrolü yapar. İK rolleri mühendisliğe doğrudan iş vermez.
 
 ## Bağımlılık ve paralellik planı
 
