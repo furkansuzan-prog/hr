@@ -1,0 +1,284 @@
+"""Timekeeping, cost, productivity, training, safety, planning, surveys."""
+from datetime import date, datetime, time
+
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    CheckConstraint,
+    Date,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    Numeric,
+    String,
+    Time,
+    UniqueConstraint,
+)
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.models.base import Base, EffectiveDatedMixin, SourceMixin, TenantMixin, TimestampMixin
+
+# ---------------------------------------------------------------- Timekeeping (Module D)
+
+
+class WorkCalendar(Base, TenantMixin, TimestampMixin):
+    __tablename__ = "work_calendars"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    code: Mapped[str] = mapped_column(String(40))
+    country: Mapped[str] = mapped_column(String(2))
+    weekly_hours: Mapped[float] = mapped_column(Numeric(5, 2), default=45)  # 4857 s. Kanun md.63 default
+    daily_max_hours: Mapped[float] = mapped_column(Numeric(4, 2), default=11)
+    annual_overtime_cap_hours: Mapped[float] = mapped_column(Numeric(6, 2), default=270)
+
+
+class Shift(Base, TenantMixin, TimestampMixin):
+    __tablename__ = "shifts"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    code: Mapped[str] = mapped_column(String(20))
+    name: Mapped[str] = mapped_column(String(100))
+    start_time: Mapped[time] = mapped_column(Time)
+    end_time: Mapped[time] = mapped_column(Time)
+    crosses_midnight: Mapped[bool] = mapped_column(Boolean, default=False)
+    planned_hours: Mapped[float] = mapped_column(Numeric(4, 2))
+
+
+class AttendanceEvent(Base, TenantMixin):
+    """Raw badge/turnstile event. Presence evidence only - NOT productive time, NOT pay entitlement."""
+
+    __tablename__ = "attendance_events"
+    __table_args__ = (UniqueConstraint("tenant_id", "dedup_key"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    person_id: Mapped[int] = mapped_column(ForeignKey("people.id"), index=True)
+    project_id: Mapped[int | None] = mapped_column(ForeignKey("projects.id"))
+    event_time: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    direction: Mapped[str] = mapped_column(String(3))  # in|out
+    device_id: Mapped[str | None] = mapped_column(String(60))
+    dedup_key: Mapped[str] = mapped_column(String(64))  # hash(person, device, ts truncated to minute, direction)
+    source_system: Mapped[str] = mapped_column(String(50), default="turnstile")
+
+
+class Timesheet(Base, TenantMixin, TimestampMixin, SourceMixin):
+    """Approved daily time record per employment and project.
+    worked_hours = paid working time; productive_hours = hours booked on work packages (may be NULL = unknown)."""
+
+    __tablename__ = "timesheets"
+    __table_args__ = (
+        UniqueConstraint("employment_id", "work_date", "project_id", name="uq_timesheet_day"),
+        CheckConstraint("worked_hours >= 0 AND overtime_hours >= 0 AND planned_hours >= 0", name="ck_ts_nonneg"),
+        Index("ix_ts_tenant_date", "tenant_id", "work_date"),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    employment_id: Mapped[int] = mapped_column(ForeignKey("employment_relationships.id"), index=True)
+    project_id: Mapped[int | None] = mapped_column(ForeignKey("projects.id"))
+    work_date: Mapped[date] = mapped_column(Date)
+    shift_id: Mapped[int | None] = mapped_column(ForeignKey("shifts.id"))
+    planned_hours: Mapped[float] = mapped_column(Numeric(5, 2), default=0)
+    worked_hours: Mapped[float] = mapped_column(Numeric(5, 2), default=0)
+    overtime_hours: Mapped[float] = mapped_column(Numeric(5, 2), default=0)
+    night_hours: Mapped[float] = mapped_column(Numeric(5, 2), default=0)
+    productive_hours: Mapped[float | None] = mapped_column(Numeric(5, 2))
+    status: Mapped[str] = mapped_column(String(15), default="approved")
+
+
+class LeaveRecord(Base, TenantMixin, TimestampMixin, SourceMixin):
+    """Absence/leave. counts_as_absence follows the tenant's absenteeism definition (KPI-003)."""
+
+    __tablename__ = "leave_records"
+    __table_args__ = (Index("ix_leave_tenant_dates", "tenant_id", "start_date", "end_date"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    employment_id: Mapped[int] = mapped_column(ForeignKey("employment_relationships.id"), index=True)
+    leave_type: Mapped[str] = mapped_column(String(20))  # annual|sick|unpaid|unexcused|public_holiday|parental|other
+    start_date: Mapped[date] = mapped_column(Date)
+    end_date: Mapped[date] = mapped_column(Date)
+    hours: Mapped[float] = mapped_column(Numeric(6, 2))
+
+
+# ---------------------------------------------------------------- Cost (Module F)
+
+
+class PayrollCost(Base, TenantMixin, TimestampMixin, SourceMixin):
+    __tablename__ = "payroll_costs"
+    __table_args__ = (Index("ix_cost_tenant_period", "tenant_id", "period_month"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    employment_id: Mapped[int] = mapped_column(ForeignKey("employment_relationships.id"), index=True)
+    project_id: Mapped[int | None] = mapped_column(ForeignKey("projects.id"))
+    cost_center_id: Mapped[int | None] = mapped_column(ForeignKey("cost_centers.id"))
+    period_month: Mapped[date] = mapped_column(Date)  # first day of month
+    cost_type: Mapped[str] = mapped_column(String(30))  # gross_wage|employer_ss|overtime|meal|transport|accommodation|benefit
+    amount: Mapped[float] = mapped_column(Numeric(18, 2))
+    currency: Mapped[str] = mapped_column(String(3))
+
+
+class FxRate(Base, TimestampMixin):
+    __tablename__ = "fx_rates"
+    __table_args__ = (UniqueConstraint("rate_date", "from_ccy", "to_ccy", "source"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    rate_date: Mapped[date] = mapped_column(Date)
+    from_ccy: Mapped[str] = mapped_column(String(3))
+    to_ccy: Mapped[str] = mapped_column(String(3))
+    rate: Mapped[float] = mapped_column(Numeric(18, 8))
+    source: Mapped[str] = mapped_column(String(40), default="TCMB")
+
+
+# ---------------------------------------------------------------- Productivity (Module C)
+
+
+class WorkPackage(Base, TenantMixin, TimestampMixin):
+    __tablename__ = "work_packages"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"), index=True)
+    code: Mapped[str] = mapped_column(String(40))
+    name: Mapped[str] = mapped_column(String(200))
+    unit: Mapped[str] = mapped_column(String(20))
+    occupation_group: Mapped[str] = mapped_column(String(30))
+    planned_quantity: Mapped[float | None] = mapped_column(Numeric(18, 3))
+
+
+class ProductionStandard(Base, TenantMixin, TimestampMixin, EffectiveDatedMixin):
+    """Standard labour hours per accepted output unit. KPI-005 is only computed where one exists."""
+
+    __tablename__ = "production_standards"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    work_package_id: Mapped[int] = mapped_column(ForeignKey("work_packages.id"), index=True)
+    std_hours_per_unit: Mapped[float] = mapped_column(Numeric(10, 4))
+    source: Mapped[str] = mapped_column(String(100), default="company standard")
+
+
+class WorkOutput(Base, TenantMixin, TimestampMixin, SourceMixin):
+    __tablename__ = "work_outputs"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    work_package_id: Mapped[int] = mapped_column(ForeignKey("work_packages.id"), index=True)
+    legal_entity_id: Mapped[int] = mapped_column(ForeignKey("legal_entities.id"), index=True)
+    output_date: Mapped[date] = mapped_column(Date)
+    quantity: Mapped[float] = mapped_column(Numeric(18, 3))
+    accepted_quantity: Mapped[float | None] = mapped_column(Numeric(18, 3))  # passed quality inspection
+    rework_quantity: Mapped[float] = mapped_column(Numeric(18, 3), default=0)
+    labor_hours: Mapped[float] = mapped_column(Numeric(10, 2))
+    rework_hours: Mapped[float] = mapped_column(Numeric(10, 2), default=0)
+
+
+class DowntimeEvent(Base, TenantMixin, TimestampMixin):
+    __tablename__ = "downtime_events"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"), index=True)
+    legal_entity_id: Mapped[int | None] = mapped_column(ForeignKey("legal_entities.id"))
+    event_date: Mapped[date] = mapped_column(Date)
+    cause: Mapped[str] = mapped_column(String(20))  # equipment|material|weather|permit|design|other
+    lost_hours: Mapped[float] = mapped_column(Numeric(10, 2))
+    affected_headcount: Mapped[int] = mapped_column(Integer, default=0)
+
+
+# ---------------------------------------------------------------- Competency & training (Module H)
+
+
+class Competency(Base, TenantMixin, TimestampMixin):
+    __tablename__ = "competencies"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    code: Mapped[str] = mapped_column(String(40))
+    name: Mapped[str] = mapped_column(String(200))
+    category: Mapped[str] = mapped_column(String(30))  # technical|hse|legal_certificate|soft
+    validity_months: Mapped[int | None] = mapped_column(Integer)
+
+
+class OccupationCompetency(Base, TenantMixin):
+    __tablename__ = "occupation_competencies"
+    __table_args__ = (UniqueConstraint("occupation_id", "competency_id"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    occupation_id: Mapped[int] = mapped_column(ForeignKey("occupations.id"))
+    competency_id: Mapped[int] = mapped_column(ForeignKey("competencies.id"))
+    mandatory: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class EmployeeCompetency(Base, TenantMixin, TimestampMixin, EffectiveDatedMixin):
+    __tablename__ = "employee_competencies"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    person_id: Mapped[int] = mapped_column(ForeignKey("people.id"), index=True)
+    competency_id: Mapped[int] = mapped_column(ForeignKey("competencies.id"))
+    level: Mapped[int] = mapped_column(Integer, default=1)
+
+
+class TrainingRecord(Base, TenantMixin, TimestampMixin, SourceMixin):
+    __tablename__ = "training_records"
+    __table_args__ = (Index("ix_training_tenant_date", "tenant_id", "completed_on"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    employment_id: Mapped[int] = mapped_column(ForeignKey("employment_relationships.id"), index=True)
+    course_code: Mapped[str] = mapped_column(String(40))
+    course_name: Mapped[str] = mapped_column(String(200))
+    category: Mapped[str] = mapped_column(String(20))  # hse|technical|compliance|soft
+    hours: Mapped[float] = mapped_column(Numeric(6, 2))
+    completed_on: Mapped[date] = mapped_column(Date)
+    mandatory: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+# ---------------------------------------------------------------- HSE (Module G)
+
+
+class SafetyEvent(Base, TenantMixin, TimestampMixin, SourceMixin):
+    """Event-level HSE record WITHOUT diagnosis or person identity (special-category data stays in the HSE
+    system of record; only classification + lost days flow here)."""
+
+    __tablename__ = "safety_events"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    legal_entity_id: Mapped[int] = mapped_column(ForeignKey("legal_entities.id"), index=True)
+    project_id: Mapped[int | None] = mapped_column(ForeignKey("projects.id"))
+    event_date: Mapped[date] = mapped_column(Date)
+    # fatality|lost_time_injury|restricted_work|medical_treatment|first_aid|near_miss
+    event_type: Mapped[str] = mapped_column(String(30))
+    lost_days: Mapped[int] = mapped_column(Integer, default=0)
+
+
+# ---------------------------------------------------------------- Planning (Module I)
+
+
+class WorkforcePlan(Base, TenantMixin, TimestampMixin):
+    __tablename__ = "workforce_plans"
+    __table_args__ = (Index("ix_wfp_tenant_period", "tenant_id", "period_month"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    legal_entity_id: Mapped[int] = mapped_column(ForeignKey("legal_entities.id"), index=True)
+    project_id: Mapped[int | None] = mapped_column(ForeignKey("projects.id"))
+    occupation_id: Mapped[int | None] = mapped_column(ForeignKey("occupations.id"))
+    period_month: Mapped[date] = mapped_column(Date)
+    planned_headcount: Mapped[int] = mapped_column(Integer)
+    planned_hours: Mapped[float | None] = mapped_column(Numeric(12, 2))
+    plan_version: Mapped[int] = mapped_column(Integer, default=1)
+
+
+class Requisition(Base, TenantMixin, TimestampMixin):
+    """Approved position request -> accepted hire. Basis of KPI-011 time-to-hire."""
+
+    __tablename__ = "requisitions"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    legal_entity_id: Mapped[int] = mapped_column(ForeignKey("legal_entities.id"), index=True)
+    occupation_id: Mapped[int | None] = mapped_column(ForeignKey("occupations.id"))
+    approved_on: Mapped[date] = mapped_column(Date)
+    offer_accepted_on: Mapped[date | None] = mapped_column(Date)
+    status: Mapped[str] = mapped_column(String(15), default="open")
+
+
+# ---------------------------------------------------------------- Surveys (Module L) - aggregates only
+
+
+class SurveyCampaign(Base, TenantMixin, TimestampMixin):
+    __tablename__ = "survey_campaigns"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    code: Mapped[str] = mapped_column(String(40))
+    title: Mapped[str] = mapped_column(String(200))
+    start_date: Mapped[date] = mapped_column(Date)
+    end_date: Mapped[date] = mapped_column(Date)
+    min_group_size: Mapped[int] = mapped_column(Integer, default=10)
+
+
+class SurveyAggregate(Base, TenantMixin):
+    """Only aggregated scores are stored; groups below min_group_size are rejected at write time."""
+
+    __tablename__ = "survey_aggregates"
+    __table_args__ = (CheckConstraint("respondents >= 10", name="ck_survey_min_group"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    campaign_id: Mapped[int] = mapped_column(ForeignKey("survey_campaigns.id"), index=True)
+    legal_entity_id: Mapped[int | None] = mapped_column(ForeignKey("legal_entities.id"))
+    dimension: Mapped[str] = mapped_column(String(40))  # engagement|workload|management_comm|conditions|...
+    respondents: Mapped[int] = mapped_column(Integer)
+    mean_score: Mapped[float] = mapped_column(Numeric(5, 2))
+    favorable_pct: Mapped[float | None] = mapped_column(Numeric(5, 2))
+    breakdown: Mapped[dict | None] = mapped_column(JSON)
