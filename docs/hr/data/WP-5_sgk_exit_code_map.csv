@@ -1,0 +1,36 @@
+kod,aciklama_ozet,platform_kategori,planli_bitis_uygun,saglik_ilgili_maske,teyit_durumu,not
+01,Deneme sureli is sozlesmesinin isverence feshi,employer_initiated,hayir,hayir,teyit edilmeli,md.15
+02,Deneme sureli is sozlesmesinin isci tarafindan feshi,voluntary,hayir,hayir,teyit edilmeli,md.15
+03,Belirsiz sureli is sozlesmesinin isci tarafindan feshi (istifa),voluntary,hayir,hayir,teyit edilmeli,
+04,Belirsiz sureli is sozlesmesinin isveren tarafindan hakli sebep bildirilmeden feshi,employer_initiated,hayir,hayir,teyit edilmeli,
+05,Belirli sureli is sozlesmesinin sona ermesi,contract_end,evet,hayir,teyit edilmeli,contract_type fixed_term/project/seasonal sart
+08,Emeklilik (yaslilik) veya toptan odeme,retirement,hayir,hayir,teyit edilmeli,
+09,Malulen emeklilik,retirement,hayir,evet,teyit edilmeli,saglik verisi -> kod saklanmaz (L-8)
+10,Olum,death,hayir,hayir,teyit edilmeli,
+11,Is kazasi sonucu olum,death,hayir,hayir,teyit edilmeli,Agent 18 olumlu kaza tutarlilik kontrolu (grup duzeyi)
+12,Askerlik,other,hayir,hayir,teyit edilmeli,
+13,Kadin iscinin evlenmesi,other,hayir,hayir,teyit edilmeli,kategori karari S-3 / L-9
+14,Emeklilik icin yas disindaki sartlarin tamamlanmasi,retirement,hayir,hayir,teyit edilmeli,
+15,Toplu isci cikarma,employer_initiated,hayir,hayir,teyit edilmeli,md.29
+16,Sozlesme sona ermeden ayni isverenin diger isyerine nakil,other,hayir,hayir,teyit edilmeli,7 gun icinde yeni donem beklenir; yoksa transfer_without_new_spell
+17,Isyerinin kapanmasi,project_end,evet,hayir,teyit edilmeli,insaatta santiye sicili kapanisi; contract_type project/fixed_term sart (L-10)
+18,Isin sona ermesi,project_end,evet,hayir,teyit edilmeli,contract_type project/fixed_term sart (L-10)
+19,Mevsim bitimi,contract_end,evet,hayir,teyit edilmeli,contract_type seasonal beklenir
+20,Kampanya bitimi,contract_end,evet,hayir,teyit edilmeli,
+21,Statu degisikligi,other,hayir,hayir,teyit edilmeli,
+22,Diger nedenler,other,hayir,hayir,teyit edilmeli,dusuk bilgi payi izlenir (>%10 uyari)
+23,Isci tarafindan zorunlu nedenle fesih,voluntary,hayir,hayir,teyit edilmeli,md.24/III; alt kategori onerisi voluntary_just_cause
+24,Isci tarafindan saglik nedeniyle fesih,voluntary,hayir,evet,teyit edilmeli,md.24/I; kod saklanmaz (L-8)
+25,Isci tarafindan isverenin ahlak ve iyi niyet kurallarina aykiri davranisi nedeniyle fesih,voluntary,hayir,hayir,teyit edilmeli,md.24/II (ucret odenmemesi dahil)
+26,Disiplin kurulu karari ile fesih,employer_initiated,hayir,hayir,teyit edilmeli,
+27,Isveren tarafindan zorunlu nedenlerle ve tutukluluk nedeniyle fesih,employer_initiated,hayir,hayir,teyit edilmeli,md.25/III-IV
+28,Isveren tarafindan saglik nedeniyle fesih,employer_initiated,hayir,evet,teyit edilmeli,md.25/I; kod saklanmaz (L-8)
+29,Isveren tarafindan ahlak ve iyi niyet kurallarina aykirilik nedeniyle fesih,employer_initiated,hayir,hayir,teyit edilmeli,yeni bildirgelerde 42-50 alt kodlarina bolunmus olabilir
+30,Vize suresinin bitimi (yabanci),other,hayir,hayir,teyit edilmeli,
+31,Diger kanunlar kapsaminda kendi istek ve kusuru disinda sona erme,other,hayir,hayir,teyit edilmeli,
+32,4046 sayili Kanun md.21 (ozellestirme),employer_initiated,hayir,hayir,teyit edilmeli,
+33,Gazeteci tarafindan sozlesmenin feshi,voluntary,hayir,hayir,teyit edilmeli,
+34,Isyerinin devri / isin veya isyerinin niteliginin degismesi nedeniyle fesih,employer_initiated,hayir,hayir,teyit edilmeli,
+42-50,md.25/II alt bentleri (isveren hakli nedenle fesih),employer_initiated,hayir,hayir,teyit edilmeli,alt bent ayrimi KPI icin gerekli degil
+(diger),Listede olmayan kod,unknown,hayir,hayir,-,unknown_exit_code uyarisi; veri kalite kuyrugu
+(bos),Kod ve kategori bos,unknown,hayir,hayir,-,termination_reason_missing (mevcut)

@@ -1,0 +1,18 @@
+ornek_id,kpi,aciklama,calisma_duzeni,gunluk_saat,girdi_izin_saat,girdi_izin_gun,day_basis_v2,hak_gun_v1,hak_gun_v2,alinan_gun_v1,alinan_gun_v2,sonuc_v1,sonuc_v2,not
+E1,KPI-055,6 gunluk santiye tam kullanim,6x7.5,7.5,105,,hours_divided,14,14,11.67,14,83.33,100.00,kurgusal
+E2,KPI-055,5 gunluk kontrol tam kullanim,5x9,9,126,,hours_divided,14,14,14,14,100.00,100.00,v1=v2 olmali
+E3a,KPI-055,yeniden ise alim iki donem yuklu (2345 gun),6x7.5,7.5,150,,hours_divided,20,20,16.67,20,83.33,100.00,md.54 birlesim
+E3b,KPI-055,ilk donem platformda yok seniority date yok (1249 gun),6x7.5,7.5,150,,hours_divided,14,14,16.67,20,119.05,142.86,seniority_possibly_truncated kalite dusuk
+E3c,KPI-055,ilk donem yok leave_seniority_date=2020-05-31,6x7.5,7.5,150,,hours_divided,14,20,16.67,20,119.05,100.00,pe=2026-10-31
+E4a,KPI-055,TIS +4 gun hak 18 tam kullanim,6x7.5,7.5,135,,hours_divided,14,18,15.00,18,107.14,100.00,kurgusal TIS
+E4b,KPI-055,TIS +4 gun hak 18 yalniz yasal kadar kullanim,6x7.5,7.5,105,,hours_divided,14,18,11.67,14,83.33,77.78,good (uyari 75 ustu)
+E5,KPI-055,duzen 2026-05-01 itibariyle 5->6 gun,5x9 sonra 6x7.5,9|7.5,90,,pattern_counted,,,10,11,,,gun toplami
+E6-6g,KPI-055,izin 2026-10-26..2026-11-07 29 Ekim tatil 28 Ekim arife,6x7.5,7.5,,,pattern_counted,,,10,10.5,,,saat v2=78.75
+E6-5g,KPI-055,izin 2026-10-26..2026-11-07 29 Ekim tatil 28 Ekim arife,5x9,9,,,pattern_counted,,,10,8.5,,,saat v2=76.5
+E7,KPI-055,10 uygun kisi 3 duzen bilinmiyor min_coverage 0.8,karma,,,,default_9h,,,,,ok,insufficient_data,quality 70
+E8a,KPI-055/056,8 uygun kisi izin yok besleme tam beyanli,6x7.5,7.5,0,,,,,0,0,0.00|100.00,0.00|100.00,gercek sifir
+E8b,KPI-055/056,8 uygun kisi izin yok besleme beyani yok,6x7.5,7.5,0,,,,,0,,0.00|100.00,insufficient_data,veri yok sifir degil
+E9,KPI-003/053,10 kisi 60 sa izin (15 sa raporlu) senaryo B,6x7.5,7.5,60,,,,,,,3.45|0.86,3.33|0.83,payda 1740+60
+E10,KPI-054,50 kisi 5 kisi parental 900 sa senaryo B,6x7.5,7.5,900,,,,,,,11.11,10.00,payda 8100+900
+E11,KPI-003,haftalik ozet puantaj beyan yok,,,,,,,,,,ok q=100,ok q=50,not eklenir
+E12,KPI-028/053,raporlu 12 gun yalniz gun verilmis,6x7.5,7.5,,12,source_days,,,,,108 sa,90 sa,pay saati
