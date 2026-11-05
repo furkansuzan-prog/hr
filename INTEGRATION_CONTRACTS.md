@@ -56,6 +56,14 @@ Değişmezler:
 Aynı dosya (SHA-256) aynı tenant ve tipte ikinci kez commit edilemez (409).
 Alanlar: `external_id*`, `source_system`, `first_name*`, `last_name*`, `national_id`, `birth_year`, `gender`, `legal_entity_code*`, `employee_number`, `contract_type`, `start_date*`, `end_date`, `termination_category`, `project_code`, `occupation_code`.
 
+### 6.1 İzin import'u (`entity_type=leave`)
+Alanlar: `external_id*` (kaynak sistem kimliği veya sicil no), `source_system`, `legal_entity_code*`, `leave_type*` (kaynak etiketi), `sgk_report_code` (1/2/3 → sick, 4 → parental), `start_date*`, `end_date*`, `hours`, `days`.
+- Çalışan eşleme: kimlik haritası (`person_identifiers`) → yoksa firmadaki `employee_number`; izin başlangıcını kapsayan istihdam dönemi. Bulunamazsa / birden fazlaysa satır hatası.
+- İzin türü **her zaman** `app.services.timekeeping.normalize_leave_type` ile eşlenir; korunan izin (doğum, analık, süt, babalık, gebelik…) önce `parental`'a gider ve devamsızlık KPI'larına girmez (karar D-6). Tanınmayan etiket `other` + `unmapped_leave_label` uyarısı.
+- Saat: `hours` → yoksa `days × 9` → yoksa hafta içi gün × 9 (`hours_derived` uyarısı; çalışma düzenine göre çevrim B-28).
+- KVKK md.6: tanı/teşhis/ICD gibi sağlık sütunları **yüklemede okunmadan atılır** (yanıtta `dropped_columns`), hiçbir tabloya yazılmaz.
+- İdempotent: aynı (istihdam, tür, başlangıç, bitiş) kaydı tekrar yazılmaz; çakışan izin uyarısı; istihdam bitişini aşan izin kırpılır (uyarı).
+
 ## 7. Bağlayıcı sözleşmesi (FAZ 2+)
 `Connector.fetch(since) -> Iterable[RawRecord]`; yalnızca belgelenmiş ve yetkili API'ler. Erişilemezlik → `data_sources.last_error`, **kısmi veri yazılmaz**, 503 + yeniden deneme (üstel geri çekilme).
 

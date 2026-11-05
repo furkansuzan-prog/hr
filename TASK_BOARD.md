@@ -53,7 +53,7 @@ Değerlendirme: iş değeri / kullanıcı önemi / maliyet / bağımlılık / ve
 | B-04 | P0 | 15K/100K ölçek verisiyle performans + düşünme süreli 150 kullanıcı yük testi | 13 | Hedef doğrulanmadı |
 | B-05 | P0 | Yedekleme/geri yükleme tatbikatı, izleme panelleri, `/metrics` | 13 | Operasyonel süreklilik |
 | B-06 | P1 | Org/personel/istihdam CRUD UI + kimlik inceleme kuyruğu UI | 06/07 | FAZ 2 tamamlama |
-| B-07 | P1 | Puantaj, izin, maliyet, eğitim, İSG import tipleri + bağlayıcı çerçevesi | 08 | Gerçek veri girişi |
+| B-07 ◐ | P1 (izin import'u Done; puantaj, maliyet, eğitim, İSG tipleri açık) | Puantaj, izin, maliyet, eğitim, İSG import tipleri + bağlayıcı çerçevesi | 08 | Gerçek veri girişi |
 | B-08 | P1 | Kullanıcı/rol atama UI | 07/11 | Yönetim |
 | B-09 | P1 | Tenant'a özel formül parametreleri | 09 | Kurumlar arası farklı tanımlar |
 | B-10 | P1 | Taslak KPI'ların (020–051) doğrulanıp aktive edilmesi | 02/09 | MVP iş değeri |
@@ -72,7 +72,7 @@ Değerlendirme: iş değeri / kullanıcı önemi / maliyet / bağımlılık / ve
 | B-24 | P1 | Saklama-imha işinin zamanlanması (Celery beat / cron) | 11/13 | KVKK |
 | B-25 ✔ | P1 (D-5) | İK yöneticisinden KPI hedef/eşiklerinin alınması ve kataloğa işlenmesi (D-4, `docs/KPI_TARGETS_REQUEST.md`) | 02/09 | Renkli durum göstergesi için gerekli |
 | B-26 ✔ | P2 (D-6) | Doğum/ebeveyn izninin devamsızlığa dahil olup olmadığı (D-3 açık nokta) | 02 | İK onayı |
-| B-27 | P1 | İzin import'u (B-07 kapsamı) `normalize_leave_type` kullanmak zorunda; eşlenemeyen etiketler veri kalite kuyruğuna | 08 | D-6'nın veri hattında garantisi |
+| B-27 ✔ | P1 (izin import'u `normalize_leave_type` kullanıyor; `test_leave_import.py`) | İzin import'u (B-07 kapsamı) `normalize_leave_type` kullanmak zorunda; eşlenemeyen etiketler veri kalite kuyruğuna | 08 | D-6'nın veri hattında garantisi |
 | B-28 | P1 | İzin günü çevrimi çalışma düzenine göre (5 gün → 9 sa, 6 gün → 7,5 sa) ve toplu sözleşme/sözleşmeden doğan ek izin hakkı (KPI-055 paydası) ⚖️ | 05/09 | 6 günlük şantiyelerde KPI-055 düşük görünür |
 | B-29 | P1 | İş kazası/meslek hastalığı istirahatleri için ayrı izin türü (`work_injury`), KPI-053 dışında — kaza gizleme baskısını önler (ADR gerekir) | 02/09/11 | HR Director E.2 |
 | B-30 | P2 | "İzin Sağlığı" paneli ve grup düzeyi uyarılar (KPI-056 eşik aşımı, kâğıt üstünde izin, işten ayrılmadan izin ücreti ödemesi) — bireysel sıralama yok | 07/14 | HR Director E.3 |

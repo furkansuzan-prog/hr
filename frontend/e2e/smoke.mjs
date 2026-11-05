@@ -172,6 +172,28 @@ try {
   await page.waitForTimeout(500);
   await page.screenshot({ path: `${out}/13-imports-idr.png`, fullPage: true });
 
+  // leave import through the UI (B-07): pick an active employee via the API, upload a CSV with a diagnosis column
+  const target = await page.evaluate(async (api) => {
+    const h = { Authorization: `Bearer ${localStorage.getItem("hrswi.token")}` };
+    const ents = await (await fetch(`${api}/api/v1/org/legal-entities`, { headers: h })).json();
+    const sub = ents.find((e) => e.code === "SUB01");
+    const ppl = await (await fetch(`${api}/api/v1/people?entity_id=${sub.id}&page_size=1`, { headers: h })).json();
+    return { sicil: ppl.items[0].employee_number, code: sub.code };
+  }, process.env.API_URL ?? "http://localhost:8000");
+  const day = String(1 + (Date.now() % 28)).padStart(2, "0");
+  const csv = `Sicil;Firma;İzin Türü;Başlangıç;Bitiş;Saat;Tanı;Not\n${target.sicil};${target.code};Yıllık izin;2027-01-${day};2027-01-${day};9;X;${Date.now()}\n`;
+  await page.getByLabel("Veri türü").selectOption("leave");
+  await page.getByLabel("File").setInputFiles({ name: "izin-e2e.csv", mimeType: "text/csv", buffer: Buffer.from(csv) });
+  await page.getByText("okunmadan atıldı").waitFor({ timeout: 20000 });
+  check("leave import: diagnosis column dropped before storage", await page.getByText("Tanı", { exact: true }).count() >= 1);
+  await page.getByRole("button", { name: "Validate" }).click();
+  await page.getByText(/valid 1/).waitFor({ timeout: 20000 });
+  await page.getByRole("button", { name: "Commit" }).click();
+  await page.getByText("committed 1").waitFor({ timeout: 20000 });
+  await page.locator("tbody tr", { hasText: "izin-e2e.csv" }).first().getByText("committed").waitFor({ timeout: 20000 });
+  check("leave import: validate + commit through the UI (batch list refreshed)", true);
+  await page.screenshot({ path: `${out}/14-leave-import.png`, fullPage: true });
+
   // exec: no admin menu, direct URL shows no-access
   const cx = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
   const px = await cx.newPage();

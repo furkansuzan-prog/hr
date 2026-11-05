@@ -8,7 +8,7 @@ import { useCan } from "@/components/providers";
 import { IdentityReviewQueue } from "@/components/identity-reviews";
 import { Badge, Button, Card, CardBody, CardHeader, CardTitle, ErrorBox, PageHeader, Select } from "@/components/ui/primitives";
 
-type Upload = { batch_id: number; headers: string[]; total_rows: number; suggested_mapping: Record<string, string | null>; required_fields: string[]; preview: Record<string, string>[] };
+type Upload = { batch_id: number; headers: string[]; total_rows: number; suggested_mapping: Record<string, string | null>; required_fields: string[]; preview: Record<string, string>[]; entity_type?: string; dropped_columns?: string[] };
 type Summary = { batch_id: number; status: string; file_name: string; total_rows: number; valid_rows: number; error_rows: number; committed_rows: number; identity_reviews: number; attempt_count: number; error_message: string | null };
 type Source = { id: number; code: string; name: string; kind: string; status: string; last_success_at: string | null; last_error: string | null };
 
@@ -17,6 +17,7 @@ export default function Imports() {
   const qc = useQueryClient();
   const canReview = useCan("people.write");
   const [up, setUp] = useState<Upload | null>(null);
+  const [kind, setKind] = useState<"employment" | "leave">("employment");
   const [mapping, setMapping] = useState<Record<string, string | null>>({});
   const [sum, setSum] = useState<Summary | null>(null);
   const [err, setErr] = useState<unknown>(null);
@@ -24,11 +25,11 @@ export default function Imports() {
   const batches = useQuery({ queryKey: ["imports"], queryFn: () => api<Summary[]>("/api/v1/imports") });
   const sources = useQuery({ queryKey: ["sources"], queryFn: () => api<Source[]>("/api/v1/integrations/sources") });
 
-  const run = async (fn: () => Promise<void>) => { setBusy(true); setErr(null); try { await fn(); } catch (e) { setErr(e); } finally { setBusy(false); qc.invalidateQueries({ queryKey: ["imports"] }); } };
+  const run = async (fn: () => Promise<void>) => { setBusy(true); setErr(null); try { await fn(); } catch (e) { setErr(e); } finally { await qc.invalidateQueries({ queryKey: ["imports"] }); setBusy(false); } };
   const onFile = (f: File) => run(async () => {
     const fd = new FormData();
     fd.append("file", f);
-    fd.append("entity_type", "employment");
+    fd.append("entity_type", kind);
     const r = await api<Upload>("/api/v1/imports", { method: "POST", body: fd });
     setUp(r); setMapping(r.suggested_mapping); setSum(null);
   });
@@ -42,12 +43,29 @@ export default function Imports() {
       <ErrorBox error={err} />
       <div className="grid gap-4 lg:grid-cols-3">
         <Card className="lg:col-span-2">
-          <CardHeader><CardTitle>Employment import (CSV / XLSX)</CardTitle></CardHeader>
+          <CardHeader>
+            <CardTitle>{kind === "leave" ? "İzin / devamsızlık içe aktarma" : "Personel / istihdam içe aktarma"} (CSV / XLSX)</CardTitle>
+            <Select aria-label="Veri türü" value={kind} disabled={busy} onChange={(e) => { setKind(e.target.value as "employment" | "leave"); setUp(null); setSum(null); }}>
+              <option value="employment">Personel / istihdam</option>
+              <option value="leave">İzin / devamsızlık</option>
+            </Select>
+          </CardHeader>
           <CardBody className="space-y-3">
+            {kind === "leave" && (
+              <p className="text-xs text-muted">
+                İzin türleri otomatik eşlenir; doğum, analık (SGK rapor türü 4), süt ve babalık izinleri devamsızlığa
+                hiç girmez. Tanı/teşhis gibi sağlık sütunları dosyadan okunmaz ve saklanmaz.
+              </p>
+            )}
             <input type="file" accept=".csv,.xlsx" aria-label="File" disabled={busy} onChange={(e) => e.target.files?.[0] && onFile(e.target.files[0])} className="text-sm" />
             {up && (
               <>
                 <p className="text-sm">{up.total_rows} rows · batch #{up.batch_id}</p>
+                {!!up.dropped_columns?.length && (
+                  <p role="status" className="rounded-md bg-surface-2 p-2 text-xs">
+                    KVKK: sağlık bilgisi içeren sütun(lar) okunmadan atıldı: <b>{up.dropped_columns.join(", ")}</b>
+                  </p>
+                )}
                 <div className="grid gap-2 sm:grid-cols-2">
                   {Object.keys(up.suggested_mapping).map((f) => (
                     <label key={f} className="flex items-center justify-between gap-2 text-xs">

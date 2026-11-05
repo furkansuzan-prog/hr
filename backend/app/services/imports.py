@@ -12,10 +12,10 @@ import io
 import logging
 import re
 import unicodedata
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from openpyxl import load_workbook
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.analytics.engine import mark_stale_from
@@ -27,6 +27,7 @@ from app.models import (
     IdentityReviewItem,
     ImportBatch,
     ImportStagingRow,
+    LeaveRecord,
     LegalEntity,
     Occupation,
     Person,
@@ -36,6 +37,7 @@ from app.models import (
 from app.models.people import TERMINATION_CATEGORIES
 from app.security.access import AccessContext
 from app.security.auth import national_id_hash
+from app.services.timekeeping import normalize_leave_type
 
 log = logging.getLogger("hrswi.imports")
 
@@ -70,6 +72,30 @@ FIELDS = {
     "project_code": {"required": False, "aliases": ["proje", "project", "проект"]},
     "occupation_code": {"required": False, "aliases": ["meslek", "meslek kodu", "occupation", "профессия"]},
 }
+# Target schema for entity_type = "leave" (one row = one leave/absence record of one employee) - B-07/B-27
+LEAVE_FIELDS = {
+    "external_id": {"required": True, "aliases": ["sicil", "sicil no", "personel no", "employee id", "employee number",
+                                                   "табельный номер"]},
+    "source_system": {"required": False, "aliases": ["kaynak", "source", "система"]},
+    "legal_entity_code": {"required": True, "aliases": ["firma", "firma kodu", "şirket", "company", "employer",
+                                                        "компания"]},
+    "leave_type": {"required": True, "aliases": ["izin türü", "izin tipi", "izin", "tür", "leave type", "type",
+                                                 "absence type", "вид отпуска", "тип"]},
+    "sgk_report_code": {"required": False, "aliases": ["rapor türü", "sgk rapor kodu", "istirahat türü", "rapor kodu",
+                                                       "report type"]},
+    "start_date": {"required": True, "aliases": ["başlangıç", "başlangıç tarihi", "izin başlangıç", "start", "from",
+                                                 "начало"]},
+    "end_date": {"required": True, "aliases": ["bitiş", "bitiş tarihi", "izin bitiş", "end", "to", "окончание"]},
+    "hours": {"required": False, "aliases": ["saat", "toplam saat", "hours", "часы"]},
+    "days": {"required": False, "aliases": ["gün", "gün sayısı", "days", "дни"]},
+}
+FIELD_SETS = {"employment": FIELDS, "leave": LEAVE_FIELDS}
+LEAVE_HOURS_PER_DAY = 9  # 45 h / 5 days; work-pattern specific conversion is backlog B-28
+# KVKK md.6 (data minimisation): diagnosis / medical detail is never needed for workforce analytics. Columns that
+# look like it are dropped BEFORE anything is stored or echoed back.
+_HEALTH_COLUMN_HINTS = ("tanı", "tani", "teşhis", "teshis", "diagnos", "icd", "hastalık adı", "hastalik adi",
+                        "диагноз", "medical detail")
+
 MAX_ROWS = 200_000
 CONTRACT_TYPES = {"permanent", "fixed_term", "project", "seasonal"}
 
@@ -81,11 +107,11 @@ def _norm(h: str) -> str:
     return re.sub(r"[\s_\-]+", " ", h)
 
 
-def suggest_mapping(headers: list[str]) -> dict[str, str | None]:
+def suggest_mapping(headers: list[str], fields: dict | None = None) -> dict[str, str | None]:
     """target field -> source header"""
     out: dict[str, str | None] = {}
     normed = {_norm(h): h for h in headers}
-    for f, meta in FIELDS.items():
+    for f, meta in (fields or FIELDS).items():
         cands = [_norm(f), _norm(f.replace("_", " "))] + [_norm(a) for a in meta["aliases"]]
         out[f] = next((normed[c] for c in cands if c in normed), None)
     return out
@@ -143,8 +169,9 @@ def _parse_date(s: str) -> date | None:
 
 
 def upload(db: Session, ctx: AccessContext, *, entity_type: str, filename: str, content: bytes) -> dict:
-    if entity_type != "employment":
-        raise ImportError_("Only entity_type='employment' is supported in this release")
+    if entity_type not in FIELD_SETS:
+        raise ImportError_(f"Unsupported entity_type '{entity_type}' (use one of: {', '.join(FIELD_SETS)})")
+    fields = FIELD_SETS[entity_type]
     if len(content) > get_settings().max_upload_mb * 1024 * 1024:
         raise ImportError_("File too large")
     sha = hashlib.sha256(content).hexdigest()
@@ -157,7 +184,13 @@ def upload(db: Session, ctx: AccessContext, *, entity_type: str, filename: str, 
     headers, rows = parse_file(filename, content)
     if len(rows) > MAX_ROWS:
         raise ImportError_(f"Too many rows ({len(rows)} > {MAX_ROWS}); split the file")
-    suggested = suggest_mapping(headers)
+    dropped: list[str] = []
+    if entity_type == "leave":
+        dropped = [h for h in headers if any(k in _norm(h) for k in _HEALTH_COLUMN_HINTS)]
+        if dropped:
+            headers = [h for h in headers if h not in dropped]
+            rows = [{k: v for k, v in r.items() if k not in dropped} for r in rows]
+    suggested = suggest_mapping(headers, fields)
     # KVKK: identity numbers are pseudonymised BEFORE the raw row is persisted or echoed back in the preview
     _pseudonymise(rows, suggested.get("national_id"))
     batch = ImportBatch(tenant_id=ctx.tenant_id, entity_type=entity_type, file_name=filename[:255], file_sha256=sha,
@@ -171,7 +204,8 @@ def upload(db: Session, ctx: AccessContext, *, entity_type: str, filename: str, 
             {"batch_id": batch.id, "row_number": i + j + 2, "raw": r} for j, r in enumerate(rows[i:i + chunk])])
     db.commit()
     return {"batch_id": batch.id, "headers": headers, "total_rows": len(rows), "suggested_mapping": batch.mapping,
-            "required_fields": [f for f, m in FIELDS.items() if m["required"]], "preview": rows[:20]}
+            "required_fields": [f for f, m in fields.items() if m["required"]], "preview": rows[:20],
+            "entity_type": entity_type, "dropped_columns": dropped}
 
 
 _HMAC_PREFIX = "hmac:"
@@ -191,11 +225,14 @@ def validate(db: Session, ctx: AccessContext, batch_id: int, mapping: dict[str, 
     if batch.status == "committed":
         raise ImportError_("Batch already committed")
     mapping = mapping or batch.mapping or {}
-    missing = [f for f, m in FIELDS.items() if m["required"] and not mapping.get(f)]
+    fields = FIELD_SETS[batch.entity_type]
+    missing = [f for f, m in fields.items() if m["required"] and not mapping.get(f)]
     if missing:
         raise ImportError_(f"Mapping missing required fields: {', '.join(missing)}")
     batch.mapping = mapping
     db.query(DataQualityIssue).filter(DataQualityIssue.import_batch_id == batch.id).delete()
+    if batch.entity_type == "leave":
+        return _validate_leave(db, ctx, batch, mapping)
 
     import_scope = ctx.entity_filter("import.write")
     ents = {le.code: le for le in db.execute(select(LegalEntity).where(LegalEntity.tenant_id == ctx.tenant_id)).scalars()}
@@ -312,7 +349,8 @@ def commit(db: Session, ctx: AccessContext, batch_id: int, *, fail_after_rows: i
             for r in rows:
                 if fail_after_rows is not None and processed >= fail_after_rows:
                     raise RuntimeError("simulated failure during commit")
-                d = _commit_row(db, ctx, batch, r, ents, projects, occs)
+                d = (_commit_leave_row(db, ctx, r) if batch.entity_type == "leave"
+                     else _commit_row(db, ctx, batch, r, ents, projects, occs))
                 if d == "review":  # sent to manual identity review: not committed, not retried automatically
                     r.has_error = True
                     r.errors = [*(r.errors or []), {"rule": "identity_review", "severity": "error",
@@ -342,6 +380,143 @@ def commit(db: Session, ctx: AccessContext, batch_id: int, *, fail_after_rows: i
         log.warning("import commit failed", extra={"tenant_id": ctx.tenant_id})
         raise ImportError_("Commit failed; committed chunks are kept and the batch can be retried") from exc
     return summary(db, ctx, batch_id)
+
+
+def _working_days(sd: date, ed: date) -> int:
+    return sum(1 for i in range((ed - sd).days + 1) if (sd + timedelta(days=i)).weekday() < 5)
+
+
+def _resolve_employment(db: Session, ctx: AccessContext, source: str, external_id: str, entity_id: int,
+                        on: date) -> tuple[list[EmploymentRelationship], str]:
+    """Employment of the person at `on` with the given employer: via the identity map (source system + external id),
+    falling back to the employer's employee number (sicil no)."""
+    by_identity = select(EmploymentRelationship).join(
+        PersonIdentifier, PersonIdentifier.person_id == EmploymentRelationship.person_id).where(
+        PersonIdentifier.tenant_id == ctx.tenant_id, PersonIdentifier.source_system == source,
+        PersonIdentifier.external_id == external_id)
+    by_number = select(EmploymentRelationship).where(EmploymentRelationship.tenant_id == ctx.tenant_id,
+                                                     EmploymentRelationship.employee_number == external_id)
+    for how, q in (("identity", by_identity), ("employee_number", by_number)):
+        found = list(db.execute(q.where(
+            EmploymentRelationship.legal_entity_id == entity_id, EmploymentRelationship.start_date <= on,
+            or_(EmploymentRelationship.end_date.is_(None), EmploymentRelationship.end_date >= on))).scalars())
+        if found:
+            return found, how
+    return [], "none"
+
+
+def _validate_leave(db: Session, ctx: AccessContext, batch: ImportBatch, mapping: dict) -> dict:
+    """Leave rows: resolve the employment, map the source label through normalize_leave_type (protected leave first,
+    decision D-6), derive hours, flag unmapped labels (B-27), detect duplicates in file and in the database."""
+    import_scope = ctx.entity_filter("import.write")
+    ents = {le.code: le for le in db.execute(select(LegalEntity).where(LegalEntity.tenant_id == ctx.tenant_id)).scalars()}
+    seen: set[tuple] = set()
+    valid = errors = 0
+    issues = []
+    for row in db.execute(select(ImportStagingRow).where(ImportStagingRow.batch_id == batch.id)
+                          .order_by(ImportStagingRow.row_number)).scalars():
+        m = {f: (str(row.raw.get(src, "") or "").strip() if src else "") for f, src in mapping.items()}
+        errs: list[dict] = []
+
+        def err(rule, msg, sev="error", errs=errs):
+            errs.append({"rule": rule, "message": msg, "severity": sev})
+
+        for f, meta in LEAVE_FIELDS.items():
+            if meta["required"] and not m.get(f):
+                err("required", f"'{f}' is required")
+        le = ents.get(m.get("legal_entity_code", ""))
+        if m.get("legal_entity_code") and le is None:
+            err("unknown_legal_entity", f"legal entity '{m['legal_entity_code']}' not found")
+        elif le is not None and import_scope is not None and le.id not in import_scope:
+            err("scope", f"no import permission for legal entity '{le.code}'")
+        sd = ed = None
+        try:
+            sd, ed = _parse_date(m.get("start_date", "")), _parse_date(m.get("end_date", ""))
+            if sd and ed and ed < sd:
+                err("date_order", "end_date before start_date")
+                sd = ed = None
+        except ValueError as e:
+            err("date_format", str(e))
+        label = m.get("leave_type", "")
+        lt = normalize_leave_type(label, m.get("sgk_report_code") or None)
+        if lt == "other" and _norm(label) != "other":
+            err("unmapped_leave_label", f"leave label '{label}' not recognised -> counted as 'other' (review mapping)",
+                "warning")
+        hours = None
+        try:
+            if m.get("hours"):
+                hours = float(m["hours"].replace(",", "."))
+            elif m.get("days"):
+                hours = float(m["days"].replace(",", ".")) * LEAVE_HOURS_PER_DAY
+            elif sd and ed:
+                hours = _working_days(sd, ed) * LEAVE_HOURS_PER_DAY
+                err("hours_derived", f"hours derived from Mon-Fri working days x {LEAVE_HOURS_PER_DAY}", "warning")
+            if hours is not None and not 0 < hours <= 24 * ((ed - sd).days + 1 if sd and ed else 1):
+                err("hours_range", "hours must be positive and not exceed 24 h per calendar day")
+        except ValueError:
+            err("hours_format", "hours/days must be numbers")
+        emp, how = None, None
+        if le is not None and sd and not [e for e in errs if e["rule"] == "scope"]:
+            found, how = _resolve_employment(db, ctx, m.get("source_system") or "import", m.get("external_id", ""),
+                                             le.id, sd)
+            if not found:
+                err("no_employment", f"no employment of '{m.get('external_id')}' with '{le.code}' on {sd.isoformat()}")
+            elif len(found) > 1:
+                err("ambiguous_employment", "several employments match; resolve the identity first")
+            else:
+                emp = found[0]
+                if ed and emp.end_date and ed > emp.end_date:
+                    err("past_employment_end", "leave ends after the employment end date -> clipped", "warning")
+                    ed = emp.end_date
+        if emp is not None and sd and ed:
+            if db.execute(select(LeaveRecord.id).where(
+                    LeaveRecord.employment_id == emp.id, LeaveRecord.leave_type == lt,
+                    LeaveRecord.start_date == sd, LeaveRecord.end_date == ed)).first():
+                err("already_imported", "identical leave record already exists -> will be skipped", "warning")
+            elif db.execute(select(LeaveRecord.id).where(
+                    LeaveRecord.employment_id == emp.id, LeaveRecord.start_date <= ed,
+                    LeaveRecord.end_date >= sd)).first():
+                err("overlapping_leave", "overlaps an existing leave record of this employee", "warning")
+        key = (m.get("source_system") or "import", m.get("external_id"), m.get("legal_entity_code"), lt, sd)
+        if key in seen:
+            err("duplicate_in_file", "duplicate row (same employee, employer, leave type and start date)")
+        seen.add(key)
+        row.mapped = {"external_id": m.get("external_id"), "legal_entity_code": m.get("legal_entity_code"),
+                      "employment_id": emp.id if emp else None, "leave_type": lt,
+                      "start_date": sd.isoformat() if sd else None, "end_date": ed.isoformat() if ed else None,
+                      "hours": hours, "source_system": m.get("source_system") or "import", "matched_by": how}
+        row.errors = errs
+        hard = [e for e in errs if e["severity"] == "error"]
+        row.has_error = bool(hard)
+        if hard:
+            errors += 1
+        else:
+            valid += 1
+        for e in errs:
+            issues.append({"tenant_id": ctx.tenant_id, "import_batch_id": batch.id, "entity_type": "leave",
+                           "rule_code": e["rule"], "severity": e["severity"], "message": e["message"],
+                           "row_number": row.row_number, "record_ref": m.get("external_id")})
+    if issues:
+        db.bulk_insert_mappings(DataQualityIssue, issues)
+    batch.valid_rows, batch.error_rows, batch.status = valid, errors, "validated"
+    db.commit()
+    return summary(db, ctx, batch.id)
+
+
+def _commit_leave_row(db: Session, ctx: AccessContext, row: ImportStagingRow) -> date | None:
+    m = row.mapped
+    sd, ed = date.fromisoformat(m["start_date"]), date.fromisoformat(m["end_date"])
+    emp = db.get(EmploymentRelationship, m["employment_id"])
+    if emp is None or emp.tenant_id != ctx.tenant_id:
+        raise ImportError_("employment disappeared between validation and commit")
+    if db.execute(select(LeaveRecord.id).where(
+            LeaveRecord.employment_id == emp.id, LeaveRecord.leave_type == m["leave_type"],
+            LeaveRecord.start_date == sd, LeaveRecord.end_date == ed)).first():
+        return None  # idempotent: identical record already present (re-import / resumed commit)
+    db.add(LeaveRecord(tenant_id=ctx.tenant_id, employment_id=emp.id, leave_type=m["leave_type"], start_date=sd,
+                       end_date=ed, hours=m["hours"], source_system=m["source_system"],
+                       source_record_id=m["external_id"], updated_by=ctx.user_id))
+    return sd
 
 
 def _invalidate_from_committed(db: Session, ctx: AccessContext, batch_id: int) -> None:
@@ -437,7 +612,8 @@ def summary(db: Session, ctx: AccessContext, batch_id: int) -> dict:
     b = _batch(db, ctx, batch_id)
     reviews = db.execute(select(func.count()).select_from(IdentityReviewItem).where(
         IdentityReviewItem.import_batch_id == b.id)).scalar()
-    return {"batch_id": b.id, "status": b.status, "file_name": b.file_name, "total_rows": b.total_rows,
+    return {"batch_id": b.id, "entity_type": b.entity_type, "status": b.status, "file_name": b.file_name,
+            "total_rows": b.total_rows,
             "valid_rows": b.valid_rows, "error_rows": b.error_rows, "committed_rows": b.committed_rows,
             "identity_reviews": reviews, "attempt_count": b.attempt_count, "error_message": b.error_message,
             "mapping": b.mapping}
