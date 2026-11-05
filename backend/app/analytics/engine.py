@@ -1,10 +1,11 @@
 """KPI engine service: the ONLY entry point through which numbers reach the API, reports and the assistant."""
+from collections.abc import Callable
 from datetime import UTC, date, datetime
 
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
-from app.analytics.calculators import CALCULATORS, Scope
+from app.analytics.calculators import CALCULATORS, SERIES_CALCULATORS, Scope
 from app.analytics.domain import OK, SUPPRESSED, CalcResult, month_end, month_starts
 from app.core.cache import cache
 from app.core.config import get_settings
@@ -152,7 +153,10 @@ def evaluate(
     project_id: int | None = None,
     occupation_group: str | None = None,
     version: int | None = None,
+    precomputed: Callable[[], CalcResult] | None = None,
 ) -> dict:
+    """`precomputed` (internal, B-13): supplies the raw calculator result from a batched series pass; it is only
+    consulted where the calculator would run (not frozen, cache miss), so frozen/cache/privacy rules are unchanged."""
     kpi = get_definition(db, code)
     if kpi.status != "active" or not kpi.validated:
         raise KpiNotActive(f"{code} is '{kpi.status}' and not validated for production calculation")
@@ -175,7 +179,8 @@ def evaluate(
         if hit is not None:
             res = CalcResult(**hit)
         else:
-            res = enforce_privacy(calc(db, scope, ps, pe, f.parameters or {}))
+            raw = precomputed() if precomputed is not None else calc(db, scope, ps, pe, f.parameters or {})
+            res = enforce_privacy(raw)
             cache.set(key, res.to_dict())
     out = _payload(kpi, f, scope, ps, pe, res, ctx.locale)
     if meta:
@@ -184,7 +189,8 @@ def evaluate(
 
 
 _LINEAGE_SAFE_KEYS = {"tables", "method", "transfer_gap_days", "proration", "excluded_categories", "event_types_counted",
-                      "window_days", "reporting_currency", "fx_source", "units", "as_of", "average_headcount"}
+                      "window_days", "reporting_currency", "fx_source", "units", "as_of", "average_headcount",
+                      "included_categories"}
 
 
 def enforce_privacy(res: CalcResult) -> CalcResult:
@@ -229,11 +235,35 @@ def _frozen_result(db, tenant_id, kpi, f, scope, ps, pe):
     return res, {"frozen": True, "is_stale": r.is_stale, "run_id": r.run_id}
 
 
+def _series_batch(db: Session, ctx: AccessContext, code: str, windows: list[tuple[date, date]], kw: dict):
+    """B-13: for calculators in SERIES_CALCULATORS, compute every month in one SQL pass - lazily, on the first month
+    that actually needs a live calculation. Returns None when no batched path applies (evaluate then does all checks
+    and raises its usual errors)."""
+    try:
+        kpi = get_definition(db, code)
+        if kpi.status != "active" or not kpi.validated:
+            return None
+        f = get_formula(db, kpi, kw.get("version"))
+        fn = SERIES_CALCULATORS.get(f.calculator_key)
+        if fn is None or CALCULATORS.get(f.calculator_key) is None:
+            return None
+        scope = resolve_scope(ctx, kpi, kw.get("entity_ids"), kw.get("project_id"), kw.get("occupation_group"))
+    except KpiError:
+        return None
+    results: dict = {}
+
+    def get(w: tuple[date, date]) -> CalcResult:
+        if not results:
+            results.update(fn(db, scope, windows, f.parameters or {}))
+        return results[w]
+    return get
+
+
 def monthly_series(db: Session, ctx: AccessContext, code: str, ps: date, pe: date, **kw) -> list[dict]:
-    out = []
-    for m in month_starts(ps, pe):
-        out.append(evaluate(db, ctx, code, max(m, ps), min(month_end(m), pe), **kw))
-    return out
+    windows = [(max(m, ps), min(month_end(m), pe)) for m in month_starts(ps, pe)]
+    batch = _series_batch(db, ctx, code, windows, kw)
+    return [evaluate(db, ctx, code, a, b, precomputed=(lambda w=(a, b): batch(w)) if batch else None, **kw)
+            for a, b in windows]
 
 
 def visible_entities(db: Session, ctx: AccessContext, perm: str = "kpi.read") -> list[LegalEntity]:
@@ -300,6 +330,31 @@ def run_calculation(db: Session, ctx: AccessContext, codes: list[str], ps: date,
     return run
 
 
+def freeze_period(db: Session, ctx: AccessContext, period_month: date) -> int:
+    """B-18: persist results for a month that is about to be closed, so a closed period always serves frozen values
+    (see `_frozen_result`). Runs every active, validated KPI at tenant scope (the closer's scope) and for each legal
+    entity the closer can see. Sensitive (cost) KPIs are only frozen when the closer holds TENANT-WIDE cost.read, so a
+    close never persists cost numbers wider than the closer may read. Returns the number of persisted results."""
+    if not ctx.has("kpi.read"):
+        return 0
+    ps = date(period_month.year, period_month.month, 1)
+    pe = month_end(ps)
+    defs = db.execute(select(KpiDefinition).where(KpiDefinition.status == "active", KpiDefinition.validated.is_(True))
+                      .order_by(KpiDefinition.code)).scalars().all()
+    cost_ok = ctx.has("cost.read") and ctx.entity_filter("cost.read") is None
+    codes = [d.code for d in defs if (not d.sensitive or cost_ok)
+             and get_formula(db, d).calculator_key in CALCULATORS]
+    if not codes:
+        return 0
+    own_scope = ctx.entity_filter("kpi.read")  # None = tenant-wide closer
+    scopes: list[set[int] | None] = [None]
+    # one run per visible legal entity; skipped when identical to the closer's own (single-entity) scope
+    scopes += [{le.id} for le in visible_entities(db, ctx, "kpi.read") if own_scope != {le.id}]
+    for ents in scopes:
+        run_calculation(db, ctx, codes, ps, pe, entity_ids=ents, trigger="period_close")
+    return len(codes) * len(scopes)
+
+
 # Allowed formula parameters per calculator (audit finding #7): unknown keys / wrong types are rejected.
 _LEAVE_TYPES = {"annual", "sick", "unpaid", "unexcused", "public_holiday", "parental", "other"}
 _EVENT_TYPES = {"fatality", "lost_time_injury", "restricted_work", "medical_treatment", "first_aid", "near_miss"}
@@ -313,6 +368,7 @@ PARAM_RULES = {
     "reporting_currency": lambda v: isinstance(v, str) and len(v) == 3 and v.isalpha() and v.isupper(),
     "days": lambda v: isinstance(v, int) and 1 <= v <= 365,
     "exclude_categories": lambda v: isinstance(v, list) and set(v) <= _TERM,
+    "include_categories": lambda v: isinstance(v, list) and bool(v) and set(v) <= _TERM,
 }
 
 

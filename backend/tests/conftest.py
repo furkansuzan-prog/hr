@@ -33,7 +33,11 @@ def database():
         demo = generate(db, employees=220, subcontractors=5, months=26, as_of=AS_OF, seed=7, tenant_code="DEMO")
     with SessionLocal() as db:
         exact = build_exact_tenant(db)
-    yield {"demo": demo, "exact": exact}
+    from tests.factories_kpi import build_kpi_tenant
+
+    with SessionLocal() as db:
+        kpi = build_kpi_tenant(db)
+    yield {"demo": demo, "exact": exact, "kpi": kpi}
 
 
 @pytest.fixture(scope="session")

@@ -920,7 +920,7 @@ Approved daily time record per employment and project. worked_hours = paid worki
 | record_version | INTEGER |  |  |
 | updated_by | BIGINT | ✓ |  |
 
-Kısıtlar: ck_ts_nonneg, uq_timesheet_day
+Kısıtlar: uq_timesheet_day, ck_ts_nonneg
 
 ## `training_records`
 
@@ -974,6 +974,9 @@ Role granted within a scope (ADR-005). scope_type: tenant | legal_entity.
 | is_active | BOOLEAN |  |  |
 | mfa_enabled | BOOLEAN |  |  |
 | last_login_at | DATETIME | ✓ |  |
+| failed_login_count | INTEGER |  |  |
+| locked_until | DATETIME | ✓ |  |
+| token_version | INTEGER |  |  |
 | tenant_id | INTEGER |  | → tenants.id idx |
 | created_at | DATETIME |  |  |
 | updated_at | DATETIME |  |  |

@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from app.analytics.domain import (
     INSUFFICIENT,
     OK,
+    SUPPRESSED,
     CalcResult,
     month_end,
     month_starts,
@@ -118,28 +119,41 @@ def _separations(db: Session, scope: Scope, ps: date, pe: date) -> dict[str, int
 
 
 def _hours(db: Session, scope: Scope, ps: date, pe: date) -> dict:
+    return _hours_windows(db, scope, [(ps, pe)])[(ps, pe)]
+
+
+def _hours_windows(db: Session, scope: Scope, windows: list[tuple[date, date]]) -> dict[tuple[date, date], dict]:
+    """Timesheet aggregates for several periods in ONE query (B-13). Each window is evaluated exactly as a single
+    period would be: project/occupation assignment overlap is checked against that window's own dates."""
     where, p = _emp_where(Scope(scope.tenant_id, scope.entity_ids, None, scope.occupation_group),
-                          date_from=":ps", date_to=":pe")
+                          date_from="w.ps", date_to="w.pe")
     proj = ""
     if scope.project_id:
         proj = " AND t.project_id = :project"
         p["project"] = scope.project_id
-    r = db.execute(
+    rows = db.execute(
         text(
-            "SELECT count(*), coalesce(sum(t.planned_hours),0), coalesce(sum(t.worked_hours),0), "
+            "SELECT w.ps, w.pe, count(*), coalesce(sum(t.planned_hours),0), coalesce(sum(t.worked_hours),0), "
             "coalesce(sum(t.overtime_hours),0), coalesce(sum(t.productive_hours),0), "
             "count(t.productive_hours), coalesce(sum(t.planned_hours) FILTER (WHERE t.productive_hours IS NOT NULL),0), "
             "count(DISTINCT e.person_id), coalesce(sum(t.night_hours),0) "
-            "FROM timesheets t JOIN employment_relationships e ON e.id = t.employment_id "
-            f"WHERE t.work_date BETWEEN :ps AND :pe AND t.status = 'approved' {where}{proj}"
+            "FROM unnest(CAST(:starts AS date[]), CAST(:ends AS date[])) AS w(ps, pe) "
+            "JOIN timesheets t ON t.work_date BETWEEN w.ps AND w.pe "
+            "JOIN employment_relationships e ON e.id = t.employment_id "
+            f"WHERE t.status = 'approved' {where}{proj} GROUP BY w.ps, w.pe"
         ),
-        {**p, "ps": ps, "pe": pe},
-    ).one()
-    return {
-        "rows": int(r[0]), "planned": float(r[1]), "worked": float(r[2]), "overtime": float(r[3]),
-        "productive": float(r[4]), "productive_rows": int(r[5]), "planned_with_productive": float(r[6]),
-        "persons": int(r[7]), "night": float(r[8]),
-    }
+        {**p, "starts": [w[0] for w in windows], "ends": [w[1] for w in windows]},
+    ).all()
+    found = {(r[0], r[1]): r[2:] for r in rows}
+    out = {}
+    for w in windows:
+        r = found.get(w, (0, 0, 0, 0, 0, 0, 0, 0, 0))
+        out[w] = {
+            "rows": int(r[0]), "planned": float(r[1]), "worked": float(r[2]), "overtime": float(r[3]),
+            "productive": float(r[4]), "productive_rows": int(r[5]), "planned_with_productive": float(r[6]),
+            "persons": int(r[7]), "night": float(r[8]),
+        }
+    return out
 
 
 # ------------------------------------------------------------------ calculators
@@ -149,18 +163,30 @@ def turnover_rate(db: Session, scope: Scope, ps: date, pe: date, params: dict) -
     """KPI-001: separations in period / average headcount * 100. Internal transfers within scope excluded."""
     seps = _separations(db, scope, ps, pe)
     excluded = set(params.get("exclude_categories", []))
-    n = sum(v for k, v in seps.items() if k not in excluded)
+    included = params.get("include_categories")  # KPI-020: only these categories count (e.g. ["voluntary"])
+    counted = {k: v for k, v in seps.items() if k not in excluded and (included is None or k in included)}
+    n = sum(counted.values())
     avg, avg_lineage = average_headcount(db, scope, ps, pe)
     res = ratio(n, avg, sample_size=round(avg), min_sample=_min_group(), has_source_data=avg > 0 or n > 0)
     if res.status == OK:
         res.breakdown = {"by_termination_category": suppress_small_counts(seps, round(avg), _min_group())}
     unknown = seps.get("unknown", 0)
-    res.quality_score = round(100 * (1 - unknown / n), 1) if n else 100.0
-    res.lineage = {"tables": ["employment_relationships", "assignments"], "separations": n,
-                   "excluded_categories": sorted(excluded), "transfer_gap_days": TRANSFER_GAP_DAYS,
-                   "average_headcount": avg_lineage}
-    if unknown:
-        res.note = f"{unknown} separation(s) have no recorded reason (reported as 'unknown', not assumed)"
+    lineage = {"tables": ["employment_relationships", "assignments"], "separations": n,
+               "excluded_categories": sorted(excluded), "transfer_gap_days": TRANSFER_GAP_DAYS,
+               "average_headcount": avg_lineage}
+    if included is None:
+        res.quality_score = round(100 * (1 - unknown / n), 1) if n else 100.0
+        if unknown:
+            res.note = f"{unknown} separation(s) have no recorded reason (reported as 'unknown', not assumed)"
+    else:
+        # a separation without a reason might belong to an included category: quality reflects that uncertainty
+        all_seps = sum(seps.values())
+        res.quality_score = round(100 * (1 - unknown / all_seps), 1) if all_seps else 100.0
+        lineage["included_categories"] = sorted(included)
+        if unknown and "unknown" not in included:
+            res.note = (f"{unknown} separation(s) have no recorded reason and are NOT counted; the true rate may be "
+                        "higher")
+    res.lineage = lineage
     return res
 
 
@@ -317,7 +343,10 @@ def plan_deviation(db: Session, scope: Scope, ps: date, pe: date, params: dict) 
 
 def overtime_rate(db: Session, scope: Scope, ps: date, pe: date, params: dict) -> CalcResult:
     """KPI-007: overtime hours / total actual worked hours (worked_hours includes overtime) * 100."""
-    h = _hours(db, scope, ps, pe)
+    return _overtime_from_hours(_hours(db, scope, ps, pe))
+
+
+def _overtime_from_hours(h: dict) -> CalcResult:
     res = ratio(h["overtime"], h["worked"], sample_size=h["persons"], min_sample=_min_group(),
                 has_source_data=h["rows"] > 0)
     res.quality_score = 100.0 if h["rows"] else 0.0
@@ -522,7 +551,10 @@ def trir(db: Session, scope: Scope, ps: date, pe: date, params: dict) -> CalcRes
 
 def active_headcount(db: Session, scope: Scope, ps: date, pe: date, params: dict) -> CalcResult:
     """KPI-016: distinct persons with an active employment on the last day of the period."""
-    n = headcount_series(db, scope, [pe])[pe]
+    return _headcount_result(headcount_series(db, scope, [pe])[pe], pe)
+
+
+def _headcount_result(n: int, pe: date) -> CalcResult:
     return CalcResult(OK, float(n), sample_size=n, quality_score=100.0,
                       lineage={"tables": ["employment_relationships"], "as_of": pe.isoformat()})
 
@@ -583,6 +615,161 @@ def labor_cost_per_employee(db: Session, scope: Scope, ps: date, pe: date, param
     return res
 
 
+# ------------------------------------------------------------------ B-10 calculators (KPI-023/032/034/036/048/050)
+
+
+def average_tenure(db: Session, scope: Scope, ps: date, pe: date, params: dict) -> CalcResult:
+    """KPI-023: mean tenure (years) of persons active in scope at period end. Tenure = days since the start of the
+    CURRENT spell (a re-hire starts from zero; earlier spells are not added). A person with several concurrent active
+    in-scope spells counts once, with the longest-running one. Years = days / 365.25."""
+    where, p = _emp_where(scope, date_from=":pe", date_to=":pe")
+    r = db.execute(
+        text("SELECT count(*), coalesce(sum(days), 0) FROM (SELECT e.person_id, max(CAST(:pe AS date) - e.start_date) AS days "
+             "FROM employment_relationships e WHERE e.start_date <= :pe AND (e.end_date IS NULL OR e.end_date >= :pe) "
+             f"{where} GROUP BY e.person_id) t"),
+        {**p, "pe": pe},
+    ).one()
+    n, days = int(r[0]), float(r[1])
+    res = ratio(days / 365.25, n, scale=1.0, sample_size=n, min_sample=_min_group(), has_source_data=n > 0)
+    res.quality_score = 100.0 if n else 0.0
+    res.lineage = {"tables": ["employment_relationships"], "persons": n, "as_of": pe.isoformat(),
+                   "method": "current spell; days / 365.25"}
+    return res
+
+
+def night_work_share(db: Session, scope: Scope, ps: date, pe: date, params: dict) -> CalcResult:
+    """KPI-032: night hours / worked hours * 100 on approved timesheets."""
+    return _night_from_hours(_hours(db, scope, ps, pe))
+
+
+def _night_from_hours(h: dict) -> CalcResult:
+    res = ratio(h["night"], h["worked"], sample_size=h["persons"], min_sample=_min_group(),
+                has_source_data=h["rows"] > 0)
+    res.quality_score = 100.0 if h["rows"] else 0.0
+    if res.status == OK:
+        res.breakdown = {"night_hours": round(h["night"], 1), "worked_hours": round(h["worked"], 1)}
+    res.lineage = {"tables": ["timesheets"], "rows": h["rows"], "persons": h["persons"]}
+    return res
+
+
+def downtime_lost_hours_share(db: Session, scope: Scope, ps: date, pe: date, params: dict) -> CalcResult:
+    """KPI-034: downtime lost hours / planned timesheet hours in the same scope * 100.
+    Downtime events carry project and (optionally) legal entity but no occupation."""
+    if scope.occupation_group:
+        return CalcResult(INSUFFICIENT, quality_score=0.0, lineage={"tables": ["downtime_events"]},
+                          note="Downtime events are not recorded per occupation; share not available for an "
+                               "occupation filter")
+    p: dict = {"tenant": scope.tenant_id, "ps": ps, "pe": pe}
+    where = ""
+    if scope.entity_ids is not None:
+        # events without a legal entity cannot be attributed to an entity-filtered scope (counted in lineage)
+        where += " AND legal_entity_id = ANY(:ents)"
+        p["ents"] = list(scope.entity_ids) or [-1]
+    if scope.project_id:
+        where += " AND project_id = :project"
+        p["project"] = scope.project_id
+    rows = db.execute(
+        text("SELECT cause, count(*), sum(lost_hours) FROM downtime_events "
+             f"WHERE tenant_id = :tenant AND event_date BETWEEN :ps AND :pe {where} GROUP BY cause"), p).all()
+    unattributed = 0
+    if scope.entity_ids is not None:
+        unattributed = int(db.execute(text(
+            "SELECT count(*) FROM downtime_events WHERE tenant_id = :tenant AND event_date BETWEEN :ps AND :pe "
+            "AND legal_entity_id IS NULL" + (" AND project_id = :project" if scope.project_id else "")), p).scalar())
+    lost = sum(float(r[2]) for r in rows)
+    by_cause = {r[0]: round(float(r[2]), 2) for r in rows}
+    h = _hours(db, scope, ps, pe)
+    res = ratio(lost, h["planned"], sample_size=h["persons"], min_sample=_min_group(), has_source_data=h["rows"] > 0)
+    res.quality_score = 100.0 if h["rows"] else 0.0
+    if res.status == OK:
+        res.breakdown = {"lost_hours_by_cause": by_cause, "planned_hours": round(h["planned"], 1)}
+    res.lineage = {"tables": ["downtime_events", "timesheets"], "timesheet_rows": h["rows"], "persons": h["persons"],
+                   "downtime_events": sum(int(r[1]) for r in rows),
+                   "downtime_events_excluded_no_entity": unattributed}
+    if unattributed and res.status == OK:
+        res.note = f"{unattributed} downtime event(s) have no legal entity and are excluded from an entity filter"
+    return res
+
+
+def overtime_cost_share(db: Session, scope: Scope, ps: date, pe: date, params: dict) -> CalcResult:
+    """KPI-036 (sensitive): overtime cost / total labour cost * 100, both in reporting currency (same FX logic as
+    KPI-019). A missing FX rate makes the result insufficient - never a partial total."""
+    total, info = labor_cost_total(db, scope, ps, pe, params)
+    if total is None:
+        note = ("Missing FX rate(s): " + ", ".join(info["missing_fx"])) if info["missing_fx"] else "No cost data"
+        return CalcResult(INSUFFICIENT, note=note, quality_score=0.0, lineage=info)
+    overtime = info["by_cost_type"].get("overtime", 0.0)
+    res = ratio(overtime, total, sample_size=info["persons"], min_sample=_min_group())
+    if res.status == OK:
+        res.breakdown = {"overtime_cost": round(overtime, 2), "total_labour_cost": round(total, 2),
+                         "reporting_currency": info["reporting_currency"]}
+    res.lineage = info
+    res.quality_score = 100.0
+    return res
+
+
+def _case_variants(*words: str) -> list[str]:
+    # matched in SQL against the trimmed raw value AND its upper(): upper() of non-ASCII letters depends on the DB
+    # collation (e.g. Turkish dotless i, Cyrillic under the C locale), so every spelling variant is listed explicitly
+    return sorted({v for w in words for v in (w, w.upper(), w.lower(), w.capitalize())})
+
+
+_FEMALE = _case_variants("f", "female", "k", "kadın", "kadin", "w", "woman", "ж", "жен", "женский")
+_MALE = _case_variants("m", "male", "e", "erkek", "man", "м", "муж", "мужской")
+
+
+def female_share(db: Session, scope: Scope, ps: date, pe: date, params: dict) -> CalcResult:
+    """KPI-048: female persons / persons with a recorded gender (active in scope at period end) * 100.
+    Unknown/unrecorded gender is excluded from the denominator (counted in lineage). Because a tiny female or male
+    count re-identifies people, the result is suppressed when EITHER count is below the publishable minimum."""
+    where, p = _emp_where(scope, date_from=":pe", date_to=":pe")
+    r = db.execute(
+        text("SELECT count(*), count(*) FILTER (WHERE g = ANY(:fem) OR upper(g) = ANY(:fem)), "
+             "count(*) FILTER (WHERE g = ANY(:male) OR upper(g) = ANY(:male)) FROM ("
+             "SELECT DISTINCT e.person_id, trim(pp.gender) AS g FROM employment_relationships e "
+             "JOIN people pp ON pp.id = e.person_id WHERE e.start_date <= :pe AND (e.end_date IS NULL OR "
+             f"e.end_date >= :pe) {where}) t"),
+        {**p, "pe": pe, "fem": _FEMALE, "male": _MALE},
+    ).one()
+    total, female, male = int(r[0]), int(r[1]), int(r[2])
+    known = female + male
+    lineage = {"tables": ["employment_relationships", "people"], "persons": total, "unknown_gender": total - known,
+               "as_of": pe.isoformat()}
+    min_n = _min_group()
+    if total and (female < min_n or male < min_n) and known >= min_n:
+        return CalcResult(SUPPRESSED, quality_score=None, lineage=lineage,
+                          note=f"Female or male count below the minimum publishable size ({min_n})")
+    res = ratio(female, known, sample_size=known, min_sample=min_n, has_source_data=total > 0)
+    if res.status == OK:
+        res.breakdown = {"female": female, "male": male}
+    res.quality_score = round(100 * known / total, 1) if total else 0.0
+    if res.status == OK and known < total:
+        res.note = f"{total - known} person(s) without a recorded gender are excluded from the denominator"
+    res.lineage = lineage
+    return res
+
+
+def subcontractor_share(db: Session, scope: Scope, ps: date, pe: date, params: dict) -> CalcResult:
+    """KPI-050: persons employed by a subcontractor entity / all persons in scope (both at period end) * 100.
+    A person with concurrent spells counts once in the denominator and once in the numerator if any spell is with a
+    subcontractor."""
+    where, p = _emp_where(scope, date_from=":pe", date_to=":pe")
+    r = db.execute(
+        text("SELECT count(DISTINCT e.person_id), count(DISTINCT e.person_id) FILTER (WHERE le.entity_type = "
+             "'subcontractor') FROM employment_relationships e JOIN legal_entities le ON le.id = e.legal_entity_id "
+             f"WHERE e.start_date <= :pe AND (e.end_date IS NULL OR e.end_date >= :pe) {where}"),
+        {**p, "pe": pe},
+    ).one()
+    total, sub = int(r[0]), int(r[1])
+    res = ratio(sub, total, sample_size=total, min_sample=_min_group(), has_source_data=total > 0)
+    if res.status == OK:
+        res.breakdown = {"by_employer_type": suppress_small_counts({"subcontractor": sub, "other": total - sub},
+                                                                  total, _min_group())}
+    res.quality_score = 100.0 if total else 0.0
+    res.lineage = {"tables": ["employment_relationships", "legal_entities"], "persons": total, "as_of": pe.isoformat()}
+    return res
+
+
 CALCULATORS: dict[str, Callable[[Session, Scope, date, date, dict], CalcResult]] = {
     "turnover_rate": turnover_rate,
     "retention_rate": retention_rate,
@@ -602,4 +789,33 @@ CALCULATORS: dict[str, Callable[[Session, Scope, date, date, dict], CalcResult]]
     "new_hire_count": new_hire_count,
     "early_turnover_90": early_turnover_90,
     "labor_cost_per_employee": labor_cost_per_employee,
+    "average_tenure": average_tenure,
+    "night_work_share": night_work_share,
+    "downtime_lost_hours_share": downtime_lost_hours_share,
+    "overtime_cost_share": overtime_cost_share,
+    "female_share": female_share,
+    "subcontractor_share": subcontractor_share,
+}
+
+
+# B-13: calculators that can evaluate many periods in one SQL pass. Each MUST produce exactly what the per-period
+# calculator in CALCULATORS returns for every window (tests/test_kpi_extended.py proves it); only the I/O is batched.
+Windows = list[tuple[date, date]]
+
+
+def _series_from_hours(build: Callable[[dict], CalcResult]):
+    def run(db: Session, scope: Scope, windows: Windows, params: dict) -> dict[tuple[date, date], CalcResult]:
+        return {w: build(h) for w, h in _hours_windows(db, scope, windows).items()}
+    return run
+
+
+def _headcount_windows(db: Session, scope: Scope, windows: Windows, params: dict) -> dict[tuple[date, date], CalcResult]:
+    hc = headcount_series(db, scope, sorted({w[1] for w in windows}))
+    return {w: _headcount_result(hc[w[1]], w[1]) for w in windows}
+
+
+SERIES_CALCULATORS: dict[str, Callable[[Session, Scope, Windows, dict], dict[tuple[date, date], CalcResult]]] = {
+    "active_headcount": _headcount_windows,
+    "overtime_rate": _series_from_hours(_overtime_from_hours),
+    "night_work_share": _series_from_hours(_night_from_hours),
 }

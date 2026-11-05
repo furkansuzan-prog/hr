@@ -170,16 +170,33 @@ class PeriodIn(BaseModel):
 @router.post("/kpi/periods/{period_month}/close", tags=["kpi"])
 def close_period(period_month: date, ctx: AccessContext = Depends(require("period.close")),
                  db: Session = Depends(get_db)):
+    from sqlalchemy.exc import IntegrityError
+
     pm = date(period_month.year, period_month.month, 1)
     row = db.execute(select(PeriodClose).where(PeriodClose.tenant_id == ctx.tenant_id,
                                                PeriodClose.period_month == pm)).scalar()
+    if row is not None and row.status == "closed":
+        raise HTTPException(409, "Period is already closed")
+    # B-18: freeze results BEFORE closing so a closed month never falls back to live recalculation
+    frozen = _kpi_call(engine.freeze_period, db, ctx, pm)
+    db.expire_all()
+    row = db.execute(select(PeriodClose).where(PeriodClose.tenant_id == ctx.tenant_id,
+                                               PeriodClose.period_month == pm).with_for_update()).scalar()
+    if row is not None and row.status == "closed":  # closed concurrently while we were freezing
+        db.rollback()
+        raise HTTPException(409, "Period is already closed")
     if row is None:
         db.add(PeriodClose(tenant_id=ctx.tenant_id, period_month=pm, status="closed", closed_by=ctx.user_id))
     else:
         row.status, row.closed_by = "closed", ctx.user_id
-    db.commit()
-    write_audit(tenant_id=ctx.tenant_id, user_id=ctx.user_id, action="period.close", entity_id=pm.isoformat())
-    return {"period_month": pm, "status": "closed"}
+    try:
+        db.commit()
+    except IntegrityError:  # concurrent first close of the same month (unique tenant_id, period_month)
+        db.rollback()
+        raise HTTPException(409, "Period is already closed") from None
+    write_audit(tenant_id=ctx.tenant_id, user_id=ctx.user_id, action="period.close", entity_id=pm.isoformat(),
+                details={"frozen_results": frozen})
+    return {"period_month": pm, "status": "closed", "frozen_results": frozen}
 
 
 @router.post("/kpi/periods/{period_month}/reopen", tags=["kpi"])

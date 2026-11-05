@@ -2,7 +2,7 @@
 
 # KPI Kataloğu / KPI Catalogue
 
-53 tanım; 18 aktif ve doğrulanmış. `draft` tanımlar üretimde hesaplanamaz (ADR-008). Standart referansları **gösterge niteliğinde eşleştirmedir, uyum iddiası değildir.**
+53 tanım; 28 aktif ve doğrulanmış. `draft` tanımlar üretimde hesaplanamaz (ADR-008). Standart referansları **gösterge niteliğinde eşleştirmedir, uyum iddiası değildir.**
 
 Ortak kurallar: payda 0 → `not_computable` (asla 0); kaynak veri yok → `insufficient_data`; kişi sayısı < `HRSWI_MIN_GROUP_SIZE` (5) → `suppressed`; her sonuç formül versiyonu, pay/payda, örneklem, veri kalite puanı ve veri kökeni (lineage) taşır.
 
@@ -28,23 +28,23 @@ Ortak kurallar: payda 0 → `not_computable` (asla 0); kaynak veri yok → `insu
 | KPI-017 | İşe Giriş Sayısı | New Hires | persons | neutral | active | `new_hire_count` | GRI 401-1 |
 | KPI-018 | İlk 90 Gün Ayrılış Oranı | 90-Day Early Turnover | % | lower_better | active | `early_turnover_90` | — |
 | KPI-019 | Çalışan Başına İşgücü Maliyeti | Labour Cost per Employee | TRY | neutral | active · cost | `labor_cost_per_employee` | ISO 30414 (workforce costs) |
-| KPI-020 | Gönüllü Devir Oranı | Voluntary Turnover Rate | % | neutral | draft | `—` | ISO 30414, GRI 401-1 |
-| KPI-021 | İlk 30 Gün Ayrılış Oranı | 30-Day Early Turnover | % | neutral | draft | `—` | — |
-| KPI-022 | İlk 180 Gün Ayrılış Oranı | 180-Day Early Turnover | % | neutral | draft | `—` | — |
-| KPI-023 | Ortalama Kıdem | Average Tenure | years | neutral | draft | `—` | ISO 30414 |
+| KPI-020 | Gönüllü Devir Oranı | Voluntary Turnover Rate | % | lower_better | active | `turnover_rate` | ISO 30414, GRI 401-1 |
+| KPI-021 | İlk 30 Gün Ayrılış Oranı | 30-Day Early Turnover | % | lower_better | active | `early_turnover_90` | — |
+| KPI-022 | İlk 180 Gün Ayrılış Oranı | 180-Day Early Turnover | % | lower_better | active | `early_turnover_90` | — |
+| KPI-023 | Ortalama Kıdem | Average Tenure | years | neutral | active | `average_tenure` | ISO 30414 |
 | KPI-024 | Kritik Rol Devir Oranı | Critical Role Turnover | % | neutral | draft | `—` | ISO 30414 |
 | KPI-025 | Halefiyet Kapsama Oranı | Succession Coverage | % | neutral | draft | `—` | ISO 30414 |
 | KPI-026 | Kritik Pozisyon Doluluk Oranı | Critical Position Fill Rate | % | neutral | draft | `—` | — |
 | KPI-027 | Yedekleme Kapasitesi | Backup Capacity Ratio | ratio | neutral | draft | `—` | — |
-| KPI-028 | Hastalık Devamsızlık Oranı | Sickness Absence Rate | % | neutral | draft | `—` | ISO 30414 |
+| KPI-028 | Hastalık Devamsızlık Oranı | Sickness Absence Rate | % | lower_better | active | `absenteeism_rate` | ISO 30414 |
 | KPI-029 | Geç Kalma Oranı | Late Arrival Rate | % | neutral | draft | `—` | — |
 | KPI-030 | Puantaj-Kart Uyumsuzluk Oranı | Timesheet-Badge Mismatch Rate | % | neutral | draft | `—` | — |
 | KPI-031 | Yıllık Fazla Mesai Limit Aşımı | Annual Overtime Cap Breaches | persons | neutral | draft | `—` | 4857 md. 41 |
-| KPI-032 | Gece Çalışması Oranı | Night Work Share | % | neutral | draft | `—` | 4857 md. 69 |
+| KPI-032 | Gece Çalışması Oranı | Night Work Share | % | lower_better | active | `night_work_share` | 4857 md. 69 |
 | KPI-033 | Adam-Saat Plan Sapması | Man-Hour Plan Variance | % | neutral | draft | `—` | — |
-| KPI-034 | Duruş Kaynaklı Kayıp Saat Oranı | Downtime Lost Hours Share | % | neutral | draft | `—` | — |
+| KPI-034 | Duruş Kaynaklı Kayıp Saat Oranı | Downtime Lost Hours Share | % | lower_better | active | `downtime_lost_hours_share` | — |
 | KPI-035 | Fazla Mesai Verimlilik Esnekliği | Overtime Output Elasticity | ratio | neutral | draft | `—` | — |
-| KPI-036 | Fazla Mesai Maliyet Oranı | Overtime Cost Share | % | neutral | draft · cost | `—` | — |
+| KPI-036 | Fazla Mesai Maliyet Oranı | Overtime Cost Share | % | lower_better | active · cost | `overtime_cost_share` | — |
 | KPI-037 | İşçilik Bütçe Sapması | Labour Budget Variance | % | neutral | draft · cost | `—` | — |
 | KPI-038 | Personel Değişim Maliyeti | Cost of Turnover | currency | neutral | draft · cost | `—` | ISO 30414 |
 | KPI-039 | İşe Alım Başına Maliyet | Cost per Hire | currency | neutral | draft · cost | `—` | ISO 30414 |
@@ -56,9 +56,9 @@ Ortak kurallar: payda 0 → `not_computable` (asla 0); kaynak veri yok → `insu
 | KPI-045 | İSG Eğitim Saati / Çalışan | HSE Training Hours per Employee | hours | neutral | draft | `—` | 6331 s. Kanun |
 | KPI-046 | Çalışan Bağlılık Skoru | Employee Engagement Score | score | neutral | draft | `—` | ISO 30414 |
 | KPI-047 | İş Yükü Algısı | Perceived Workload Score | score | neutral | draft | `—` | — |
-| KPI-048 | Kadın Çalışan Oranı | Female Employee Share | % | neutral | draft | `—` | GRI 405-1, ESRS S1-9 |
+| KPI-048 | Kadın Çalışan Oranı | Female Employee Share | % | neutral | active | `female_share` | GRI 405-1, ESRS S1-9 |
 | KPI-049 | Yönetimde Kadın Oranı | Women in Management | % | neutral | draft | `—` | GRI 405-1, ESRS S1-9 |
-| KPI-050 | Alt Yüklenici İş Gücü Payı | Subcontractor Workforce Share | % | neutral | draft | `—` | ESRS S1-7 (non-employees) |
+| KPI-050 | Alt Yüklenici İş Gücü Payı | Subcontractor Workforce Share | % | neutral | active | `subcontractor_share` | ESRS S1-7 (non-employees) |
 | KPI-051 | Alt Yüklenici Belge Uyum Oranı | Subcontractor Document Compliance | % | neutral | draft | `—` | — |
 | KPI-052 | Çalışan Başına Ulaşım Emisyonu (Tahmini) | Estimated Commuting Emissions per Employee | kgCO2e | neutral | draft | `—` | GHG Protocol Scope 3 Cat. 7, ISO 14064-1 |
 
@@ -314,4 +314,144 @@ Ortak kurallar: payda 0 → `not_computable` (asla 0); kaynak veri yok → `insu
 - **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
 - **Eşikler (hedef/uyarı/kritik):** None / None / None
 - **Parametreler (v1):** `{'reporting_currency': 'TRY'}`
+- **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE
+
+### KPI-020 — Gönüllü Devir Oranı / Voluntary Turnover Rate / Добровольная текучесть
+
+- **Formül:** Voluntary separations in period / average headcount in period x 100
+- **Pay:** Employment spells ending in period with termination category 'voluntary', excluding internal transfers (new in-scope employment within 7 days)
+- **Payda:** Mean distinct-person headcount at period start and each month end (same as KPI-001)
+- **Amaç:** Separations the organisation can influence through retention measures
+- **Dahil:** Termination category 'voluntary' only
+- **Hariç:** Internal transfers; separations with no recorded reason are NOT assumed voluntary (lowers quality score)
+- **Veri kaynakları:** employment_relationships · **Veri sahibi:** HR_DIRECTOR
+- **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
+- **Eşikler (hedef/uyarı/kritik):** None / None / None (yıllıklaştırılmış değere uygulanır)
+- **Parametreler (v1):** `{'annualize': True, 'include_categories': ['voluntary']}`
+- **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE
+
+### KPI-021 — İlk 30 Gün Ayrılış Oranı / 30-Day Early Turnover / Текучесть за 30 дней
+
+- **Formül:** Hires starting in period who left within 30 days / hires starting in period x 100
+- **Pay:** Early leavers (end date < start + 30 days, not a transfer out)
+- **Payda:** Hires in cohort (transfers in excluded)
+- **Amaç:** Track 30-day early turnover
+- **Dahil:** All records in scope and period
+- **Hariç:** None
+- **Veri kaynakları:** employment_relationships · **Veri sahibi:** HR_MANAGER
+- **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
+- **Eşikler (hedef/uyarı/kritik):** None / None / None
+- **Parametreler (v1):** `{'days': 30}`
+- **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE
+
+### KPI-022 — İlk 180 Gün Ayrılış Oranı / 180-Day Early Turnover / Текучесть за 180 дней
+
+- **Formül:** Hires starting in period who left within 180 days / hires starting in period x 100
+- **Pay:** Early leavers (end date < start + 180 days, not a transfer out)
+- **Payda:** Hires in cohort (transfers in excluded)
+- **Amaç:** Track 180-day early turnover
+- **Dahil:** All records in scope and period
+- **Hariç:** None
+- **Veri kaynakları:** employment_relationships · **Veri sahibi:** HR_MANAGER
+- **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
+- **Eşikler (hedef/uyarı/kritik):** None / None / None
+- **Parametreler (v1):** `{'days': 180}`
+- **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE
+
+### KPI-023 — Ortalama Kıdem / Average Tenure / Средний стаж
+
+- **Formül:** Mean tenure (years) of persons active in scope at period end
+- **Pay:** Sum over active persons of (period end - start of current spell) in days / 365.25
+- **Payda:** Distinct persons active in scope at period end
+- **Amaç:** Track average tenure
+- **Dahil:** Current spell only; concurrent spells -> the longest-running one
+- **Hariç:** Earlier (ended) spells of re-hired persons are not added
+- **Veri kaynakları:** employment_relationships · **Veri sahibi:** HR_MANAGER
+- **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
+- **Eşikler (hedef/uyarı/kritik):** None / None / None
+- **Parametreler (v1):** `{}`
+- **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE
+
+### KPI-028 — Hastalık Devamsızlık Oranı / Sickness Absence Rate / Уровень болезней
+
+- **Formül:** Sick leave hours / planned hours x 100 (aggregate only)
+- **Pay:** Sick leave hours prorated to period
+- **Payda:** Planned hours on approved timesheets
+- **Amaç:** Track sickness absence rate
+- **Dahil:** Leave type 'sick' only
+- **Hariç:** All other leave types
+- **Veri kaynakları:** leave_records, timesheets · **Veri sahibi:** HR_MANAGER
+- **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
+- **Eşikler (hedef/uyarı/kritik):** None / None / None
+- **Parametreler (v1):** `{'absence_types': ['sick']}`
+- **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE
+
+### KPI-032 — Gece Çalışması Oranı / Night Work Share / Доля ночной работы
+
+- **Formül:** Night hours / worked hours x 100
+- **Pay:** Night hours on approved timesheets
+- **Payda:** Worked hours (incl. overtime) on approved timesheets
+- **Amaç:** Track night work share
+- **Dahil:** All records in scope and period
+- **Hariç:** None
+- **Veri kaynakları:** timesheets · **Veri sahibi:** HR_MANAGER
+- **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
+- **Eşikler (hedef/uyarı/kritik):** None / None / None
+- **Parametreler (v1):** `{}`
+- **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE
+
+### KPI-034 — Duruş Kaynaklı Kayıp Saat Oranı / Downtime Lost Hours Share / Потери из-за простоев
+
+- **Formül:** Downtime lost hours / planned hours x 100 (lost hours by cause in breakdown)
+- **Pay:** downtime_events.lost_hours in period (project / legal entity scope)
+- **Payda:** Planned hours on approved timesheets in the same scope
+- **Amaç:** Track downtime lost hours share
+- **Dahil:** All records in scope and period
+- **Hariç:** Occupation filter not supported (events carry no occupation -> insufficient_data); events without a legal entity are excluded when an entity filter applies (counted in lineage)
+- **Veri kaynakları:** downtime_events, timesheets · **Veri sahibi:** OPERATIONS_DIRECTOR
+- **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
+- **Eşikler (hedef/uyarı/kritik):** None / None / None
+- **Parametreler (v1):** `{}`
+- **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE
+
+### KPI-036 — Fazla Mesai Maliyet Oranı / Overtime Cost Share / Доля затрат на сверхурочные
+
+- **Formül:** Overtime cost / total labour cost x 100 (reporting currency)
+- **Pay:** payroll_costs of cost_type 'overtime' converted with fx_rates
+- **Payda:** All payroll_costs converted with fx_rates (same as KPI-019 total)
+- **Amaç:** Track overtime cost share
+- **Dahil:** All cost types in denominator
+- **Hariç:** Any missing FX rate -> insufficient_data
+- **Veri kaynakları:** payroll_costs, fx_rates · **Veri sahibi:** FINANCE_ANALYST
+- **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
+- **Eşikler (hedef/uyarı/kritik):** None / None / None
+- **Parametreler (v1):** `{'reporting_currency': 'TRY'}`
+- **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE
+
+### KPI-048 — Kadın Çalışan Oranı / Female Employee Share / Доля женщин
+
+- **Formül:** Female headcount / headcount with recorded gender x 100 (at period end)
+- **Pay:** Distinct active persons recorded as female
+- **Payda:** Distinct active persons with a recorded gender
+- **Amaç:** Track female employee share
+- **Dahil:** Persons with recorded gender
+- **Hariç:** Unknown gender (counted in lineage); suppressed when the female OR male count is below the minimum group size
+- **Veri kaynakları:** employment_relationships, people · **Veri sahibi:** HR_DIRECTOR
+- **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
+- **Eşikler (hedef/uyarı/kritik):** None / None / None
+- **Parametreler (v1):** `{}`
+- **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE
+
+### KPI-050 — Alt Yüklenici İş Gücü Payı / Subcontractor Workforce Share / Доля персонала субподрядчиков
+
+- **Formül:** Persons employed by subcontractor entities / all persons in scope x 100 (at period end)
+- **Pay:** Distinct active persons with an employment at an entity of type 'subcontractor'
+- **Payda:** Distinct active persons in scope
+- **Amaç:** Track subcontractor workforce share
+- **Dahil:** All records in scope and period
+- **Hariç:** None
+- **Veri kaynakları:** employment_relationships, legal_entities · **Veri sahibi:** OPERATIONS_DIRECTOR
+- **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
+- **Eşikler (hedef/uyarı/kritik):** None / None / None
+- **Parametreler (v1):** `{}`
 - **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE
