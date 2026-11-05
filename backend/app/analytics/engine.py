@@ -5,7 +5,7 @@ from datetime import UTC, date, datetime
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
-from app.analytics.calculators import CALCULATORS, SERIES_CALCULATORS, Scope
+from app.analytics.calculators import BY_ENTITY_BATCH, CALCULATORS, SERIES_CALCULATORS, Scope
 from app.analytics.domain import OK, SUPPRESSED, CalcResult, month_end, month_starts
 from app.core.cache import cache
 from app.core.config import get_settings
@@ -175,13 +175,11 @@ def evaluate(
         res, meta = frozen
     else:
         meta = None
-        hit = cache.get(key)
-        if hit is not None:
-            res = CalcResult(**hit)
-        else:
+        def compute() -> dict:
             raw = precomputed() if precomputed is not None else calc(db, scope, ps, pe, f.parameters or {})
-            res = enforce_privacy(raw)
-            cache.set(key, res.to_dict())
+            return enforce_privacy(raw).to_dict()
+
+        res = CalcResult(**cache.compute_once(key, compute))
     out = _payload(kpi, f, scope, ps, pe, res, ctx.locale)
     if meta:
         out.update(meta)
@@ -275,9 +273,26 @@ def visible_entities(db: Session, ctx: AccessContext, perm: str = "kpi.read") ->
 
 
 def by_entity(db: Session, ctx: AccessContext, code: str, ps: date, pe: date, **kw) -> list[dict]:
+    kpi = get_definition(db, code)
+    ents = visible_entities(db, ctx, "cost.read" if kpi.sensitive else "kpi.read")
+    batch_fn = None
+    if kpi.status == "active" and not kw.get("version"):
+        batch_fn = BY_ENTITY_BATCH.get(get_formula(db, kpi).calculator_key)
+    batch: dict[int, CalcResult] = {}
+
+    def from_batch(eid: int) -> CalcResult:
+        # computed lazily: only when at least one entity misses the cache, then once for all entities
+        if not batch:
+            f = get_formula(db, kpi)
+            scope = Scope(ctx.tenant_id, frozenset(e.id for e in ents), kw.get("project_id"),
+                          kw.get("occupation_group"))
+            batch.update(batch_fn(db, scope, ps, pe, f.parameters or {}))
+        return batch[eid]
+
     rows = []
-    for le in visible_entities(db, ctx, "cost.read" if get_definition(db, code).sensitive else "kpi.read"):
-        r = evaluate(db, ctx, code, ps, pe, entity_ids={le.id}, **kw)
+    for le in ents:
+        pre = (lambda eid=le.id: from_batch(eid)) if batch_fn else None
+        r = evaluate(db, ctx, code, ps, pe, entity_ids={le.id}, precomputed=pre, **kw)
         r["legal_entity"] = {"id": le.id, "code": le.code, "name": le.name, "type": le.entity_type}
         rows.append(r)
     return rows
@@ -412,6 +427,10 @@ def mark_stale_from(db: Session, tenant_id: int, from_date: date) -> int:
     """Late-arriving / back-dated data: flag persisted results whose period ends on/after from_date."""
     bump_data_version(db, tenant_id)
     db.info.pop("kpi_memo", None)
+    db.info.pop("hours_memo", None)
+    db.info.pop("headcount_memo", None)
+    db.info.pop("ts_dirty", None)
+    db.info.setdefault("warm_tenants", set()).add(tenant_id)  # app.services.prewarm runs after the commit
     res = db.execute(update(KpiResult).where(KpiResult.tenant_id == tenant_id, KpiResult.period_end >= from_date,
                                              KpiResult.is_stale.is_(False)).values(is_stale=True))
     return res.rowcount or 0

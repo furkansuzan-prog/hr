@@ -3,6 +3,7 @@ from datetime import date, datetime, time
 
 from sqlalchemy import (
     JSON,
+    BigInteger,
     Boolean,
     CheckConstraint,
     Date,
@@ -79,6 +80,41 @@ class Timesheet(Base, TenantMixin, TimestampMixin, SourceMixin):
     night_hours: Mapped[float] = mapped_column(Numeric(5, 2), default=0)
     productive_hours: Mapped[float | None] = mapped_column(Numeric(5, 2))
     status: Mapped[str] = mapped_column(String(15), default="approved")
+
+
+class TimesheetMonthly(Base):
+    """Monthly pre-aggregate of APPROVED timesheet rows per (tenant, month, employment, project) - B-21.
+    Read only for windows made of whole calendar months; months listed in timesheet_summary_dirty are never read
+    from here (calculators fall back to the raw table), so a stale summary can never produce a wrong KPI."""
+
+    __tablename__ = "timesheet_monthly"
+    __table_args__ = (
+        Index("ix_tsm_tenant_month_cover", "tenant_id", "month",
+              postgresql_include=["employment_id", "project_id", "n", "planned", "worked", "overtime", "productive",
+                                  "n_productive", "planned_productive", "night"]),
+    )
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"))
+    month: Mapped[date] = mapped_column(Date)
+    employment_id: Mapped[int] = mapped_column(ForeignKey("employment_relationships.id", ondelete="CASCADE"))
+    project_id: Mapped[int | None] = mapped_column(Integer)
+    n: Mapped[int] = mapped_column(Integer)
+    planned: Mapped[float] = mapped_column(Numeric(14, 2))
+    worked: Mapped[float] = mapped_column(Numeric(14, 2))
+    overtime: Mapped[float] = mapped_column(Numeric(14, 2))
+    productive: Mapped[float] = mapped_column(Numeric(14, 2))
+    n_productive: Mapped[int] = mapped_column(Integer)
+    planned_productive: Mapped[float] = mapped_column(Numeric(14, 2))
+    night: Mapped[float] = mapped_column(Numeric(14, 2))
+
+
+class TimesheetSummaryDirty(Base):
+    """Earliest month per tenant whose summary no longer matches timesheets. Written by DB triggers on timesheets
+    (insert/update/delete, incl. COPY), cleared by app.analytics.summary.refresh()."""
+
+    __tablename__ = "timesheet_summary_dirty"
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), primary_key=True)
+    from_month: Mapped[date] = mapped_column(Date)
 
 
 class LeaveRecord(Base, TenantMixin, TimestampMixin, SourceMixin):

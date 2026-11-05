@@ -66,8 +66,8 @@ Değerlendirme: iş değeri / kullanıcı önemi / maliyet / bağımlılık / ve
 | B-18 | P0 | Dönem kapanışından önce KPI çalıştırmasını zorunlu/otomatik yapmak (denetim #6 notu) | 09 | Kapalı dönemin her zaman dondurulmuş değeri olsun |
 | B-19 | P1 | Alt yüklenici görünürlüğü: dönem bazlı mı bugünkü izin mi? (denetim #16, ⚖️) | 01/11 | Politika kararı |
 | B-20 | P1 | Veri kaynağı kapsam meta verisi: eksik besleme ≠ gerçek sıfır (denetim #19) | 08/09 | Yanlış "0" riskini kapatır |
-| B-21 | P0 | Soğuk önbellek performansı: aylık puantaj özet tablosu, maliyet sorgusunda `count(DISTINCT)` kaldırma, tek-hesaplayıcı kilidi, import sonrası önbellek ısıtma (A13 ölçümleri: soğuk dashboard 19.8 sn) | 09/05 | 15K'da soğuk p95 117 sn |
-| B-22 | P0 | Havuz zaman aşımında 500 yerine 503; worker thread sayısı ↔ DB havuzu uyumu / PgBouncer | 13 | Yük altında 500 hataları |
+| B-21 ✔ | P0 (Done: 15K'da 150 VU soğuk/import sonrası p95 72–183 ms; `test_timesheet_summary.py`) | Soğuk önbellek performansı: aylık puantaj özet tablosu, maliyet sorgusunda `count(DISTINCT)` kaldırma, tek-hesaplayıcı kilidi, import sonrası önbellek ısıtma (A13 ölçümleri: soğuk dashboard 19.8 sn) | 09/05 | 15K'da soğuk p95 117 sn |
+| B-22 ◐ | P0 (503 + thread limiter Done; PgBouncer/üretim ayarı açık) | Havuz zaman aşımında 500 yerine 503; worker thread sayısı ↔ DB havuzu uyumu / PgBouncer | 13 | Yük altında 500 hataları |
 | B-23 | P1 | Sentetik üreticide akışlı COPY (1.4 GB bellek tepesi) | 12 | Ölçek verisi üretimi |
 | B-24 | P1 | Saklama-imha işinin zamanlanması (Celery beat / cron) | 11/13 | KVKK |
 | B-17 | P2 | Dinamik rapor oluşturucu, kalan 10 rapor şablonu | 14 | FAZ 4 |

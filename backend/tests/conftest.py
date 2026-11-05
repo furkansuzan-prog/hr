@@ -4,6 +4,7 @@ os.environ["HRSWI_DATABASE_URL"] = os.getenv(
     "HRSWI_TEST_DATABASE_URL", "postgresql+psycopg://hrswi:hrswi@localhost:5432/hrswi_test"
 )
 os.environ.setdefault("HRSWI_ENV", "test")
+os.environ.setdefault("HRSWI_PREWARM", "false")  # tests call app.services.prewarm.warm_tenant directly
 
 from datetime import date
 

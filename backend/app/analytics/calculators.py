@@ -22,6 +22,7 @@ from app.analytics.domain import (
     ratio,
     suppress_small_counts,
 )
+from app.analytics.summary import dirty_from
 from app.core.config import get_settings
 
 TRANSFER_GAP_DAYS = 7  # a new employment within this many days in-scope = internal transfer, not a separation
@@ -82,17 +83,24 @@ def _emp_where(scope: Scope, alias: str = "e", date_from: str = ":d", date_to: s
 
 
 def headcount_series(db: Session, scope: Scope, dates: list[date]) -> dict[date, int]:
-    where, p = _emp_where(scope, date_from="d.d", date_to="d.d")
-    rows = db.execute(
-        text(
-            "SELECT d.d, count(DISTINCT e.person_id) FROM unnest(CAST(:dates AS date[])) AS d(d) "
-            "JOIN employment_relationships e ON e.start_date <= d.d AND (e.end_date IS NULL OR e.end_date >= d.d) "
-            f"WHERE true {where} GROUP BY d.d"
-        ),
-        {**p, "dates": dates},
-    ).all()
-    found = {r[0]: int(r[1]) for r in rows}
-    return {d: found.get(d, 0) for d in dates}
+    # request-scoped memo per (scope, date): turnover, training, plan deviation ... share the same headcounts
+    memo = db.info.setdefault("headcount_memo", {})
+    sk = scope.key()
+    todo = sorted({d for d in dates if (sk, d) not in memo})
+    if todo:
+        where, p = _emp_where(scope, date_from="d.d", date_to="d.d")
+        rows = db.execute(
+            text(
+                "SELECT d.d, count(DISTINCT e.person_id) FROM unnest(CAST(:dates AS date[])) AS d(d) "
+                "JOIN employment_relationships e ON e.start_date <= d.d AND (e.end_date IS NULL OR e.end_date >= d.d) "
+                f"WHERE true {where} GROUP BY d.d"
+            ),
+            {**p, "dates": todo},
+        ).all()
+        found = {r[0]: int(r[1]) for r in rows}
+        for d in todo:
+            memo[(sk, d)] = found.get(d, 0)
+    return {d: memo[(sk, d)] for d in dates}
 
 
 def average_headcount(db: Session, scope: Scope, ps: date, pe: date) -> tuple[float, dict]:
@@ -123,31 +131,30 @@ def _hours(db: Session, scope: Scope, ps: date, pe: date) -> dict:
 
 
 def _hours_windows(db: Session, scope: Scope, windows: list[tuple[date, date]]) -> dict[tuple[date, date], dict]:
-    """Timesheet aggregates for several periods in ONE query (B-13). Each window is evaluated exactly as a single
-    period would be: project/occupation assignment overlap is checked against that window's own dates."""
-    where, p = _emp_where(Scope(scope.tenant_id, scope.entity_ids, None, scope.occupation_group),
-                          date_from="w.ps", date_to="w.pe")
-    proj = ""
-    if scope.project_id:
-        proj = " AND t.project_id = :project"
-        p["project"] = scope.project_id
-    rows = db.execute(
-        text(
-            "SELECT w.ps, w.pe, count(*), coalesce(sum(t.planned_hours),0), coalesce(sum(t.worked_hours),0), "
-            "coalesce(sum(t.overtime_hours),0), coalesce(sum(t.productive_hours),0), "
-            "count(t.productive_hours), coalesce(sum(t.planned_hours) FILTER (WHERE t.productive_hours IS NOT NULL),0), "
-            "count(DISTINCT e.person_id), coalesce(sum(t.night_hours),0) "
-            "FROM unnest(CAST(:starts AS date[]), CAST(:ends AS date[])) AS w(ps, pe) "
-            "JOIN timesheets t ON t.work_date BETWEEN w.ps AND w.pe "
-            "JOIN employment_relationships e ON e.id = t.employment_id "
-            f"WHERE t.status = 'approved' {where}{proj} GROUP BY w.ps, w.pe"
-        ),
-        {**p, "starts": [w[0] for w in windows], "ends": [w[1] for w in windows]},
-    ).all()
-    found = {(r[0], r[1]): r[2:] for r in rows}
+    """Timesheet aggregates for several periods in ONE query per path (B-13). Each window is evaluated exactly as a
+    single period would be: project/occupation assignment overlap is checked against that window's own dates.
+
+    B-21: windows made of whole calendar months that do not touch a dirty month are read from timesheet_monthly
+    (one row per employment x project x month instead of one per day/week); everything else reads the raw table.
+    Both paths return identical numbers (tests/test_timesheet_summary.py)."""
+    # request-scoped memo per (scope, window): a dashboard asks for the same aggregates from several KPIs
+    # (absenteeism, utilisation, overtime, LTIFR, TRIR, night work ...). Dropped by engine.mark_stale_from.
+    memo = db.info.setdefault("hours_memo", {})
+    sk = scope.key()
+    todo = [w for w in windows if (sk, w) not in memo]
+    dirty = dirty_from(db, scope.tenant_id)
+    fast = [w for w in todo if w[0].day == 1 and w[1] == month_end(w[1]) and (dirty is None or w[1] < dirty)]
+    slow = [w for w in todo if w not in fast]
+    found: dict[tuple[date, date], tuple] = {}
+    if fast:
+        found.update(_hours_query(db, scope, fast, summary=True))
+    if slow:
+        found.update(_hours_query(db, scope, slow, summary=False))
+    for w in todo:
+        memo[(sk, w)] = found.get(w, (0, 0, 0, 0, 0, 0, 0, 0, 0))
     out = {}
     for w in windows:
-        r = found.get(w, (0, 0, 0, 0, 0, 0, 0, 0, 0))
+        r = memo[(sk, w)]
         out[w] = {
             "rows": int(r[0]), "planned": float(r[1]), "worked": float(r[2]), "overtime": float(r[3]),
             "productive": float(r[4]), "productive_rows": int(r[5]), "planned_with_productive": float(r[6]),
@@ -156,7 +163,33 @@ def _hours_windows(db: Session, scope: Scope, windows: list[tuple[date, date]]) 
     return out
 
 
-# ------------------------------------------------------------------ calculators
+def _hours_query(db: Session, scope: Scope, windows: list[tuple[date, date]], *, summary: bool) -> dict:
+    where, p = _emp_where(Scope(scope.tenant_id, scope.entity_ids, None, scope.occupation_group),
+                          date_from="w.ps", date_to="w.pe")
+    alias = "s" if summary else "t"
+    proj = ""
+    if scope.project_id:
+        proj = f" AND {alias}.project_id = :project"
+        p["project"] = scope.project_id
+    if summary:
+        agg = ("coalesce(sum(s.n),0), coalesce(sum(s.planned),0), coalesce(sum(s.worked),0), "
+               "coalesce(sum(s.overtime),0), coalesce(sum(s.productive),0), coalesce(sum(s.n_productive),0), "
+               "coalesce(sum(s.planned_productive),0), count(DISTINCT e.person_id), coalesce(sum(s.night),0)")
+        src = ("JOIN timesheet_monthly s ON s.tenant_id = :tenant AND s.month BETWEEN w.ps AND w.pe "
+               "JOIN employment_relationships e ON e.id = s.employment_id WHERE true")
+    else:
+        agg = ("count(*), coalesce(sum(t.planned_hours),0), coalesce(sum(t.worked_hours),0), "
+               "coalesce(sum(t.overtime_hours),0), coalesce(sum(t.productive_hours),0), count(t.productive_hours), "
+               "coalesce(sum(t.planned_hours) FILTER (WHERE t.productive_hours IS NOT NULL),0), "
+               "count(DISTINCT e.person_id), coalesce(sum(t.night_hours),0)")
+        src = ("JOIN timesheets t ON t.tenant_id = :tenant AND t.work_date BETWEEN w.ps AND w.pe "
+               "JOIN employment_relationships e ON e.id = t.employment_id WHERE t.status = 'approved'")
+    rows = db.execute(
+        text(f"SELECT w.ps, w.pe, {agg} FROM unnest(CAST(:starts AS date[]), CAST(:ends AS date[])) AS w(ps, pe) "
+             f"{src} {where}{proj} GROUP BY w.ps, w.pe"),
+        {**p, "starts": [w[0] for w in windows], "ends": [w[1] for w in windows]},
+    ).all()
+    return {(r[0], r[1]): r[2:] for r in rows}
 
 
 def turnover_rate(db: Session, scope: Scope, ps: date, pe: date, params: dict) -> CalcResult:
@@ -220,7 +253,8 @@ def absenteeism_rate(db: Session, scope: Scope, ps: date, pe: date, params: dict
         text(
             "SELECT l.leave_type, sum(l.hours * (LEAST(l.end_date, :pe) - GREATEST(l.start_date, :ps) + 1)::numeric "
             "/ (l.end_date - l.start_date + 1)) FROM leave_records l JOIN employment_relationships e "
-            f"ON e.id = l.employment_id WHERE l.start_date <= :pe AND l.end_date >= :ps {where} GROUP BY 1"
+            "ON e.id = l.employment_id WHERE l.tenant_id = :tenant AND l.start_date <= :pe AND l.end_date >= :ps "
+            f"{where} GROUP BY 1"
         ),
         {**p, "ps": ps, "pe": pe},
     ).all()
@@ -420,16 +454,29 @@ def labor_cost_total(db: Session, scope: Scope, ps: date, pe: date, params: dict
         proj = " AND pc.project_id = :project"
         p["project"] = scope.project_id
     rows = db.execute(
-        text("SELECT pc.currency, pc.period_month, pc.cost_type, sum(pc.amount), count(DISTINCT e.person_id) "
+        text("SELECT pc.currency, pc.period_month, pc.cost_type, sum(pc.amount) "
              "FROM payroll_costs pc JOIN employment_relationships e ON e.id = pc.employment_id "
-             f"WHERE pc.period_month BETWEEN :ps AND :pe {where}{proj} GROUP BY 1, 2, 3"),
+             f"WHERE pc.tenant_id = :tenant AND pc.period_month BETWEEN :ps AND :pe {where}{proj} GROUP BY 1, 2, 3"),
         {**p, "ps": date(ps.year, ps.month, 1), "pe": pe},
     ).all()
+    # privacy population = largest number of distinct employments costed in any single month (B-21: kept out of the
+    # main aggregation, whose count(DISTINCT person) forced a 1M-row sort)
+    def population(cost_type_filter: str) -> int:
+        return int(db.execute(
+            text("SELECT coalesce(max(c), 0) FROM (SELECT pc.period_month, count(*) c FROM (SELECT pc.period_month, "
+                 "pc.employment_id FROM payroll_costs pc JOIN employment_relationships e ON e.id = pc.employment_id "
+                 f"WHERE pc.tenant_id = :tenant AND pc.period_month BETWEEN :ps AND :pe {cost_type_filter} "
+                 f"{where}{proj} GROUP BY 1, 2) pc GROUP BY 1) m"),
+            {**p, "ps": date(ps.year, ps.month, 1), "pe": pe},
+        ).scalar())
+
+    # employees paid a wage in the busiest month (falls back to any cost row when no gross_wage rows exist)
+    persons = population("AND pc.cost_type = 'gross_wage'") if rows else 0
+    if rows and persons == 0:
+        persons = population("")
     total, missing, by_type, ccys = 0.0, [], {}, set()
-    persons = 0
-    for ccy, month, ctype, amount, n in rows:
+    for ccy, month, ctype, amount in rows:
         ccys.add(ccy)
-        persons = max(persons, int(n))
         rate = _fx(db, ccy, to, month_end(month))
         if rate is None:
             missing.append(f"{ccy}->{to}@{month.isoformat()}")
@@ -557,6 +604,21 @@ def active_headcount(db: Session, scope: Scope, ps: date, pe: date, params: dict
 def _headcount_result(n: int, pe: date) -> CalcResult:
     return CalcResult(OK, float(n), sample_size=n, quality_score=100.0,
                       lineage={"tables": ["employment_relationships"], "as_of": pe.isoformat()})
+
+
+def headcount_by_entity(db: Session, scope: Scope, ps: date, pe: date, params: dict) -> dict[int, CalcResult]:
+    """KPI-016 for every entity in scope.entity_ids with ONE grouped query (B-21: firm breakdowns of 200+ entities).
+    Identical to evaluating active_headcount with scope.entity_ids = {entity}."""
+    where, p = _emp_where(scope, date_from=":d", date_to=":d")
+    rows = dict(db.execute(
+        text("SELECT e.legal_entity_id, count(DISTINCT e.person_id) FROM employment_relationships e "
+             f"WHERE e.start_date <= :d AND (e.end_date IS NULL OR e.end_date >= :d) {where} GROUP BY 1"),
+        {**p, "d": pe},
+    ).all())
+    return {eid: _headcount_result(int(rows.get(eid, 0)), pe) for eid in (scope.entity_ids or ())}
+
+
+BY_ENTITY_BATCH = {"active_headcount": headcount_by_entity}
 
 
 def new_hire_count(db: Session, scope: Scope, ps: date, pe: date, params: dict) -> CalcResult:

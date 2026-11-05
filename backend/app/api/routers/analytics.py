@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.ai import assistant
 from app.ai.service import headcount_forecast, kpi_anomalies
-from app.analytics import engine
+from app.analytics import dashboards, engine
 from app.api.common import Filters
 from app.core.config import get_settings
 from app.core.db import get_db
@@ -189,6 +189,9 @@ def close_period(period_month: date, ctx: AccessContext = Depends(require("perio
         db.add(PeriodClose(tenant_id=ctx.tenant_id, period_month=pm, status="closed", closed_by=ctx.user_id))
     else:
         row.status, row.closed_by = "closed", ctx.user_id
+    # served values switch to frozen results: invalidate KPI + dashboard caches (and re-warm after commit)
+    engine.bump_data_version(db, ctx.tenant_id)
+    db.info.setdefault("warm_tenants", set()).add(ctx.tenant_id)
     try:
         db.commit()
     except IntegrityError:  # concurrent first close of the same month (unique tenant_id, period_month)
@@ -210,6 +213,8 @@ def reopen_period(period_month: date, body: PeriodIn, ctx: AccessContext = Depen
     if row is None:
         raise HTTPException(404, "Period is not closed")
     row.status, row.reopen_reason = "reopened", body.reason
+    engine.bump_data_version(db, ctx.tenant_id)  # values are live again
+    db.info.setdefault("warm_tenants", set()).add(ctx.tenant_id)
     db.commit()
     write_audit(tenant_id=ctx.tenant_id, user_id=ctx.user_id, action="period.reopen", entity_id=pm.isoformat(),
                 details={"reason": body.reason})
@@ -219,26 +224,10 @@ def reopen_period(period_month: date, body: PeriodIn, ctx: AccessContext = Depen
 # ------------------------------------------------------------------ dashboards
 
 
-EXEC_KPIS = ["KPI-016", "KPI-017", "KPI-001", "KPI-003", "KPI-007", "KPI-004", "KPI-005", "KPI-008", "KPI-014A",
-             "KPI-009", "KPI-006"]
-
-
 @router.get("/dashboard/executive", tags=["dashboard"])
 def dashboard_executive(f: Filters = Depends(), ctx: AccessContext = Depends(require("kpi.read")),
                         db: Session = Depends(get_db)):
-    kw = f.kw()
-    tiles = [_kpi_call(engine.evaluate, db, ctx, c, f.ps, f.pe, **kw) for c in EXEC_KPIS]
-    if ctx.has("cost.read"):
-        tiles.append(_kpi_call(engine.evaluate, db, ctx, "KPI-019", f.ps, f.pe, **kw))
-    trends = {c: [{"period": s["period_start"][:7], "value": s["value"], "status": s["status"]}
-                  for s in _kpi_call(engine.monthly_series, db, ctx, c, f.ps, f.pe, **kw)]
-              for c in ("KPI-016", "KPI-001", "KPI-007", "KPI-003")}
-    distribution = [{"entity": r["legal_entity"]["name"], "type": r["legal_entity"]["type"], "value": r["value"]}
-                    for r in _kpi_call(engine.by_entity, db, ctx, "KPI-016", f.ps, f.pe, project_id=f.project_id)
-                    if r["legal_entity"]["type"] != "client"
-                    and (not f.entity_ids or r["legal_entity"]["id"] in f.entity_ids)]
-    return {"period_start": f.ps, "period_end": f.pe, "filters": kw, "tiles": tiles, "trends": trends,
-            "headcount_by_entity": distribution, "demo_data": True}
+    return _kpi_call(dashboards.executive, db, ctx, f.ps, f.pe, **f.kw())
 
 
 # ------------------------------------------------------------------ forecasting & anomalies

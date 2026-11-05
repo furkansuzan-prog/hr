@@ -52,6 +52,8 @@ class Cache:
         self.enabled = os.getenv("HRSWI_KPI_CACHE", "true").lower() == "true"
         self._local = _Local()
         self._redis = None
+        self._locks: dict[str, threading.Lock] = {}
+        self._locks_guard = threading.Lock()
         url = os.getenv("HRSWI_REDIS_URL")
         if url:
             try:
@@ -88,6 +90,57 @@ class Cache:
                 self._local.set(key, raw, TTL)
         except Exception:
             KPI_CACHE_ERRORS.inc()
+
+    def compute_once(self, key: str, compute, *, lock_ttl: int = 30, wait_s: float = 15.0) -> dict:
+        """Dogpile protection (B-21): when a key is cold, only ONE caller (across workers with Redis, across threads
+        without) computes it; concurrent callers wait for the cached value. If the holder dies or is slow, waiters
+        fall back to computing themselves after `wait_s` - correctness never depends on the lock."""
+        hit = self.get(key)
+        if hit is not None:
+            return hit
+        if not self.enabled:
+            return compute()
+        lock_key = key + ":lock"
+        if self._redis:
+            try:
+                got = bool(self._redis.set(lock_key, "1", nx=True, ex=lock_ttl))
+            except Exception:
+                got = True  # Redis trouble: just compute
+        else:
+            with self._locks_guard:
+                lk = self._locks.setdefault(key, threading.Lock())
+            got = lk.acquire(timeout=wait_s)
+            if got:
+                try:
+                    hit = self.get(key)  # filled while we waited for the thread lock
+                    if hit is not None:
+                        return hit
+                    value = compute()
+                    self.set(key, value)
+                    return value
+                finally:
+                    lk.release()
+                    with self._locks_guard:
+                        self._locks.pop(key, None)
+        if got:
+            try:
+                value = compute()
+                self.set(key, value)
+                return value
+            finally:
+                try:
+                    self._redis.delete(lock_key)
+                except Exception:
+                    pass
+        deadline = time.monotonic() + wait_s
+        while time.monotonic() < deadline:
+            time.sleep(0.05)
+            hit = self.get(key)
+            if hit is not None:
+                return hit
+        value = compute()
+        self.set(key, value)
+        return value
 
     def clear_local(self) -> None:
         self._local.clear()

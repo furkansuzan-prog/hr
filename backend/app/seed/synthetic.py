@@ -17,6 +17,7 @@ import numpy as np
 from sqlalchemy import insert, select, text
 from sqlalchemy.orm import Session
 
+from app.analytics import summary
 from app.analytics.domain import month_end, month_starts
 from app.core.db import SessionLocal, engine
 from app.models import (
@@ -506,6 +507,7 @@ def generate(db: Session, *, employees: int = 1200, subcontractors: int = 12, mo
     ])
     db.execute(text("UPDATE tenants SET data_version = data_version + 1 WHERE id = :t"), {"t": tid})
     db.commit()
+    summary.refresh(db, tid)  # rebuild the timesheet monthly summary for the freshly loaded data (B-21)
     return {"tenant_id": tid, "persons": len(persons), "employments": len(emps), "timesheets": len(ts_rows),
             "leave": len(leave_rows), "costs": len(cost_rows), "safety_events": len(se_rows),
             "outputs": len(out_rows), "demo_password": DEMO_PASSWORD}
