@@ -46,6 +46,7 @@ from app.models import (
 )
 from app.security.auth import hash_password
 from app.seed.reference import seed_permissions_and_roles, seed_reference, sync_kpi_catalog
+from tests.factories import declare_all_feeds
 
 ADMIN = "sx.admin@safx.local"
 EXEC = "sx.exec@safx.local"  # READONLY_EXECUTIVE: kpi.read without hse.read (WP-2 Q7: still sees the fatality alert)
@@ -136,6 +137,7 @@ def sx(database):
             db.add(u)
             db.flush()
             db.add(UserRoleAssignment(user_id=u.id, role_id=roles[role], scope_type="tenant"))
+        declare_all_feeds(db, t.id)  # ADR-020: every feed complete
         db.commit()
         return {"tenant_id": t.id, "entities": {k: v.id for k, v in ents.items()}, "projects": projects}
 

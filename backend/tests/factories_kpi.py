@@ -159,5 +159,8 @@ def build_kpi_tenant(db: Session) -> dict:
         users[email] = u.id
         db.add(UserRoleAssignment(user_id=u.id, role_id=roles[role], scope_type="legal_entity" if ent else "tenant",
                                   legal_entity_id=ents[ent].id if ent else None))
+    from tests.factories import declare_all_feeds
+
+    declare_all_feeds(db, t.id, [e.id for e in ents.values()])
     db.commit()
     return {"tenant_id": t.id, "entities": {k: v.id for k, v in ents.items()}, "project": p1.id, "users": users}

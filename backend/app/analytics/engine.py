@@ -5,11 +5,13 @@ from datetime import UTC, date, datetime
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
+from app.analytics import coverage
 from app.analytics.calculators import ALERTS, BY_ENTITY_BATCH, CALCULATORS, SERIES_CALCULATORS, Scope
 from app.analytics.domain import OK, SHORT_WINDOW, SUPPRESSED, CalcResult, month_end, month_starts
 from app.core.cache import cache
 from app.core.config import get_settings
 from app.models import (
+    FEED_TYPES,
     LEAVE_RECLASSIFY_ACTION,
     LEAVE_TYPES,
     AuditLog,
@@ -24,7 +26,7 @@ from app.models import (
 from app.security.access import AccessContext
 
 # bump whenever calculator output semantics or privacy post-processing change: old cache entries become unreachable
-CACHE_SCHEMA = "v3"  # v3: CalcResult.status_reason (ADR-018)
+CACHE_SCHEMA = "v4"  # v3: CalcResult.status_reason (ADR-018); v4: data-feed coverage gate (ADR-020)
 
 
 class KpiError(Exception):
@@ -116,8 +118,9 @@ def _threshold_status(kpi: KpiDefinition, v: float | None) -> str | None:
 
 def _status_reason(f: KpiFormulaVersion, days: int, d: dict) -> str | None:
     """ADR-018: the single colour-suppression mechanism. A value that is shown but must not be coloured gets
-    threshold_status = null and one reason. Calculator reasons (e.g. low_exposure) take precedence over the window
-    rule; a result without a value has no reason (its status already explains it)."""
+    threshold_status = null and one reason. Reasons set on the result (the coverage gate's low_coverage - ADR-020 -
+    over a calculator reason such as low_exposure) take precedence over the window rule; a result without a value has
+    no reason (its status already explains it)."""
     if d["value"] is None:
         return None
     if d.get("status_reason"):
@@ -187,7 +190,9 @@ def evaluate(
     scope = resolve_scope(ctx, kpi, entity_ids, project_id, occupation_group)
     dv = _memo(db, ("dv", ctx.tenant_id), lambda: db.execute(
         select(Tenant.data_version).where(Tenant.id == ctx.tenant_id)).scalar() or 0)
-    key = f"kpi:{CACHE_SCHEMA}:{ctx.tenant_id}:{dv}:{f.id}:{scope.key()}:{ps.isoformat()}:{pe.isoformat()}"
+    # ADR-020: the coverage gate mode (PO-6 configuration) is part of the key - a mode change never serves old entries
+    key = (f"kpi:{CACHE_SCHEMA}:{ctx.tenant_id}:{dv}:{f.id}:{scope.key()}:{ps.isoformat()}:{pe.isoformat()}"
+           f":cov={coverage.mode_signature()}")
     frozen = _frozen_result(db, ctx.tenant_id, kpi, f, scope, ps, pe)
     if frozen is not None:
         res, meta = frozen
@@ -195,6 +200,8 @@ def evaluate(
         meta = None
         def compute() -> dict:
             raw = precomputed() if precomputed is not None else calc(db, scope, ps, pe, f.parameters or {})
+            # B-20 / ADR-020: a missing feed is never shown as a real zero (before privacy, which may still hide it)
+            raw = coverage.apply_gate(db, scope, ps, pe, f.parameters or {}, raw)
             return enforce_privacy(raw).to_dict()
 
         res = CalcResult(**cache.compute_once(key, compute))
@@ -446,6 +453,13 @@ def freeze_period(db: Session, ctx: AccessContext, period_month: date) -> int:
     return len(codes) * len(scopes)
 
 
+def required_feeds_of_active_kpis(db: Session) -> set[str]:
+    """Union of `required_feeds` over the current formula versions of active KPIs (period-close coverage list)."""
+    rows = db.execute(select(KpiFormulaVersion.parameters).join(KpiDefinition, KpiDefinition.id == KpiFormulaVersion.kpi_id)
+                      .where(KpiFormulaVersion.is_current.is_(True), KpiDefinition.status == "active")).scalars()
+    return {f for p in rows for f in ((p or {}).get("required_feeds") or ())}
+
+
 # Allowed formula parameters per calculator (audit finding #7): unknown keys / wrong types are rejected.
 _LEAVE_TYPES = LEAVE_TYPES  # ADR-019: includes work_injury
 _EVENT_TYPES = {"fatality", "lost_time_injury", "restricted_work", "medical_treatment", "first_aid", "near_miss"}
@@ -468,12 +482,15 @@ PARAM_RULES = {
     "threshold_min_days": lambda v: isinstance(v, int) and 1 <= v <= 400,
     # WP-2 R1 / ADR-018: colour only when hours worked in the window >= this value
     "threshold_min_exposure_hours": lambda v: isinstance(v, int) and not isinstance(v, bool) and 1 <= v <= 10_000_000,
+    # B-20 / ADR-020 coverage gate (engine-level, every calculator): source feeds that must be declared complete
+    "required_feeds": lambda v: isinstance(v, list) and bool(v) and set(v) <= set(FEED_TYPES) and len(set(v)) == len(v),
+    "min_feed_coverage": lambda v: isinstance(v, int | float) and not isinstance(v, bool) and 0 < v <= 1,
 }
 
 
 # Parameters each calculator actually reads (HR sprint-1 finding: a valid-looking key the calculator ignores, e.g.
 # exclude_categories on early_turnover_90, silently changed nothing). Engine-level keys apply to every calculator.
-_ENGINE_PARAMS = {"annualize", "threshold_min_days"}
+_ENGINE_PARAMS = {"annualize", "threshold_min_days", "required_feeds", "min_feed_coverage"}
 CALCULATOR_PARAMS: dict[str, set[str]] = {
     "turnover_rate": {"exclude_categories", "include_categories"},
     "absenteeism_rate": {"absence_types", "excluded_types"},
@@ -541,6 +558,7 @@ def mark_stale_from(db: Session, tenant_id: int, from_date: date) -> int:
     db.info.pop("hours_memo", None)
     db.info.pop("headcount_memo", None)
     db.info.pop("ts_dirty", None)
+    db.info.pop("coverage_memo", None)
     db.info.setdefault("warm_tenants", set()).add(tenant_id)  # app.services.prewarm runs after the commit
     res = db.execute(update(KpiResult).where(KpiResult.tenant_id == tenant_id, KpiResult.period_end >= from_date,
                                              KpiResult.is_stale.is_(False)).values(is_stale=True))

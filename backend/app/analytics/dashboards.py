@@ -5,7 +5,7 @@ from datetime import date, timedelta
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.analytics import engine
+from app.analytics import coverage, engine
 from app.analytics.domain import month_end
 from app.core.cache import cache
 from app.models import KpiFormulaVersion, Tenant
@@ -28,12 +28,14 @@ def default_period(today: date | None = None) -> tuple[date, date]:
 def _response_key(db: Session, ctx: AccessContext, ps: date, pe: date, kw: dict) -> str:
     """Whole-response cache key. Everything that can change the payload is in it: tenant data version (bumped by
     every analytics write and by period close/reopen), the catalog version (any formula version), the caller's
-    effective kpi.read / cost.read scopes (project limits included, ADR-017), filters, period and display language."""
+    effective kpi.read / cost.read scopes (project limits included, ADR-017), filters, period, display language and the
+    coverage gate mode (ADR-020)."""
     dv = db.execute(select(Tenant.data_version).where(Tenant.id == ctx.tenant_id)).scalar() or 0
     catv = db.execute(select(func.max(KpiFormulaVersion.id))).scalar() or 0
     filt = f"{sorted(kw['entity_ids']) if kw['entity_ids'] else ''}|{kw['project_id']}|{kw['occupation_group']}"
     raw = f"{ctx.scope_signature('kpi.read')}#{ctx.scope_signature('cost.read')}#{filt}"
     return (f"dash:{engine.CACHE_SCHEMA}:{ctx.tenant_id}:{dv}:{catv}:{ps}:{pe}:{ctx.locale}:"
+            f"cov={coverage.mode_signature()}:"
             + hashlib.sha256(raw.encode()).hexdigest()[:32])
 
 

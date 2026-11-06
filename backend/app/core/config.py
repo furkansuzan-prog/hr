@@ -21,6 +21,11 @@ class Settings(BaseModel):
     cors_origins: list[str] = os.getenv("HRSWI_CORS_ORIGINS", "http://localhost:3000").split(",")
     import_chunk_size: int = int(os.getenv("HRSWI_IMPORT_CHUNK_SIZE", "1000"))
     max_upload_mb: int = int(os.getenv("HRSWI_MAX_UPLOAD_MB", "50"))
+    # B-20 / ADR-020: data-feed coverage gate mode per feed type - "off" | "warn" | "enforce".
+    # Comma-separated "feed=mode" pairs; "default=" sets the rest. Product-owner decision PO-6 is open, so every feed
+    # ships in "warn" (value kept, colour suppressed with status_reason low_coverage). PO-6 = config change only, e.g.
+    # HRSWI_COVERAGE_MODES="default=warn,safety=enforce" (HR Director recommendation).
+    coverage_modes: str = os.getenv("HRSWI_COVERAGE_MODES", "default=warn")
 
     def validate_for_runtime(self) -> None:
         if self.env == "production":

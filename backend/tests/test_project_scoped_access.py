@@ -43,6 +43,7 @@ from app.models import (
 from app.security.access import AccessContext, build_access_context
 from app.security.auth import hash_password
 from app.seed.reference import seed_permissions_and_roles, seed_reference
+from tests.factories import declare_all_feeds
 
 D = date
 JAN = {"period_start": "2025-01-01", "period_end": "2025-01-31"}
@@ -136,6 +137,7 @@ def prj(database):
             db.add(UserRoleAssignment(user_id=u.id, role_id=roles[role],
                                       scope_type="legal_entity" if ent else "tenant",
                                       legal_entity_id=ents[ent].id if ent else None))
+        declare_all_feeds(db, t.id)  # ADR-020: every feed complete
         db.commit()
         return {"tenant_id": t.id, "e": {k: v.id for k, v in ents.items()}, "pa": pa, "pb": pb, "users": users,
                 "both_person": both.person_id, "pb_person": emps["S", "PB"][0].person_id,

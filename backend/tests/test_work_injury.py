@@ -49,6 +49,7 @@ from app.security.access import AccessContext
 from app.seed.reference import sync_kpi_catalog
 from app.services import imports
 from app.services.timekeeping import classify_leave
+from tests.factories import declare_all_feeds
 
 D = date
 MONTHS = [D(2025, 3, 1), D(2025, 4, 1), D(2025, 5, 1), D(2025, 6, 1), D(2026, 3, 1)]
@@ -111,6 +112,7 @@ def winj(database):
         leave(wb[0], "work_injury", D(2025, 2, 1), D(2025, 8, 31), 152 * 9)
         for e in wb[2:]:
             leave(e, "annual", D(2025, 7, 1), D(2025, 7, 1), 9)
+        declare_all_feeds(db, t.id)  # ADR-020: every feed complete
         db.commit()
         yield {"tenant_id": t.id, "A": a.id, "B": b.id}
 

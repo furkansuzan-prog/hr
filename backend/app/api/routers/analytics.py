@@ -1,4 +1,5 @@
-"""KPI engine, dashboards, forecasting, assistant, reports, imports."""
+"""KPI engine, dashboards, forecasting, assistant, reports, imports, data-feed coverage."""
+import json
 from datetime import date
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
@@ -10,10 +11,11 @@ from sqlalchemy.orm import Session
 from app.ai import assistant
 from app.ai.service import headcount_forecast, kpi_anomalies
 from app.analytics import dashboards, engine
-from app.api.common import Filters
+from app.api.common import Filters, default_period
 from app.core.config import get_settings
 from app.core.db import get_db
 from app.models import (
+    COVERAGE_DECLARE_ACTION,
     ImportBatch,
     KpiCalculationRun,
     KpiDefinition,
@@ -23,6 +25,7 @@ from app.models import (
 )
 from app.security.access import AccessContext
 from app.security.deps import require, write_audit
+from app.services import coverage as cov
 from app.services import imports as imp
 from app.services import reports as rep
 
@@ -205,9 +208,11 @@ def close_period(period_month: date, ctx: AccessContext = Depends(require("perio
     except IntegrityError:  # concurrent first close of the same month (unique tenant_id, period_month)
         db.rollback()
         raise HTTPException(409, "Period is already closed") from None
+    # WP-6 3.5 step 5 / HR Director S-3: feeds that are not 'complete' are listed, closing is not blocked
+    gaps = cov.period_gaps(db, ctx, pm, engine.required_feeds_of_active_kpis(db))
     write_audit(tenant_id=ctx.tenant_id, user_id=ctx.user_id, action="period.close", entity_id=pm.isoformat(),
-                details={"frozen_results": frozen})
-    return {"period_month": pm, "status": "closed", "frozen_results": frozen}
+                details={"frozen_results": frozen, "coverage_gaps": gaps})
+    return {"period_month": pm, "status": "closed", "frozen_results": frozen, "coverage_gaps": gaps}
 
 
 @router.post("/kpi/periods/{period_month}/reopen", tags=["kpi"])
@@ -313,6 +318,9 @@ def _imp(fn, *a, **kw):
 
 @router.post("/imports", tags=["imports"], status_code=201)
 async def import_upload(file: UploadFile = File(...), entity_type: str = Form("employment"),
+                        coverage: str | None = Form(None, description="Optional JSON coverage declaration (B-20): "
+                                                    "period_start, period_end, legal_entity_codes, project_codes, "
+                                                    "completeness, coverage_ratio, note"),
                         ctx: AccessContext = Depends(require("import.write")), db: Session = Depends(get_db)):
     limit = get_settings().max_upload_mb * 1024 * 1024
     buf = bytearray()
@@ -321,7 +329,14 @@ async def import_upload(file: UploadFile = File(...), entity_type: str = Form("e
         if len(buf) > limit:
             raise HTTPException(413, f"File larger than {get_settings().max_upload_mb} MB")
     content = bytes(buf)
-    res = _imp(imp.upload, db, ctx, entity_type=entity_type, filename=file.filename or "upload", content=content)
+    decl = None
+    if coverage:
+        try:
+            decl = json.loads(coverage)
+        except ValueError:
+            raise HTTPException(422, "coverage must be a JSON object") from None
+    res = _imp(imp.upload, db, ctx, entity_type=entity_type, filename=file.filename or "upload", content=content,
+               coverage=decl)
     write_audit(tenant_id=ctx.tenant_id, user_id=ctx.user_id, action="import.upload", entity_type="import_batch",
                 entity_id=str(res["batch_id"]), details={"rows": res["total_rows"]})
     return res
@@ -364,3 +379,56 @@ def import_errors(batch_id: int, ctx: AccessContext = Depends(require("import.wr
     csv_text = _imp(imp.error_report_csv, db, ctx, batch_id)
     return Response(csv_text, media_type="text/csv; charset=utf-8",
                     headers={"Content-Disposition": f'attachment; filename="import_{batch_id}_errors.csv"'})
+
+
+# ------------------------------------------------------------------ data-feed coverage (B-20, ADR-020)
+
+
+class CoverageIn(BaseModel):
+    feed_type: str
+    legal_entity_id: int
+    project_id: int | None = None
+    period_start: date
+    period_end: date
+    completeness: str
+    coverage_ratio: float | None = None
+    confirmed_empty: bool = False
+    attributes: dict | None = None
+    planned_on_leave_days: str | None = None
+    note: str | None = Field(None, max_length=1000)
+
+
+@router.get("/coverage", tags=["imports"])
+def coverage_matrix(period_start: date | None = None, period_end: date | None = None,
+                    feed_types: str | None = Query(None, description="Comma-separated feed types"),
+                    ctx: AccessContext = Depends(require("import.write")), db: Session = Depends(get_db)):
+    dps, dpe = default_period()
+    ps, pe = period_start or dps, period_end or dpe
+    if pe < ps:
+        raise HTTPException(422, "period_end must be >= period_start")
+    feeds = [f.strip() for f in feed_types.split(",") if f.strip()] if feed_types else None
+    try:
+        return cov.matrix(db, ctx, ps, pe, feeds)
+    except cov.CoverageError as e:
+        raise HTTPException(e.status_code, str(e)) from None
+
+
+@router.post("/coverage", tags=["imports"], status_code=201)
+def coverage_declare(body: CoverageIn, ctx: AccessContext = Depends(require("import.write")),
+                     db: Session = Depends(get_db)):
+    """Manual declaration (WP-6 3.5 step 4): whole-employer import.write; 'none' / confirmed_empty need a note;
+    the safety feed also needs hse.read. Audited (coverage.declare) and marks results stale."""
+    raw = body.model_dump()
+    raw["period_start"], raw["period_end"] = body.period_start.isoformat(), body.period_end.isoformat()
+    try:
+        decl = cov.normalize(db, ctx, body.feed_type, raw, manual=True)
+    except cov.CoverageDenied as e:
+        write_audit(tenant_id=ctx.tenant_id, user_id=ctx.user_id, action=COVERAGE_DECLARE_ACTION,
+                    entity_type="data_feed_coverage", entity_id=body.feed_type, outcome="denied",
+                    details={"legal_entity_id": body.legal_entity_id, "reason": str(e)})
+        raise HTTPException(403, str(e)) from None
+    except cov.CoverageError as e:
+        raise HTTPException(e.status_code, str(e)) from None
+    n = cov.declare(db, tenant_id=ctx.tenant_id, user_id=ctx.user_id, decl=decl, basis="manual_declaration")
+    db.commit()
+    return {"declared_rows": n, "declaration": decl}

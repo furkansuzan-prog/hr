@@ -67,4 +67,4 @@ def test_calculator_param_whitelist_matches_catalog_and_code():
     with pytest.raises(KpiError, match="not used by calculator"):
         validate_parameters({"exclude_categories": ["voluntary"]}, "early_turnover_90")
     validate_parameters({"days": 30, **{p: v for p, v in (("annualize", True),)}}, "early_turnover_90")
-    assert _ENGINE_PARAMS == {"annualize", "threshold_min_days"}
+    assert _ENGINE_PARAMS == {"annualize", "threshold_min_days", "required_feeds", "min_feed_coverage"}

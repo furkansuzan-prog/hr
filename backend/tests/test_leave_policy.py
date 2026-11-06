@@ -30,6 +30,7 @@ from app.analytics import engine
 from app.models import EmploymentRelationship, LeaveRecord, LegalEntity, Person, Tenant, Timesheet
 from app.security.access import AccessContext
 from app.services.timekeeping import normalize_leave_type
+from tests.factories import declare_all_feeds
 
 D = date
 
@@ -93,6 +94,7 @@ def leavex():
         e9 = person("P9", 1990, [(D(2015, 6, 1), None)])[0]
         db.add(LeaveRecord(tenant_id=t.id, employment_id=e9.id, leave_type="sick", start_date=D(2025, 2, 1),
                            end_date=D(2025, 8, 31), hours=1350))
+        declare_all_feeds(db, t.id)  # ADR-020: every feed complete
         db.commit()
         yield t.id
 

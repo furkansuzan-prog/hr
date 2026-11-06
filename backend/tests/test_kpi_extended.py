@@ -205,7 +205,8 @@ def test_main_contractor_close_freezes_every_scope_including_cost(client, auth, 
     assert r.status_code == 200, r.text
     try:
         assert r.json()["frozen_results"] == len(active) * (1 + ents)
-        assert set(r.json()) == {"period_month", "status", "frozen_results"}  # no values leak to the closer
+        # no values leak to the closer; coverage_gaps is feed metadata only (B-20, ADR-020)
+        assert set(r.json()) == {"period_month", "status", "frozen_results", "coverage_gaps"}
     finally:
         assert client.post("/api/v1/kpi/periods/2025-02-01/reopen", json={"reason": "test cleanup"},
                            headers=h).status_code == 200

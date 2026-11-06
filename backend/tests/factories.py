@@ -36,8 +36,26 @@ from app.models import (
 )
 from app.security.auth import hash_password, national_id_hash
 from app.seed.reference import seed_permissions_and_roles, seed_reference
+from app.services.coverage import declare_complete
 
 D = date
+
+
+def declare_all_feeds(db: Session, tenant_id: int, entity_ids=None, first: date = date(2023, 1, 1),
+                      last: date = date(2026, 12, 31)) -> None:
+    """B-20 / ADR-020: hand-built test tenants declare every feed complete, so the coverage gate leaves their
+    hand-calculated values and colours unchanged (the gate itself is tested in tests/test_feed_coverage.py).
+    entity_ids None = every legal entity of the tenant (flushed)."""
+    from sqlalchemy import select
+
+    from app.models import FEED_TYPES
+
+    db.flush()
+    if entity_ids is None:
+        entity_ids = db.execute(select(LegalEntity.id).where(LegalEntity.tenant_id == tenant_id)).scalars().all()
+
+    declare_complete(db, tenant_id, entity_ids, FEED_TYPES, first, last, note="test tenant: feeds complete",
+                     invalidate=False)
 
 
 def build_exact_tenant(db: Session) -> dict:
@@ -130,6 +148,7 @@ def build_exact_tenant(db: Session) -> dict:
         users[email] = u.id
         db.add(UserRoleAssignment(user_id=u.id, role_id=roles[role], scope_type="legal_entity" if ent else "tenant",
                                   legal_entity_id=ents[ent].id if ent else None))
+    declare_all_feeds(db, t.id, [e.id for e in ents.values()])
     db.commit()
     return {"tenant_id": t.id, "entities": {k: v.id for k, v in ents.items()}, "users": users,
             "p1": p1.id, "p2": p2.id, "stable_a_person": stable_a[0][0].id}

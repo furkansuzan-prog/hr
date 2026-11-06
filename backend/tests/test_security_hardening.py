@@ -67,7 +67,7 @@ def _login(client, email, password=PASSWORD):
 
 
 def _audits(db, action, since_id, user_id=None):
-    q = select(AuditLog).where(AuditLog.action == action, AuditLog.id > since_id)
+    q = select(AuditLog).where(AuditLog.action == action, AuditLog.id > since_id).order_by(AuditLog.id)
     if user_id is not None:
         q = q.where(AuditLog.user_id == user_id)
     return db.execute(q).scalars().all()

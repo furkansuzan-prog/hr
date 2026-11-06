@@ -352,6 +352,36 @@ for _item in KPI_CATALOG:
         _item["target_value"], _item["warning_threshold"], _item["critical_threshold"] = _t
 
 
+# ---------------------------------------------------------------- Data-feed coverage gate (B-20, ADR-020)
+# Source: docs/hr/data/WP-6_import_field_dictionaries.md section 3.6 + HR Director decision S-1 (general 0.8,
+# safety 0.9). Engine-level formula parameters `required_feeds` / `min_feed_coverage`: the engine checks
+# data_feed_coverage for these feeds over scope x window before a value may be coloured (warn) or shown (enforce).
+# The warn / enforce mode is NOT a formula parameter but deployment configuration HRSWI_COVERAGE_MODES (PO-6).
+# A change here is a new formula version (catalog sync); older versions keep their (gate-free) behaviour.
+REQUIRED_FEEDS: dict[str, tuple[str, ...]] = {
+    **{c: ("employment",) for c in ("KPI-001", "KPI-002", "KPI-016", "KPI-017", "KPI-018", "KPI-020", "KPI-021",
+                                    "KPI-022", "KPI-023")},
+    **{c: ("timesheet", "leave") for c in ("KPI-003", "KPI-028", "KPI-053", "KPI-054")},
+    **{c: ("employment", "leave") for c in ("KPI-055", "KPI-056")},
+    **{c: ("timesheet",) for c in ("KPI-004", "KPI-007", "KPI-032")},
+    **{c: ("timesheet", "safety") for c in ("KPI-014A", "KPI-014B")},
+    "KPI-008": ("employment", "training"),
+    "KPI-019": ("cost", "employment"),  # denominator = average headcount
+    "KPI-036": ("cost",),  # overtime cost / total cost - both from the cost feed
+    "KPI-010": ("cost", "output"),  # denominator = accepted output quantity
+}
+MIN_FEED_COVERAGE = {"default": 0.8, "safety": 0.9}
+for _item in KPI_CATALOG:
+    _feeds = REQUIRED_FEEDS.get(_item["code"])
+    if _feeds and _item["status"] == "active":
+        _item["formula"]["parameters"] = {
+            **_item["formula"]["parameters"], "required_feeds": list(_feeds),
+            "min_feed_coverage": MIN_FEED_COVERAGE["safety" if "safety" in _feeds else "default"]}
+        _item["missing_data_behavior"] += (
+            f"; coverage gate on feeds {', '.join(_feeds)} (ADR-020): coverage below min_feed_coverage -> value without "
+            "colour, status_reason low_coverage (warn) or insufficient_data (enforce, per HRSWI_COVERAGE_MODES)")
+
+
 FRAMEWORKS = [
     {"code": "ISO30414", "name": "ISO 30414 Human capital reporting", "version": "2025", "obligation": "voluntary",
      "note": "Guideline for internal/external human capital reporting. Version to be verified."},

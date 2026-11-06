@@ -2,7 +2,7 @@
 
 # Veri Sözlüğü / Data Dictionary
 
-58 tablo. Şema kaynağı: `backend/app/models/*` → Alembic migration'ları.
+59 tablo. Şema kaynağı: `backend/app/models/*` → Alembic migration'ları.
 
 
 ## `ai_analysis_runs`
@@ -129,6 +129,32 @@ Kısıtlar: ck_contractor_not_self
 | name | VARCHAR(200) |  |  |
 | annual_budget | NUMERIC(18, 2) | ✓ |  |
 | currency | VARCHAR(3) |  |  |
+| tenant_id | INTEGER |  | → tenants.id idx |
+| created_at | DATETIME |  |  |
+| updated_at | DATETIME |  |  |
+
+## `data_feed_coverage`
+
+One row = declaration for one feed type x employer x (optional) project x month. A missing row means 'undeclared' and counts like 'none' in the KPI coverage gate - a missing feed is never a real zero (audit #19). A later declaration replaces the earlier one; the history is in audit_logs (action coverage.declare).
+
+| Kolon | Tip | Null | Anahtar / FK |
+|---|---|---|---|
+| id | BIGINT |  | PK |
+| feed_type | VARCHAR(20) |  |  |
+| legal_entity_id | INTEGER |  | → legal_entities.id |
+| project_id | INTEGER | ✓ | → projects.id |
+| period_month | DATE |  |  |
+| completeness | VARCHAR(10) |  |  |
+| coverage_ratio | NUMERIC(4, 3) | ✓ |  |
+| confirmed_empty | BOOLEAN |  |  |
+| planned_on_leave_days | VARCHAR(10) | ✓ |  |
+| attributes | JSON | ✓ |  |
+| basis | VARCHAR(20) |  |  |
+| import_batch_id | INTEGER | ✓ | → import_batches.id |
+| data_source_id | INTEGER | ✓ | → data_sources.id |
+| declared_by | BIGINT | ✓ |  |
+| declared_at | DATETIME |  |  |
+| note | TEXT | ✓ |  |
 | tenant_id | INTEGER |  | → tenants.id idx |
 | created_at | DATETIME |  |  |
 | updated_at | DATETIME |  |  |
@@ -329,6 +355,7 @@ Manual review queue for ambiguous identity matches during import (ADR-012).
 | attempt_count | INTEGER |  |  |
 | error_message | TEXT | ✓ |  |
 | created_by | BIGINT | ✓ |  |
+| coverage | JSON | ✓ |  |
 | tenant_id | INTEGER |  | → tenants.id idx |
 | created_at | DATETIME |  |  |
 | updated_at | DATETIME |  |  |
@@ -949,7 +976,7 @@ Approved daily time record per employment and project. worked_hours = paid worki
 | record_version | INTEGER |  |  |
 | updated_by | BIGINT | ✓ |  |
 
-Kısıtlar: uq_timesheet_day, ck_ts_nonneg
+Kısıtlar: ck_ts_nonneg, uq_timesheet_day
 
 ## `training_records`
 

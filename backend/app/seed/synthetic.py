@@ -21,6 +21,7 @@ from app.analytics import summary
 from app.analytics.domain import month_end, month_starts
 from app.core.db import SessionLocal, engine
 from app.models import (
+    FEED_TYPES,
     Assignment,
     Competency,
     ContractorRelationship,
@@ -47,6 +48,7 @@ from app.models import (
 )
 from app.security.auth import hash_password, national_id_hash
 from app.seed.reference import seed_permissions_and_roles, seed_reference
+from app.services.coverage import declare_complete
 
 FIRST = ["Ali", "Ayşe", "Mehmet", "Fatma", "Can", "Elif", "Murat", "Zeynep", "Ivan", "Olga", "John", "Maria", "Emre",
          "Deniz", "Selin", "Burak", "Nikolai", "Anna", "Kerem", "Ece"]
@@ -505,6 +507,10 @@ def generate(db: Session, *, employees: int = 1200, subcontractors: int = 12, mo
                           start_date=_add_months(as_of, -6), due_date=_add_months(as_of, -2), result_value=96.0,
                           effectiveness="effective", status="completed"),
     ])
+    # B-20 / ADR-020: every feed this generator produces is complete for each employer and month it covers, so the
+    # demo dashboard keeps its colours; a real tenant gets coverage from imports / manual declarations instead.
+    declare_complete(db, tid, [mc.id] + [s[0].id for s in subs], FEED_TYPES, start_hist, as_of,
+                     note="synthetic demo data: generated feeds are complete", invalidate=False)
     db.execute(text("UPDATE tenants SET data_version = data_version + 1 WHERE id = :t"), {"t": tid})
     db.commit()
     summary.refresh(db, tid)  # rebuild the timesheet monthly summary for the freshly loaded data (B-21)

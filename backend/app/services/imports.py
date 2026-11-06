@@ -40,6 +40,7 @@ from app.models import (
 from app.models.people import TERMINATION_CATEGORIES
 from app.security.access import AccessContext
 from app.security.auth import national_id_hash
+from app.services import coverage as cov
 from app.services.timekeeping import classify_leave
 
 log = logging.getLogger("hrswi.imports")
@@ -104,6 +105,9 @@ _HEALTH_COLUMN_HINTS = ("tanı", "tani", "teşhis", "teshis", "diagnos", "icd", 
                         "диагноз", "medical detail")
 
 MAX_ROWS = 200_000
+OUTSIDE_COVERAGE = "row_outside_declared_coverage"
+OUTSIDE_COVERAGE_MSG = ("row's legal entity / dates are outside the coverage declared with the upload -> loaded, but it "
+                        "creates no coverage")
 CONTRACT_TYPES = {"permanent", "fixed_term", "project", "seasonal"}
 
 
@@ -175,10 +179,24 @@ def _parse_date(s: str) -> date | None:
     raise ValueError(f"invalid date '{s}'")
 
 
-def upload(db: Session, ctx: AccessContext, *, entity_type: str, filename: str, content: bytes) -> dict:
+def _coverage_decl(db: Session, ctx: AccessContext, entity_type: str, coverage: dict | None) -> dict | None:
+    """B-20 / ADR-020: optional coverage declaration of the upload, validated before anything is stored."""
+    if coverage is None:
+        return None
+    try:
+        return cov.normalize(db, ctx, cov.IMPORT_FEEDS[entity_type], coverage, manual=False)
+    except cov.CoverageError as e:
+        err = ImportError_(f"Invalid coverage declaration: {e}")
+        err.status_code = e.status_code
+        raise err from None
+
+
+def upload(db: Session, ctx: AccessContext, *, entity_type: str, filename: str, content: bytes,
+           coverage: dict | None = None) -> dict:
     if entity_type not in FIELD_SETS:
         raise ImportError_(f"Unsupported entity_type '{entity_type}' (use one of: {', '.join(FIELD_SETS)})")
     fields = FIELD_SETS[entity_type]
+    decl = _coverage_decl(db, ctx, entity_type, coverage)
     if len(content) > get_settings().max_upload_mb * 1024 * 1024:
         raise ImportError_("File too large")
     sha = hashlib.sha256(content).hexdigest()
@@ -191,6 +209,11 @@ def upload(db: Session, ctx: AccessContext, *, entity_type: str, filename: str, 
     headers, rows = parse_file(filename, content)
     if len(rows) > MAX_ROWS:
         raise ImportError_(f"Too many rows ({len(rows)} > {MAX_ROWS}); split the file")
+    if not rows and not (cov.IMPORT_FEEDS[entity_type] in cov.EVENT_FEEDS and decl
+                         and decl["completeness"] == "complete"):
+        # WP-6 3.5 step 2: an empty month is confirmable only for event feeds and only as an explicit 'complete'
+        raise ImportError_("The file has no data rows. A header-only file is accepted only for event feeds (leave) "
+                           "with a coverage declaration 'complete' (confirms that there are no records)")
     dropped: list[str] = []
     if entity_type == "leave":
         dropped = [h for h in headers if any(k in _norm(h) for k in _HEALTH_COLUMN_HINTS)]
@@ -202,7 +225,7 @@ def upload(db: Session, ctx: AccessContext, *, entity_type: str, filename: str, 
     _pseudonymise(rows, suggested.get("national_id"))
     batch = ImportBatch(tenant_id=ctx.tenant_id, entity_type=entity_type, file_name=filename[:255], file_sha256=sha,
                         status="uploaded", total_rows=len(rows), created_by=ctx.user_id,
-                        mapping=suggested)
+                        mapping=suggested, coverage=decl)
     db.add(batch)
     db.flush()
     chunk = get_settings().import_chunk_size
@@ -212,7 +235,7 @@ def upload(db: Session, ctx: AccessContext, *, entity_type: str, filename: str, 
     db.commit()
     return {"batch_id": batch.id, "headers": headers, "total_rows": len(rows), "suggested_mapping": batch.mapping,
             "required_fields": [f for f, m in fields.items() if m["required"]], "preview": rows[:20],
-            "entity_type": entity_type, "dropped_columns": dropped}
+            "entity_type": entity_type, "dropped_columns": dropped, "coverage": decl}
 
 
 _HMAC_PREFIX = "hmac:"
@@ -280,6 +303,10 @@ def validate(db: Session, ctx: AccessContext, batch_id: int, mapping: dict[str, 
             m["start_date"], m["end_date"] = (sd.isoformat() if sd else None), (ed.isoformat() if ed else None)
         except ValueError as e:
             err("date_format", str(e))
+        if le is not None and batch.coverage and not any(e["rule"] == "date_format" for e in errs) and cov.row_outside(
+                batch.coverage, le.id, date.fromisoformat(m["start_date"]) if m.get("start_date") else None,
+                date.fromisoformat(m["end_date"]) if m.get("end_date") else None):
+            err(OUTSIDE_COVERAGE, OUTSIDE_COVERAGE_MSG, "warning")
         cat = (m.get("termination_category") or "").strip().lower()
         if cat and cat not in TERMINATION_CATEGORIES:
             err("termination_category", f"unknown termination category '{cat}'")
@@ -375,6 +402,7 @@ def commit(db: Session, ctx: AccessContext, batch_id: int, *, fail_after_rows: i
         batch.status = "committed"
         batch.error_message = None
         _invalidate_from_committed(db, ctx, batch.id)
+        cov.record_import(db, ctx, batch)  # B-20: coverage rows in the same transaction as the status change
         db.commit()
     except Exception as exc:
         db.rollback()
@@ -452,6 +480,8 @@ def _validate_leave(db: Session, ctx: AccessContext, batch: ImportBatch, mapping
                 sd = ed = None
         except ValueError as e:
             err("date_format", str(e))
+        if le is not None and cov.row_outside(batch.coverage, le.id, sd, ed):
+            err(OUTSIDE_COVERAGE, OUTSIDE_COVERAGE_MSG, "warning")
         label = m.get("leave_type", "")
         lt, label_warnings = classify_leave(label, m.get("sgk_report_code") or None)
         for w in label_warnings:  # KVKK md.6 (WP-1 3.6): the health-related label is not echoed into the queue
@@ -762,7 +792,7 @@ def summary(db: Session, ctx: AccessContext, batch_id: int) -> dict:
             "total_rows": b.total_rows,
             "valid_rows": b.valid_rows, "error_rows": b.error_rows, "committed_rows": b.committed_rows,
             "identity_reviews": reviews, "attempt_count": b.attempt_count, "error_message": b.error_message,
-            "mapping": b.mapping}
+            "mapping": b.mapping, "coverage": b.coverage}
 
 
 def error_report_csv(db: Session, ctx: AccessContext, batch_id: int) -> str:

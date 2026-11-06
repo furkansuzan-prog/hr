@@ -79,8 +79,8 @@ Ortak kurallar: payda 0 → `not_computable` (asla 0); kaynak veri yok → `insu
 - **Veri kaynakları:** employment_relationships · **Veri sahibi:** HR_DIRECTOR
 - **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
 - **Eşikler (hedef/uyarı/kritik):** 35 / 45 / 60 (yıllıklaştırılmış değere uygulanır)
-- **Parametreler (v1):** `{'annualize': True}`
-- **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE
+- **Parametreler (v1):** `{'annualize': True, 'required_feeds': ['employment'], 'min_feed_coverage': 0.8}`
+- **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE; coverage gate on feeds employment (ADR-020): coverage below min_feed_coverage -> value without colour, status_reason low_coverage (warn) or insufficient_data (enforce, per HRSWI_COVERAGE_MODES)
 
 ### KPI-002 — Personel Devamlılık Oranı / Retention Rate / Коэффициент удержания
 
@@ -93,8 +93,8 @@ Ortak kurallar: payda 0 → `not_computable` (asla 0); kaynak veri yok → `insu
 - **Veri kaynakları:** employment_relationships · **Veri sahibi:** HR_DIRECTOR
 - **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
 - **Eşikler (hedef/uyarı/kritik):** 75 / 65 / 55
-- **Parametreler (v1):** `{'threshold_min_days': 360}`
-- **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE
+- **Parametreler (v1):** `{'threshold_min_days': 360, 'required_feeds': ['employment'], 'min_feed_coverage': 0.8}`
+- **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE; coverage gate on feeds employment (ADR-020): coverage below min_feed_coverage -> value without colour, status_reason low_coverage (warn) or insufficient_data (enforce, per HRSWI_COVERAGE_MODES)
 
 ### KPI-003 — Devamsızlık Oranı / Absenteeism Rate / Уровень абсентеизма
 
@@ -107,8 +107,8 @@ Ortak kurallar: payda 0 → `not_computable` (asla 0); kaynak veri yok → `insu
 - **Veri kaynakları:** leave_records, timesheets · **Veri sahibi:** HR_MANAGER
 - **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
 - **Eşikler (hedef/uyarı/kritik):** 7 / 9 / 11
-- **Parametreler (v1):** `{'absence_types': ['unexcused', 'sick', 'work_injury', 'annual', 'unpaid', 'other'], 'excluded_types': ['public_holiday', 'parental']}`
-- **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE
+- **Parametreler (v1):** `{'absence_types': ['unexcused', 'sick', 'work_injury', 'annual', 'unpaid', 'other'], 'excluded_types': ['public_holiday', 'parental'], 'required_feeds': ['timesheet', 'leave'], 'min_feed_coverage': 0.8}`
+- **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE; coverage gate on feeds timesheet, leave (ADR-020): coverage below min_feed_coverage -> value without colour, status_reason low_coverage (warn) or insufficient_data (enforce, per HRSWI_COVERAGE_MODES)
 
 ### KPI-004 — İş Gücü Kapasite Kullanımı / Workforce Capacity Utilisation / Использование мощности персонала
 
@@ -121,8 +121,8 @@ Ortak kurallar: payda 0 → `not_computable` (asla 0); kaynak veri yok → `insu
 - **Veri kaynakları:** timesheets · **Veri sahibi:** OPERATIONS_DIRECTOR
 - **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
 - **Eşikler (hedef/uyarı/kritik):** 85 / 80 / 70
-- **Parametreler (v1):** `{'min_coverage': 0.5}`
-- **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE
+- **Parametreler (v1):** `{'min_coverage': 0.5, 'required_feeds': ['timesheet'], 'min_feed_coverage': 0.8}`
+- **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE; coverage gate on feeds timesheet (ADR-020): coverage below min_feed_coverage -> value without colour, status_reason low_coverage (warn) or insufficient_data (enforce, per HRSWI_COVERAGE_MODES)
 
 ### KPI-005 — İş Gücü Verimlilik Endeksi / Labour Productivity Index / Индекс производительности труда
 
@@ -163,8 +163,8 @@ Ortak kurallar: payda 0 → `not_computable` (asla 0); kaynak veri yok → `insu
 - **Veri kaynakları:** timesheets · **Veri sahibi:** HR_MANAGER
 - **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
 - **Eşikler (hedef/uyarı/kritik):** 5 / 8 / 10
-- **Parametreler (v1):** `{}`
-- **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE
+- **Parametreler (v1):** `{'required_feeds': ['timesheet'], 'min_feed_coverage': 0.8}`
+- **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE; coverage gate on feeds timesheet (ADR-020): coverage below min_feed_coverage -> value without colour, status_reason low_coverage (warn) or insufficient_data (enforce, per HRSWI_COVERAGE_MODES)
 
 ### KPI-008 — Çalışan Başına Eğitim Saati / Training Hours per Employee / Часы обучения на сотрудника
 
@@ -177,8 +177,8 @@ Ortak kurallar: payda 0 → `not_computable` (asla 0); kaynak veri yok → `insu
 - **Veri kaynakları:** training_records · **Veri sahibi:** HR_MANAGER
 - **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
 - **Eşikler (hedef/uyarı/kritik):** 30 / 20 / 16 (yıllıklaştırılmış değere uygulanır)
-- **Parametreler (v1):** `{'annualize': True}`
-- **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE
+- **Parametreler (v1):** `{'annualize': True, 'required_feeds': ['employment', 'training'], 'min_feed_coverage': 0.8}`
+- **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE; coverage gate on feeds employment, training (ADR-020): coverage below min_feed_coverage -> value without colour, status_reason low_coverage (warn) or insufficient_data (enforce, per HRSWI_COVERAGE_MODES)
 
 ### KPI-009 — Yetkinlik Kapsama Oranı / Competency Coverage Rate / Покрытие компетенций
 
@@ -205,8 +205,8 @@ Ortak kurallar: payda 0 → `not_computable` (asla 0); kaynak veri yok → `insu
 - **Veri kaynakları:** payroll_costs, fx_rates, work_outputs · **Veri sahibi:** FINANCE_ANALYST
 - **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
 - **Eşikler (hedef/uyarı/kritik):** None / None / None
-- **Parametreler (v1):** `{'reporting_currency': 'TRY'}`
-- **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE
+- **Parametreler (v1):** `{'reporting_currency': 'TRY', 'required_feeds': ['cost', 'output'], 'min_feed_coverage': 0.8}`
+- **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE; coverage gate on feeds cost, output (ADR-020): coverage below min_feed_coverage -> value without colour, status_reason low_coverage (warn) or insufficient_data (enforce, per HRSWI_COVERAGE_MODES)
 
 ### KPI-011 — İşe Alım Süresi / Time to Hire / Время найма
 
@@ -247,8 +247,8 @@ Ortak kurallar: payda 0 → `not_computable` (asla 0); kaynak veri yok → `insu
 - **Veri kaynakları:** safety_events, timesheets · **Veri sahibi:** HSE_SPECIALIST
 - **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
 - **Eşikler (hedef/uyarı/kritik):** 1.5 / 3.0 / 5.0
-- **Parametreler (v1):** `{'multiplier': 1000000, 'threshold_min_exposure_hours': 1000000}`
-- **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE
+- **Parametreler (v1):** `{'multiplier': 1000000, 'threshold_min_exposure_hours': 1000000, 'required_feeds': ['timesheet', 'safety'], 'min_feed_coverage': 0.9}`
+- **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE; coverage gate on feeds timesheet, safety (ADR-020): coverage below min_feed_coverage -> value without colour, status_reason low_coverage (warn) or insufficient_data (enforce, per HRSWI_COVERAGE_MODES)
 
 ### KPI-014B — Toplam Kaydedilebilir Olay Oranı (TRIR) / Total Recordable Incident Rate / TRIR
 
@@ -261,8 +261,8 @@ Ortak kurallar: payda 0 → `not_computable` (asla 0); kaynak veri yok → `insu
 - **Veri kaynakları:** safety_events, timesheets · **Veri sahibi:** HSE_SPECIALIST
 - **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
 - **Eşikler (hedef/uyarı/kritik):** 1.0 / 2.0 / 3.5
-- **Parametreler (v1):** `{'multiplier': 200000, 'threshold_min_exposure_hours': 500000}`
-- **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE
+- **Parametreler (v1):** `{'multiplier': 200000, 'threshold_min_exposure_hours': 500000, 'required_feeds': ['timesheet', 'safety'], 'min_feed_coverage': 0.9}`
+- **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE; coverage gate on feeds timesheet, safety (ADR-020): coverage below min_feed_coverage -> value without colour, status_reason low_coverage (warn) or insufficient_data (enforce, per HRSWI_COVERAGE_MODES)
 
 ### KPI-016 — Aktif Personel Sayısı / Active Headcount / Численность персонала
 
@@ -275,8 +275,8 @@ Ortak kurallar: payda 0 → `not_computable` (asla 0); kaynak veri yok → `insu
 - **Veri kaynakları:** employment_relationships · **Veri sahibi:** HR_MANAGER
 - **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
 - **Eşikler (hedef/uyarı/kritik):** None / None / None
-- **Parametreler (v1):** `{}`
-- **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE
+- **Parametreler (v1):** `{'required_feeds': ['employment'], 'min_feed_coverage': 0.8}`
+- **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE; coverage gate on feeds employment (ADR-020): coverage below min_feed_coverage -> value without colour, status_reason low_coverage (warn) or insufficient_data (enforce, per HRSWI_COVERAGE_MODES)
 
 ### KPI-017 — İşe Giriş Sayısı / New Hires / Новые сотрудники
 
@@ -289,8 +289,8 @@ Ortak kurallar: payda 0 → `not_computable` (asla 0); kaynak veri yok → `insu
 - **Veri kaynakları:** employment_relationships · **Veri sahibi:** HR_MANAGER
 - **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
 - **Eşikler (hedef/uyarı/kritik):** None / None / None
-- **Parametreler (v1):** `{}`
-- **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE
+- **Parametreler (v1):** `{'required_feeds': ['employment'], 'min_feed_coverage': 0.8}`
+- **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE; coverage gate on feeds employment (ADR-020): coverage below min_feed_coverage -> value without colour, status_reason low_coverage (warn) or insufficient_data (enforce, per HRSWI_COVERAGE_MODES)
 
 ### KPI-018 — İlk 90 Gün Ayrılış Oranı / 90-Day Early Turnover / Текучесть в первые 90 дней
 
@@ -303,8 +303,8 @@ Ortak kurallar: payda 0 → `not_computable` (asla 0); kaynak veri yok → `insu
 - **Veri kaynakları:** employment_relationships · **Veri sahibi:** HR_MANAGER
 - **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
 - **Eşikler (hedef/uyarı/kritik):** 10 / 15 / 20
-- **Parametreler (v1):** `{'days': 90}`
-- **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE
+- **Parametreler (v1):** `{'days': 90, 'required_feeds': ['employment'], 'min_feed_coverage': 0.8}`
+- **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE; coverage gate on feeds employment (ADR-020): coverage below min_feed_coverage -> value without colour, status_reason low_coverage (warn) or insufficient_data (enforce, per HRSWI_COVERAGE_MODES)
 
 ### KPI-019 — Çalışan Başına İşgücü Maliyeti / Labour Cost per Employee / Затраты на сотрудника
 
@@ -317,8 +317,8 @@ Ortak kurallar: payda 0 → `not_computable` (asla 0); kaynak veri yok → `insu
 - **Veri kaynakları:** payroll_costs, fx_rates · **Veri sahibi:** FINANCE_ANALYST
 - **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
 - **Eşikler (hedef/uyarı/kritik):** None / None / None
-- **Parametreler (v1):** `{'reporting_currency': 'TRY'}`
-- **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE
+- **Parametreler (v1):** `{'reporting_currency': 'TRY', 'required_feeds': ['cost', 'employment'], 'min_feed_coverage': 0.8}`
+- **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE; coverage gate on feeds cost, employment (ADR-020): coverage below min_feed_coverage -> value without colour, status_reason low_coverage (warn) or insufficient_data (enforce, per HRSWI_COVERAGE_MODES)
 
 ### KPI-020 — Gönüllü Devir Oranı / Voluntary Turnover Rate / Добровольная текучесть
 
@@ -331,8 +331,8 @@ Ortak kurallar: payda 0 → `not_computable` (asla 0); kaynak veri yok → `insu
 - **Veri kaynakları:** employment_relationships · **Veri sahibi:** HR_DIRECTOR
 - **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
 - **Eşikler (hedef/uyarı/kritik):** 12 / 18 / 25 (yıllıklaştırılmış değere uygulanır)
-- **Parametreler (v1):** `{'annualize': True, 'include_categories': ['voluntary']}`
-- **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE
+- **Parametreler (v1):** `{'annualize': True, 'include_categories': ['voluntary'], 'required_feeds': ['employment'], 'min_feed_coverage': 0.8}`
+- **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE; coverage gate on feeds employment (ADR-020): coverage below min_feed_coverage -> value without colour, status_reason low_coverage (warn) or insufficient_data (enforce, per HRSWI_COVERAGE_MODES)
 
 ### KPI-021 — İlk 30 Gün Ayrılış Oranı / 30-Day Early Turnover / Текучесть за 30 дней
 
@@ -345,8 +345,8 @@ Ortak kurallar: payda 0 → `not_computable` (asla 0); kaynak veri yok → `insu
 - **Veri kaynakları:** employment_relationships · **Veri sahibi:** HR_MANAGER
 - **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
 - **Eşikler (hedef/uyarı/kritik):** 3 / 5 / 8
-- **Parametreler (v1):** `{'days': 30}`
-- **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE
+- **Parametreler (v1):** `{'days': 30, 'required_feeds': ['employment'], 'min_feed_coverage': 0.8}`
+- **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE; coverage gate on feeds employment (ADR-020): coverage below min_feed_coverage -> value without colour, status_reason low_coverage (warn) or insufficient_data (enforce, per HRSWI_COVERAGE_MODES)
 
 ### KPI-022 — İlk 180 Gün Ayrılış Oranı / 180-Day Early Turnover / Текучесть за 180 дней
 
@@ -359,8 +359,8 @@ Ortak kurallar: payda 0 → `not_computable` (asla 0); kaynak veri yok → `insu
 - **Veri kaynakları:** employment_relationships · **Veri sahibi:** HR_MANAGER
 - **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
 - **Eşikler (hedef/uyarı/kritik):** 18 / 25 / 32
-- **Parametreler (v1):** `{'days': 180}`
-- **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE
+- **Parametreler (v1):** `{'days': 180, 'required_feeds': ['employment'], 'min_feed_coverage': 0.8}`
+- **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE; coverage gate on feeds employment (ADR-020): coverage below min_feed_coverage -> value without colour, status_reason low_coverage (warn) or insufficient_data (enforce, per HRSWI_COVERAGE_MODES)
 
 ### KPI-023 — Ortalama Kıdem / Average Tenure / Средний стаж
 
@@ -373,8 +373,8 @@ Ortak kurallar: payda 0 → `not_computable` (asla 0); kaynak veri yok → `insu
 - **Veri kaynakları:** employment_relationships · **Veri sahibi:** HR_MANAGER
 - **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
 - **Eşikler (hedef/uyarı/kritik):** None / None / None
-- **Parametreler (v1):** `{}`
-- **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE
+- **Parametreler (v1):** `{'required_feeds': ['employment'], 'min_feed_coverage': 0.8}`
+- **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE; coverage gate on feeds employment (ADR-020): coverage below min_feed_coverage -> value without colour, status_reason low_coverage (warn) or insufficient_data (enforce, per HRSWI_COVERAGE_MODES)
 
 ### KPI-028 — Hastalık Devamsızlık Oranı (iş kazası hariç) / Sickness Absence Rate (excl. work injury) / Уровень болезней (без производственных травм)
 
@@ -387,8 +387,8 @@ Ortak kurallar: payda 0 → `not_computable` (asla 0); kaynak veri yok → `insu
 - **Veri kaynakları:** leave_records, timesheets · **Veri sahibi:** HR_MANAGER
 - **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
 - **Eşikler (hedef/uyarı/kritik):** 2.0 / 3.0 / 4.5
-- **Parametreler (v1):** `{'absence_types': ['sick'], 'excluded_types': ['unexcused', 'work_injury', 'annual', 'unpaid', 'other', 'public_holiday', 'parental']}`
-- **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE
+- **Parametreler (v1):** `{'absence_types': ['sick'], 'excluded_types': ['unexcused', 'work_injury', 'annual', 'unpaid', 'other', 'public_holiday', 'parental'], 'required_feeds': ['timesheet', 'leave'], 'min_feed_coverage': 0.8}`
+- **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE; coverage gate on feeds timesheet, leave (ADR-020): coverage below min_feed_coverage -> value without colour, status_reason low_coverage (warn) or insufficient_data (enforce, per HRSWI_COVERAGE_MODES)
 
 ### KPI-032 — Gece Çalışması Oranı / Night Work Share / Доля ночной работы
 
@@ -401,8 +401,8 @@ Ortak kurallar: payda 0 → `not_computable` (asla 0); kaynak veri yok → `insu
 - **Veri kaynakları:** timesheets · **Veri sahibi:** HR_MANAGER
 - **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
 - **Eşikler (hedef/uyarı/kritik):** 5 / 10 / 15
-- **Parametreler (v1):** `{}`
-- **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE
+- **Parametreler (v1):** `{'required_feeds': ['timesheet'], 'min_feed_coverage': 0.8}`
+- **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE; coverage gate on feeds timesheet (ADR-020): coverage below min_feed_coverage -> value without colour, status_reason low_coverage (warn) or insufficient_data (enforce, per HRSWI_COVERAGE_MODES)
 
 ### KPI-034 — Duruş Kaynaklı Kayıp Saat Oranı / Downtime Lost Hours Share / Потери из-за простоев
 
@@ -429,8 +429,8 @@ Ortak kurallar: payda 0 → `not_computable` (asla 0); kaynak veri yok → `insu
 - **Veri kaynakları:** payroll_costs, fx_rates · **Veri sahibi:** FINANCE_ANALYST
 - **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
 - **Eşikler (hedef/uyarı/kritik):** 7 / 11 / 14
-- **Parametreler (v1):** `{'reporting_currency': 'TRY'}`
-- **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE
+- **Parametreler (v1):** `{'reporting_currency': 'TRY', 'required_feeds': ['cost'], 'min_feed_coverage': 0.8}`
+- **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE; coverage gate on feeds cost (ADR-020): coverage below min_feed_coverage -> value without colour, status_reason low_coverage (warn) or insufficient_data (enforce, per HRSWI_COVERAGE_MODES)
 
 ### KPI-048 — Kadın Çalışan Oranı / Female Employee Share / Доля женщин
 
@@ -471,8 +471,8 @@ Ortak kurallar: payda 0 → `not_computable` (asla 0); kaynak veri yok → `insu
 - **Veri kaynakları:** leave_records, timesheets · **Veri sahibi:** HR_MANAGER
 - **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
 - **Eşikler (hedef/uyarı/kritik):** 2.5 / 3.5 / 5.0
-- **Parametreler (v1):** `{'absence_types': ['unexcused', 'sick'], 'excluded_types': ['work_injury', 'annual', 'unpaid', 'other', 'public_holiday', 'parental']}`
-- **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE
+- **Parametreler (v1):** `{'absence_types': ['unexcused', 'sick'], 'excluded_types': ['work_injury', 'annual', 'unpaid', 'other', 'public_holiday', 'parental'], 'required_feeds': ['timesheet', 'leave'], 'min_feed_coverage': 0.8}`
+- **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE; coverage gate on feeds timesheet, leave (ADR-020): coverage below min_feed_coverage -> value without colour, status_reason low_coverage (warn) or insufficient_data (enforce, per HRSWI_COVERAGE_MODES)
 
 ### KPI-054 — Korunan İzin Payı / Protected Leave Share / Доля охраняемых отпусков
 
@@ -485,8 +485,8 @@ Ortak kurallar: payda 0 → `not_computable` (asla 0); kaynak veri yok → `insu
 - **Veri kaynakları:** leave_records, timesheets · **Veri sahibi:** HR_DIRECTOR
 - **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
 - **Eşikler (hedef/uyarı/kritik):** None / None / None
-- **Parametreler (v1):** `{'absence_types': ['parental']}`
-- **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE
+- **Parametreler (v1):** `{'absence_types': ['parental'], 'required_feeds': ['timesheet', 'leave'], 'min_feed_coverage': 0.8}`
+- **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE; coverage gate on feeds timesheet, leave (ADR-020): coverage below min_feed_coverage -> value without colour, status_reason low_coverage (warn) or insufficient_data (enforce, per HRSWI_COVERAGE_MODES)
 
 ### KPI-055 — Yıllık İzin Kullanım Oranı / Annual Leave Utilisation / Использование ежегодного отпуска
 
@@ -499,8 +499,8 @@ Ortak kurallar: payda 0 → `not_computable` (asla 0); kaynak veri yok → `insu
 - **Veri kaynakları:** leave_records, employment_relationships, people · **Veri sahibi:** HR_DIRECTOR
 - **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
 - **Eşikler (hedef/uyarı/kritik):** 90 / 75 / 60
-- **Parametreler (v1):** `{'hours_per_day': 9, 'threshold_min_days': 360}`
-- **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE
+- **Parametreler (v1):** `{'hours_per_day': 9, 'threshold_min_days': 360, 'required_feeds': ['employment', 'leave'], 'min_feed_coverage': 0.8}`
+- **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE; coverage gate on feeds employment, leave (ADR-020): coverage below min_feed_coverage -> value without colour, status_reason low_coverage (warn) or insufficient_data (enforce, per HRSWI_COVERAGE_MODES)
 
 ### KPI-056 — Yıllık İzin Kullanmayan Çalışan Oranı / Employees Without Annual Leave / Доля сотрудников без отпуска
 
@@ -513,5 +513,5 @@ Ortak kurallar: payda 0 → `not_computable` (asla 0); kaynak veri yok → `insu
 - **Veri kaynakları:** leave_records, employment_relationships · **Veri sahibi:** HR_DIRECTOR
 - **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
 - **Eşikler (hedef/uyarı/kritik):** 5 / 10 / 15
-- **Parametreler (v1):** `{'hours_per_day': 9, 'threshold_min_days': 360, 'long_absence_types': ['sick', 'parental', 'unpaid', 'work_injury']}`
-- **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE
+- **Parametreler (v1):** `{'hours_per_day': 9, 'threshold_min_days': 360, 'long_absence_types': ['sick', 'parental', 'unpaid', 'work_injury'], 'required_feeds': ['employment', 'leave'], 'min_feed_coverage': 0.8}`
+- **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE; coverage gate on feeds employment, leave (ADR-020): coverage below min_feed_coverage -> value without colour, status_reason low_coverage (warn) or insufficient_data (enforce, per HRSWI_COVERAGE_MODES)

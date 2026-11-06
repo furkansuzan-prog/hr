@@ -6,7 +6,8 @@ import { useI18n } from "@/lib/i18n";
 import { fmt } from "@/lib/utils";
 import { useCan } from "@/components/providers";
 import { IdentityReviewQueue } from "@/components/identity-reviews";
-import { Badge, Button, Card, CardBody, CardHeader, CardTitle, ErrorBox, PageHeader, Select } from "@/components/ui/primitives";
+import { FeedCoverage, monthEnd, monthStart, type Completeness } from "@/components/feed-coverage";
+import { Badge, Button, Card, CardBody, CardHeader, CardTitle, ErrorBox, Input, PageHeader, Select } from "@/components/ui/primitives";
 
 type Upload = { batch_id: number; headers: string[]; total_rows: number; suggested_mapping: Record<string, string | null>; required_fields: string[]; preview: Record<string, string>[]; entity_type?: string; dropped_columns?: string[] };
 type Summary = { batch_id: number; status: string; file_name: string; total_rows: number; valid_rows: number; error_rows: number; committed_rows: number; identity_reviews: number; attempt_count: number; error_message: string | null };
@@ -22,6 +23,8 @@ export default function Imports() {
   const [sum, setSum] = useState<Summary | null>(null);
   const [err, setErr] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
+  // B-20 / ADR-020: optional coverage declaration sent with the upload
+  const [decl, setDecl] = useState({ on: false, from: monthStart(1).slice(0, 7), to: monthStart(1).slice(0, 7), completeness: "complete" as Completeness, entities: "" });
   const batches = useQuery({ queryKey: ["imports"], queryFn: () => api<Summary[]>("/api/v1/imports") });
   const sources = useQuery({ queryKey: ["sources"], queryFn: () => api<Source[]>("/api/v1/integrations/sources") });
 
@@ -30,6 +33,12 @@ export default function Imports() {
     const fd = new FormData();
     fd.append("file", f);
     fd.append("entity_type", kind);
+    if (decl.on) {
+      fd.append("coverage", JSON.stringify({
+        period_start: `${decl.from}-01`, period_end: monthEnd(decl.to), completeness: decl.completeness,
+        legal_entity_codes: decl.entities.split(",").map((c) => c.trim()).filter(Boolean),
+      }));
+    }
     const r = await api<Upload>("/api/v1/imports", { method: "POST", body: fd });
     setUp(r); setMapping(r.suggested_mapping); setSum(null);
   });
@@ -57,6 +66,25 @@ export default function Imports() {
                 hiç girmez. Tanı/teşhis gibi sağlık sütunları dosyadan okunmaz ve saklanmaz.
               </p>
             )}
+            <fieldset className="space-y-2 rounded-md border border-border p-2 text-xs">
+              <label className="flex items-center gap-2">
+                <input type="checkbox" checked={decl.on} disabled={busy} onChange={(e) => setDecl({ ...decl, on: e.target.checked })} />
+                {t("cov.upload")}
+              </label>
+              {decl.on && (
+                <div className="flex flex-wrap items-end gap-2">
+                  <label className="flex flex-col gap-1">{t("cov.from")}<Input type="month" className="h-9 w-36" value={decl.from} onChange={(e) => setDecl({ ...decl, from: e.target.value })} /></label>
+                  <label className="flex flex-col gap-1">{t("cov.to")}<Input type="month" className="h-9 w-36" value={decl.to} onChange={(e) => setDecl({ ...decl, to: e.target.value })} /></label>
+                  <label className="flex flex-col gap-1">{t("cov.completeness")}
+                    <Select value={decl.completeness} onChange={(e) => setDecl({ ...decl, completeness: e.target.value as Completeness })}>
+                      {(["complete", "partial", "none"] as const).map((c) => <option key={c} value={c}>{t(`cov.state.${c}`)}</option>)}
+                    </Select>
+                  </label>
+                  <label className="flex min-w-48 flex-1 flex-col gap-1">{t("cov.entities")}<Input className="h-9" value={decl.entities} placeholder="MC, SUB01" onChange={(e) => setDecl({ ...decl, entities: e.target.value })} /></label>
+                </div>
+              )}
+              <p className="text-muted">{t("cov.uploadHelp")}</p>
+            </fieldset>
             <input type="file" accept=".csv,.xlsx" aria-label="File" disabled={busy} onChange={(e) => e.target.files?.[0] && onFile(e.target.files[0])} className="text-sm" />
             {up && (
               <>
@@ -112,6 +140,7 @@ export default function Imports() {
               <td className="px-3 py-1.5">{fmt(b.total_rows, 0)}</td><td className="px-3 py-1.5">{fmt(b.valid_rows, 0)}</td><td className="px-3 py-1.5">{fmt(b.error_rows, 0)}</td><td className="px-3 py-1.5">{fmt(b.committed_rows, 0)}</td><td className="px-3 py-1.5">{b.attempt_count}</td></tr>
           ))}</tbody></table>
       </Card>
+      <FeedCoverage />
       {canReview && <IdentityReviewQueue />}
     </>
   );

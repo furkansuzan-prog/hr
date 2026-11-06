@@ -235,6 +235,44 @@ class ImportBatch(Base, TenantMixin, TimestampMixin):
     attempt_count: Mapped[int] = mapped_column(Integer, default=0)
     error_message: Mapped[str | None] = mapped_column(Text)
     created_by: Mapped[int | None] = mapped_column(BigInteger)
+    # B-20 / ADR-020: optional coverage declaration sent with the upload (normalised by app.services.coverage)
+    coverage: Mapped[dict | None] = mapped_column(JSON)
+
+
+# B-20 / ADR-020 (docs/hr/data/WP-6 section 3.4): which feed is complete for which employer x month.
+FEED_TYPES = ("employment", "leave", "timesheet", "training", "cost", "safety", "output", "downtime")
+COVERAGE_COMPLETENESS = ("complete", "partial", "none")  # no row = 'undeclared' (behaves like 'none')
+COVERAGE_BASIS = ("import_batch", "connector_run", "manual_declaration")
+COVERAGE_DECLARE_ACTION = "coverage.declare"
+
+
+class DataFeedCoverage(Base, TenantMixin, TimestampMixin):
+    """One row = declaration for one feed type x employer x (optional) project x month. A missing row means
+    'undeclared' and counts like 'none' in the KPI coverage gate - a missing feed is never a real zero (audit #19).
+    A later declaration replaces the earlier one; the history is in audit_logs (action coverage.declare)."""
+
+    __tablename__ = "data_feed_coverage"
+    __table_args__ = (
+        Index("uq_data_feed_coverage", "tenant_id", "feed_type", "legal_entity_id", "project_id", "period_month",
+              unique=True, postgresql_nulls_not_distinct=True),
+        Index("ix_data_feed_coverage_month", "tenant_id", "period_month"),
+    )
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    feed_type: Mapped[str] = mapped_column(String(20))  # FEED_TYPES (validated in code, like LEAVE_TYPES)
+    legal_entity_id: Mapped[int] = mapped_column(ForeignKey("legal_entities.id"))
+    project_id: Mapped[int | None] = mapped_column(ForeignKey("projects.id"))  # NULL = all projects of the employer
+    period_month: Mapped[date] = mapped_column(Date)  # first day of the month
+    completeness: Mapped[str] = mapped_column(String(10))  # COVERAGE_COMPLETENESS
+    coverage_ratio: Mapped[float | None] = mapped_column(Numeric(4, 3))  # only for 'partial' (NULL -> weight 0.5)
+    confirmed_empty: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+    planned_on_leave_days: Mapped[str | None] = mapped_column(String(10))  # timesheet only: included|excluded|unknown
+    attributes: Mapped[dict | None] = mapped_column(JSON)  # safety: includes_subcontractor_cases, includes_near_miss
+    basis: Mapped[str] = mapped_column(String(20))  # COVERAGE_BASIS
+    import_batch_id: Mapped[int | None] = mapped_column(ForeignKey("import_batches.id", ondelete="SET NULL"))
+    data_source_id: Mapped[int | None] = mapped_column(ForeignKey("data_sources.id", ondelete="SET NULL"))
+    declared_by: Mapped[int | None] = mapped_column(BigInteger)
+    declared_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    note: Mapped[str | None] = mapped_column(Text)
 
 
 class ImportStagingRow(Base):
