@@ -30,6 +30,7 @@ from sqlalchemy import select, update
 
 from app.analytics import calculators as calc
 from app.analytics.calculators import Scope
+from app.analytics.catalog import KPI_CATALOG
 from app.analytics.engine import KpiError, mark_stale_from, validate_parameters
 from app.models import (
     DataQualityIssue,
@@ -291,6 +292,14 @@ def test_repeated_planned_ends_and_coding_shift_alarm_po4_switch(db, tov):
     db.info.clear()
     g = calc.early_turnover_90(db, scope, D(2026, 3, 1), D(2026, 3, 30), {**params, "same_employer_basis": "group"})
     assert g.lineage["repeated_short_fixed_term_persons"] == 2 and g.value == 10.0
+    assert "(company group)" in g.note
+    # D-11 (PO-4): seniority is recognised between group companies -> the catalog uses 'group' (2 repeated persons)
+    cat = next(k for k in KPI_CATALOG if k["code"] == "KPI-018")["formula"]["parameters"]
+    assert cat["same_employer_basis"] == "group"
+    db.info.clear()
+    d = calc.early_turnover_90(db, scope, D(2026, 3, 1), D(2026, 3, 30), cat)
+    assert d.lineage["same_employer_basis"] == "group" and d.lineage["repeated_short_fixed_term_persons"] == 2
+    assert d.value == 10.0
     db.info.clear()
     quiet = calc.early_turnover_90(db, scope, D(2026, 3, 1), D(2026, 3, 30), {**params, "planned_end_alarm_points": 25})
     assert "planned_end_alarm" not in quiet.lineage

@@ -80,6 +80,7 @@ cd backend && python scripts/perf_smoke.py --concurrency 30 --requests 600
 | `HRSWI_FORECAST_MIN_POINTS` | 12 | Tahmin için asgari aylık gözlem |
 | `HRSWI_DB_POOL_SIZE` / `HRSWI_DB_MAX_OVERFLOW` | 8 / 4 | Worker başına |
 | `HRSWI_LLM_ENABLED` | false | FAZ 6 |
+| `HRSWI_COVERAGE_MODES` | `default=warn,safety=enforce` | Besleme kapsam kapısı (ADR-020, karar D-13): İSG beyanı eksik/yetersizse KPI-014A/B/043 `insufficient_data`; diğer beslemeler uyarı (renksiz değer). Besleme başına `off \| warn \| enforce` |
 | `BACKEND_URL` | http://localhost:8000 | Frontend derleme zamanı: tarayıcı aynı adresten `/api/*` çağırır, Next bu adrese iletir |
 | `NEXT_PUBLIC_API_URL` | (boş) | Yalnızca API başka bir origin'de çağrılacaksa |
 

@@ -1147,13 +1147,22 @@ def _entity_months_with_hours(db: Session, scope: Scope, ps: date, pe: date) -> 
     return {(r[0], r[1]) for r in rows}
 
 
+# Decision D-10 (PO-3): HSE covers the firm's own employees only. NULL = legacy row recorded per employing entity.
+_OWN_CATEGORIES = (None, "own_employee")
+_OWN_SQL = "(worker_category IS NULL OR worker_category = 'own_employee')"
+
+
 def _safety_rate(db: Session, scope: Scope, ps: date, pe: date, types: list[str], multiplier: float,
-                 min_exposure_hours: float | None = None, exclude_out_of_rate: bool = False) -> CalcResult:
+                 min_exposure_hours: float | None = None, exclude_out_of_rate: bool = False,
+                 own_employees_only: bool = False) -> CalcResult:
     """WP-2 R1: the rate is always computed; when the hours worked in the window are below `min_exposure_hours`
     the result carries status_reason = low_exposure and the engine gives it no colour (equality = coloured).
-    `exclude_out_of_rate` (ADR-021, WP-6 HSE 3.7): numerator and denominator from the same population - third-party
+    `own_employees_only` (decision D-10, current catalog versions): only own-employee cases (and legacy rows without a
+    category) enter the numerator; the HSE import rejects other categories, legacy rows of them are reported as a
+    count only (breakdown non_own_cases_not_counted).
+    `exclude_out_of_rate` (ADR-021, WP-6 HSE 3.7; older formula versions only - superseded by D-10): third-party
     cases and subcontractor / agency cases whose employer has no hours worked in the scope that month are left out of
-    the rate and reported as out-of-rate case counts (they still count in the fatality alert). One row = one case."""
+    the rate and reported as out-of-rate case counts. One row = one case."""
     if scope.occupation_group:
         return CalcResult(INSUFFICIENT, quality_score=0.0, lineage={"tables": ["safety_events"]},
                           note="Safety events are not recorded per occupation; rate not available for an occupation filter")
@@ -1165,8 +1174,12 @@ def _safety_rate(db: Session, scope: Scope, ps: date, pe: date, types: list[str]
              f"AND event_date BETWEEN :ps AND :pe AND event_type = ANY(:types) {where} GROUP BY 1, 2, 3, 4"), p).all()
     rows: dict[str, int] = {}
     out_of_rate = {"third_party": 0, "no_hours_in_denominator": 0}
+    non_own = 0
     with_hours = None
     for et, cat, eid, month, n in cases:
+        if own_employees_only and cat not in _OWN_CATEGORIES:
+            non_own += int(n)
+            continue
         if exclude_out_of_rate and cat == "third_party":
             out_of_rate["third_party"] += n
             continue
@@ -1190,6 +1203,10 @@ def _safety_rate(db: Session, scope: Scope, ps: date, pe: date, types: list[str]
         res.note = (f"Out-of-rate cases: {excluded} (third party {out_of_rate['third_party']}, employer without hours "
                     f"worked in the denominator {out_of_rate['no_hours_in_denominator']}) - not in the rate, still in "
                     "the fatality alert")
+    if own_employees_only and non_own:
+        res.breakdown["non_own_cases_not_counted"] = non_own
+        res.note = (f"{non_own} legacy case(s) of other worker categories not counted (HSE covers own employees only, "
+                    "decision D-10)")
     if res.status == OK and min_exposure_hours is not None and h["worked"] < min_exposure_hours:
         res.status_reason = LOW_EXPOSURE
         low = (f"Low exposure: {h['worked']:,.0f} h worked < {min_exposure_hours:,.0f} h minimum - value shown "
@@ -1202,7 +1219,7 @@ def ltifr(db: Session, scope: Scope, ps: date, pe: date, params: dict) -> CalcRe
     """KPI-014A LTIFR: lost-time injuries (incl. fatalities) per 1,000,000 hours worked."""
     return _safety_rate(db, scope, ps, pe, params.get("event_types", ["lost_time_injury", "fatality"]),
                         params.get("multiplier", 1_000_000), params.get("threshold_min_exposure_hours"),
-                        params.get("exclude_out_of_rate_cases", False))
+                        params.get("exclude_out_of_rate_cases", False), params.get("own_employees_only", False))
 
 
 def trir(db: Session, scope: Scope, ps: date, pe: date, params: dict) -> CalcResult:
@@ -1210,7 +1227,7 @@ def trir(db: Session, scope: Scope, ps: date, pe: date, params: dict) -> CalcRes
     return _safety_rate(db, scope, ps, pe,
                         params.get("event_types", ["fatality", "lost_time_injury", "restricted_work", "medical_treatment"]),
                         params.get("multiplier", 200_000), params.get("threshold_min_exposure_hours"),
-                        params.get("exclude_out_of_rate_cases", False))
+                        params.get("exclude_out_of_rate_cases", False), params.get("own_employees_only", False))
 
 
 def near_miss_rate(db: Session, scope: Scope, ps: date, pe: date, params: dict) -> CalcResult:
@@ -1224,18 +1241,20 @@ def near_miss_rate(db: Session, scope: Scope, ps: date, pe: date, params: dict) 
 def fatality_alerts(db: Session, scope: Scope, ps: date, pe: date) -> list[dict]:
     """WP-2 R2 (ADR-018, ADR-021): any fatality in scope x window surfaces an alert, independent of the rate - of
     its exposure rule, small-group suppression, the occupation filter (events are not per occupation, so the filter
-    is ignored here), the coverage gate and the formula's event_types. Counts ALL fatality records in scope, every
-    worker category included (third party, subcontractor without hours). Group-level only: count, month and - when
-    the cases carry one - the worker category; never a person, description or day-level date. Not subject to
-    minimum group size (HR Director WP-2 Q7). A fatality later reclassified to another class leaves a
+    is ignored here), the coverage gate and the formula's event_types. Decision D-10 (PO-3): counts only the firm's
+    OWN employees' fatality records (worker_category own_employee, or legacy rows without a category) - other
+    categories are rejected by the HSE import and legacy rows of them are ignored here. Group-level only: count, month
+    and - when the cases carry one - the worker category; never a person, description or day-level date. Not subject
+    to minimum group size (HR Director WP-2 Q7). A fatality later reclassified to another class leaves a
     'fatality_reclassified' alert in every window that contains it (WP-2 R2.5, example L). Scope = the reader's
-    authorised scope (subcontractor fatalities without a data-sharing grant are NOT shown - PO-3 open)."""
+    authorised scope."""
     p: dict = {"tenant": scope.tenant_id, "ps": ps, "pe": pe}
     where = _safety_where(scope, p)
     rows = db.execute(
         text("SELECT to_char(event_date, 'YYYY-MM'), worker_category, event_type, count(*) FROM safety_events "
              "WHERE tenant_id = :tenant AND event_date BETWEEN :ps AND :pe "
-             f"AND (event_type = 'fatality' OR reclassified_from_fatality) {where} GROUP BY 1, 2, 3 ORDER BY 1"),
+             f"AND (event_type = 'fatality' OR reclassified_from_fatality) AND {_OWN_SQL} {where} "
+             "GROUP BY 1, 2, 3 ORDER BY 1"),
         p).all()
     out = []
     for kind, fatal in (("fatality", True), ("fatality_reclassified", False)):
@@ -1375,7 +1394,8 @@ def early_turnover_90(db: Session, scope: Scope, ps: date, pe: date, params: dic
     if c["excluded"]:
         notes.append(f"{c['excluded']} verified planned contract/project end(s) excluded ({share:g} % of hires)")
     if c["repeated"]:  # HR Director S-2: visible as a number until legal answer L-11
-        notes.append(f"{c['repeated']} person(s) with repeated planned ends within 12 months (same employer)")
+        basis_txt = "company group" if basis == "group" else "same legal entity"  # D-11: catalog default 'group'
+        notes.append(f"{c['repeated']} person(s) with repeated planned ends within 12 months ({basis_txt})")
     if alarm_points:
         span = pe - ps + timedelta(days=1)
         hist = [_early_cohort(db, scope, ps - span * k, pe - span * k, days, mode, basis) for k in (2, 1)]

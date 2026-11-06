@@ -251,7 +251,9 @@ COVERAGE_COMPLETENESS = ("complete", "partial", "none")  # no row = 'undeclared'
 COVERAGE_BASIS = ("import_batch", "connector_run", "manual_declaration")
 COVERAGE_DECLARE_ACTION = "coverage.declare"
 # safety-feed declaration attributes (WP-6 HSE 3.6 / review condition 1); includes_near_miss = false makes KPI-043
-# uncovered for that cell (formula parameter required_feed_attributes, ADR-021)
+# uncovered for that cell (formula parameter required_feed_attributes, ADR-021). includes_subcontractor_cases is
+# inert since decision D-10 (HSE covers own employees only): still accepted and stored for older clients, read by
+# nothing.
 SAFETY_COVERAGE_ATTRIBUTES = ("includes_subcontractor_cases", "includes_near_miss")
 
 

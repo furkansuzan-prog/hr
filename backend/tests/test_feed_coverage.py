@@ -262,24 +262,24 @@ def test_safety_rate_missing_feed_insufficient_not_zero(db, cx, mode):
     assert k4["status_reason"] == "low_exposure" and k4["threshold_status"] is None  # real zero, WP-2 R1
 
     _declare(db, cx, [ts])  # K5
+    k5e = _ev(db, cx, "KPI-014A", OCT, project_id=cx["P"])  # shipped default safety=enforce (D-13 / PO-6)
+    assert k5e["status"] == "insufficient_data" and k5e["value"] is None
+    mode("default=warn")
     k5 = _ev(db, cx, "KPI-014A", OCT, project_id=cx["P"])
     assert k5["value"] == 0.0 and k5["status_reason"] == "low_coverage"  # wins over low_exposure
     assert k5["lineage"]["coverage"]["min_feed_coverage"] == 0.9
-    mode("default=warn,safety=enforce")  # HR Director's PO-6 recommendation
-    k5e = _ev(db, cx, "KPI-014A", OCT, project_id=cx["P"])
-    assert k5e["status"] == "insufficient_data" and k5e["value"] is None
 
 
 def test_coverage_gate_never_hides_fatality_alert(db, cx, mode):
     _declare(db, cx, [("timesheet", "A", D(2026, 9, 1), D(2026, 10, 31), "complete")])  # safety undeclared
-    w = _ev(db, cx, "KPI-014A", SEP, project_id=cx["P"])
-    assert w["value"] == pytest.approx(11.1111, abs=1e-4) and w["status_reason"] == "low_coverage"
-    assert w["alerts"] == [{"type": "fatality", "count": 1, "by_month": {"2026-09": 1}}]
-    mode("default=warn,safety=enforce")
-    for code in ("KPI-014A", "KPI-014B"):
+    for code in ("KPI-014A", "KPI-014B"):  # shipped default safety=enforce (D-13)
         e = _ev(db, cx, code, SEP, project_id=cx["P"])
         assert e["status"] == "insufficient_data" and e["value"] is None
         assert e["alerts"] == [{"type": "fatality", "count": 1, "by_month": {"2026-09": 1}}]
+    mode("default=warn")
+    w = _ev(db, cx, "KPI-014A", SEP, project_id=cx["P"])
+    assert w["value"] == pytest.approx(11.1111, abs=1e-4) and w["status_reason"] == "low_coverage"
+    assert w["alerts"] == [{"type": "fatality", "count": 1, "by_month": {"2026-09": 1}}]
 
 
 def test_mode_change_is_part_of_cache_key(db, cx, mode):
@@ -331,7 +331,9 @@ def test_mode_parsing_and_validation():
     for bad in ("safety=strict", "payroll=warn"):
         with pytest.raises(ValueError):
             gate.parse_modes(bad)
-    assert get_settings().coverage_modes == "default=warn"  # shipped default: PO-6 not decided
+    assert get_settings().coverage_modes == "default=warn,safety=enforce"  # shipped default: decision D-13 (PO-6)
+    shipped = gate.parse_modes(get_settings().coverage_modes)
+    assert shipped["safety"] == "enforce" and {m for f, m in shipped.items() if f != "safety"} == {"warn"}
 
 
 def test_coverage_parameters_validated():

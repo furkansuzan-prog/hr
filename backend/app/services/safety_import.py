@@ -10,9 +10,14 @@ override the spec text where they differ:
 - KVKK md.4/6 minimisation: identity, identifying attributes, health / injury detail and free text columns are dropped
   BEFORE anything is stored (only their names are kept); a mapping that points at a dropped column is an error that
   asks for the column to be renamed - never a silent drop of a needed field (condition 4);
-- coverage: feed type "safety"; includes_subcontractor_cases / includes_near_miss travel in the declaration's
-  attributes (condition 1); permission = whole-entity import.write AND hse.read on the employer (interim rule shared
-  with POST /coverage until A11 defines an HSE import permission).
+- decision D-10 (PO-3): HSE covers ONLY the company's own employees. A case whose worker category is
+  subcontractor_worker, temporary_agency_worker or third_party is rejected (error rule worker_category_out_of_scope,
+  never stored; the queue holds the rule code, row number and event_ref only - no personal data); an injury case with a
+  blank / unrecognised category is an error (unknown_worker_category);
+- coverage: feed type "safety"; includes_near_miss travels in the declaration's attributes (condition 1;
+  includes_subcontractor_cases is still accepted for older clients but is inert since D-10); permission =
+  whole-entity import.write AND hse.read on the employer (interim rule shared with POST /coverage until A11 defines an
+  HSE import permission).
 Validation messages carry the row number and event_ref only - never a label, name or description.
 """
 import re
@@ -251,6 +256,11 @@ _SGK = {"bildirildi": "notified", "notified": "notified", "yapildi": "notified",
 _REASON_CODE = re.compile(r"[A-Za-z0-9_.\-]{2,40}")
 MIN_EVENT_DATE = date(2000, 1, 1)
 INJURY_TYPES = {"fatality", "lost_time_injury", "restricted_work", "medical_treatment", "first_aid"}
+# Decision D-10 (PO-3): the only worker category the platform stores
+OWN_WORKER_CATEGORIES = ("own_employee",)
+OUT_OF_SCOPE_CATEGORY = "worker_category_out_of_scope"
+_OUT_OF_SCOPE_MSG = ("case of a subcontractor, temporary-agency or third-party worker -> not stored: HSE covers the "
+                     "company's own employees only (decision D-10)")
 
 
 def _int(v: str) -> int:
@@ -394,12 +404,13 @@ def validate(db: Session, ctx: AccessContext, batch: ImportBatch, mapping: dict)
             lost = None
         if et == "restricted_work" and not nums["restricted_days"]:
             err("rwc_without_restricted_days", "restricted work case without restricted days", "warning")
-        cat = None
-        if et in INJURY_TYPES:
-            cat = worker_category(m.get("worker_category", ""))
-            if cat is None:
-                err("unknown_worker_category", "worker_category missing or not recognised (own_employee, "
-                                               "subcontractor_worker, temporary_agency_worker, third_party)")
+        cat = worker_category(m.get("worker_category", "")) if m.get("worker_category") else None
+        if cat is not None and cat not in OWN_WORKER_CATEGORIES:
+            # D-10: checked for every row (also when the class is unknown or a near miss) - out of scope either way
+            err(OUT_OF_SCOPE_CATEGORY, _OUT_OF_SCOPE_MSG)
+        elif et in INJURY_TYPES and cat is None:
+            err("unknown_worker_category", "worker_category missing or not recognised -> not committed (HSE covers "
+                                           "own employees only, decision D-10: give own_employee)")
         sgk = None
         if m.get("sgk_notification"):
             sgk = _SGK.get(_fold(m["sgk_notification"]))

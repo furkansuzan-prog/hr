@@ -6,10 +6,11 @@ Timesheets: every test month has 10 persons x 20 days x 50 planned h = 10,000 pl
   Example 1   (2025-03): unexcused 50, sick 150, work_injury 80 (ONE person -> breakdown masked), annual 400,
               unpaid 30, other 20.
               KPI-053 = 200 / 10,000 = 2.00 % ; KPI-028 = 150 / 10,000 = 1.50 % ;
-              KPI-003 (PO-1 not decided -> work_injury explicitly INCLUDED, option A) = 730 / 10,000 = 7.30 %
-              KPI-003 with the PO-1 = C parameters (work_injury moved to excluded_types) = 650 / 10,000 = 6.50 %
+              KPI-003 (decision D-8 = PO-1 option C, work_injury in excluded_types) = 650 / 10,000 = 6.50 %
+              KPI-003 previous version (option A, work_injury explicitly included) = 730 / 10,000 = 7.30 %
   Example 1 "today" (2025-04): same hours but the 80 h are typed 'sick' (pre-ADR-019 import):
-              KPI-053 = 280 / 10,000 = 2.80 % ; KPI-028 = 230 / 10,000 = 2.30 % ; KPI-003 = 7.30 %
+              KPI-053 = 280 / 10,000 = 2.80 % ; KPI-028 = 230 / 10,000 = 2.30 % ; KPI-003 = 7.30 % (typed 'sick'
+              -> still counted; the D-8 exclusion depends on the correct type)
   Example 1b  (2025-05): unexcused 100, sick 230, work_injury 120 (5 persons x 24 h -> visible):
               KPI-053 = 330 / 10,000 = 3.30 % (good) ; KPI-028 = 230 / 10,000 = 2.30 % (good)
   Example 1b "today" (2025-06): the 120 h typed 'sick': KPI-053 4.50 % (warning) ; KPI-028 3.50 % (warning)
@@ -172,30 +173,32 @@ def test_kpi053_and_kpi028_exclude_work_injury_exact(db, winj):
     assert [r["threshold_status"] for r in before] == ["warning", "warning"]
 
 
-def test_kpi003_work_injury_explicit_parameter_until_po1(db, winj):
-    """PO-1 not decided: work_injury is INCLUDED by name (option A) - no silent change of KPI-003 (review cond. 1)."""
+def test_kpi003_excludes_work_injury_d8(db, winj):
+    """Decision D-8 (PO-1 option C): work_injury is EXCLUDED from KPI-003 by name - 650 / 10,000 = 6.50 %."""
     r = ev(db, winj, "KPI-003", MONTHS[0])
-    assert r["value"] == pytest.approx(7.30)
-    assert ev(db, winj, "KPI-003", MONTHS[1])["value"] == pytest.approx(7.30)  # identical to the pre-ADR-019 typing
+    assert r["value"] == pytest.approx(6.50)
+    assert ev(db, winj, "KPI-003", MONTHS[1])["value"] == pytest.approx(7.30)  # the 80 h typed 'sick' still count
     params = r["formula"]["parameters"]
-    assert "work_injury" in params["absence_types"] and "work_injury" not in params["excluded_types"]
-    assert r["breakdown"]["excluded_types"] == ["public_holiday", "parental"]
+    assert "work_injury" in params["excluded_types"] and "work_injury" not in params["absence_types"]
+    assert r["breakdown"]["excluded_types"] == ["public_holiday", "parental", "work_injury"]
     kpi = next(k for k in KPI_CATALOG if k["code"] == "KPI-003")
-    assert "work_injury" in kpi["inclusion_rules"] and "PO-1" in kpi["inclusion_rules"]
+    assert "work_injury" in kpi["exclusion_rules"] and "D-8" in kpi["exclusion_rules"]
+    assert "work_injury" not in kpi["inclusion_rules"]
 
 
 def test_po1_option_c_is_a_parameter_change_only(db, winj, monkeypatch):
-    """Deciding PO-1 = C: move work_injury to excluded_types in the catalog -> catalog sync opens a new formula
-    version; the calculator is unchanged. 650 / 10,000 = 6.50 %."""
+    """D-8 was a catalog parameter edit only: the previous (option A) parameters still compute 7.30 % with the same
+    calculator, the current ones 6.50 %, and switching the catalog between them is a new formula version in the sync
+    (older results keep theirs, ADR-019)."""
     item = next(k for k in KPI_CATALOG if k["code"] == "KPI-003")
     cur = item["formula"]["parameters"]
-    option_c = {"absence_types": [t for t in cur["absence_types"] if t != "work_injury"],
-                "excluded_types": [*cur["excluded_types"], "work_injury"]}
-    validate_parameters(option_c, "absenteeism_rate")
-    res = calculators.absenteeism_rate(db, Scope(winj["tenant_id"], frozenset({winj["A"]})), *_month(MONTHS[0]),
-                                       option_c)
-    assert res.value == pytest.approx(6.50)
-    monkeypatch.setitem(item["formula"], "parameters", option_c)
+    option_a = {**cur, "absence_types": [*cur["absence_types"], "work_injury"],
+                "excluded_types": [t for t in cur["excluded_types"] if t != "work_injury"]}
+    validate_parameters(option_a, "absenteeism_rate")
+    scope = Scope(winj["tenant_id"], frozenset({winj["A"]}))
+    assert calculators.absenteeism_rate(db, scope, *_month(MONTHS[0]), option_a).value == pytest.approx(7.30)
+    assert calculators.absenteeism_rate(db, scope, *_month(MONTHS[0]), cur).value == pytest.approx(6.50)
+    monkeypatch.setitem(item["formula"], "parameters", option_a)
     changes = [c for c in sync_kpi_catalog(db) if c["code"] == "KPI-003"]
     assert changes and changes[0]["new_formula_version"] is True
 
@@ -222,12 +225,12 @@ def test_absence_kpis_classify_every_leave_type():
 def test_work_injury_breakdown_masked_below_min_group(db, winj):
     """Acceptance 9 (KVKK md.6): one person's work-injury rest is not readable from the KPI-003 breakdown."""
     r = ev(db, winj, "KPI-003", MONTHS[0])
-    assert r["breakdown"]["included_hours_by_type"]["work_injury"] is None
+    assert r["breakdown"]["excluded_hours_by_type"]["work_injury"] is None
     assert r["breakdown"]["masked_types"] == ["work_injury"]
-    assert r["value"] == pytest.approx(7.30)  # the rate itself is unchanged
+    assert r["value"] == pytest.approx(6.50)  # the rate itself is unchanged
     assert ev(db, winj, "KPI-053", MONTHS[0])["breakdown"]["excluded_hours_by_type"]["work_injury"] is None
     shown = ev(db, winj, "KPI-003", MONTHS[2])  # 5 people -> visible
-    assert shown["breakdown"]["included_hours_by_type"]["work_injury"] == pytest.approx(120)
+    assert shown["breakdown"]["excluded_hours_by_type"]["work_injury"] == pytest.approx(120)
     assert "masked_types" not in shown["breakdown"]
 
 

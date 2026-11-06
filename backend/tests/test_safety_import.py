@@ -6,21 +6,27 @@ Hand-calculated expectations: docs/hr/hse/WP-6_safety_import_fields.md section 4
 Tenant HSEI (import flow). FIRMA-A (main contractor) owns PRJ-01 / PRJ-02, FIRMA-B is its subcontractor (no
 timesheets at all). FIRMA-A: 10 persons x 14 days x 500 h = 70,000 h on PRJ-01 in each of Feb, Mar and Apr 2026.
 
-  4.1  Mar 2026 sample file: 7 rows -> 4 valid (1, 2, 3, 5), 3 errors (4 lost_days_class_conflict, 6 severity_required,
-       7 event_date_in_future); 'Yaralanan Adı Soyadı' dropped before storage.
-  4.2  Mar 2026 tenant: LTIFR 2 / 70,000 x 10^6 = 28.5714; TRIR 2 / 70,000 x 200,000 = 5.7143 with 1 out-of-rate case
-       (FIRMA-B medical treatment, no hours); KPI-043 1 / 70,000 x 200,000 = 2.8571 'low exposure'. No colour.
+  4.1  Mar 2026 sample file: 7 rows -> 3 valid (1, 3, 5), 4 errors (2 worker_category_out_of_scope - 'Taşeron', decision
+       D-10; 4 lost_days_class_conflict; 6 severity_required + worker_category_out_of_scope; 7 event_date_in_future);
+       'Yaralanan Adı Soyadı' dropped before storage.
+  4.2  Mar 2026 tenant: LTIFR 2 / 70,000 x 10^6 = 28.5714; TRIR 2 / 70,000 x 200,000 = 5.7143 (the FIRMA-B subcontractor
+       case was rejected by the import - D-10 - so there is no out-of-rate case any more); KPI-043 1 / 70,000 x 200,000
+       = 2.8571 'low exposure'. No colour.
   4.3  Apr 2026 event ISG-26-0201: case 1 LTI, 2 MTC, 3 FAC -> LTIFR numerator 1, TRIR numerator 2. May file: case 1
        fatality (reclassified_up, alert opens, LTIFR numerator 1). June file: case 2 first aid (reclassified_down,
        TRIR numerator 2 -> 1); case 3 missing from the file is not deleted.
-  K    Feb 2026: one third-party fatality -> not in LTIFR (0 / 70,000), alert by_worker_category {third_party: 1}.
+  K'   (D-10 replaces WP-2 K) Feb 2026: visitor fatality, subcontractor LTI, agency MTC -> rejected by the import
+       (worker_category_out_of_scope), FAC without category -> unknown_worker_category; nothing stored. A legacy
+       third-party fatality row already in the database: not in LTIFR (0 / 70,000, count 1 shown), no alert.
   L    Feb 2026: one own-employee fatality reclassified (reason code) -> 'fatality_reclassified' alert stays.
+  D-13 Mar 2026, NMX entity SO (no safety declaration), own-employee fatality: shipped default safety=enforce ->
+       KPI-014A/B insufficient_data, the fatality alert is still shown.
 
 Tenant NMX (KPI-043). Timesheet rows 500 h each.
   M  R12 2025-11..2026-10, project PM: 15 p x 140 d = 1,050,000 h, 63 near misses -> 12.0 (neutral, no colour)
   N  Mar 2026, project PN: 10 p x 16 d = 80,000 h, 3 near misses -> 7.5 + low_exposure
-  O  Mar 2026, entity SO: 80,000 h, 2 near misses, NO safety declaration -> warn: 5.0 low_coverage; enforce:
-     insufficient_data (never a coloured value)
+  O  Mar 2026, entity SO: 80,000 h, 2 near misses, NO safety declaration -> warn: 5.0 low_coverage; enforce (shipped
+     default for safety, D-13): insufficient_data (never a coloured value)
   P  Mar 2026, entity SP: 10 p x 18 d = 90,000 h, declared, 0 near misses -> 0.0 (real zero)
   Q  Mar 2026, entity SQ: 80,000 h, declared with includes_near_miss = false, 1 near miss -> KPI-043 not covered
      (warn low_coverage / enforce insufficient_data); KPI-014A unaffected.
@@ -141,8 +147,7 @@ def _decl(month: str, codes=("FIRMA-A", "FIRMA-B"), **attrs):
     y, m = map(int, month.split("-"))
     end = (D(y + m // 12, m % 12 + 1, 1) - timedelta(days=1)).isoformat()
     return {"period_start": f"{month}-01", "period_end": end, "legal_entity_codes": list(codes),
-            "completeness": "complete", "attributes": {"includes_subcontractor_cases": True, "includes_near_miss": True,
-                                                       **attrs}}
+            "completeness": "complete", "attributes": {"includes_near_miss": True, **attrs}}
 
 
 def _upload(client, auth, content, name, user=ADMIN, coverage=None, status=201):
@@ -290,11 +295,12 @@ def test_safety_import_sample_file_expected_results(client, auth, db, hs):
     assert all("Yaralanan Adı Soyadı" not in r and "Ali Veli" not in str(r) for r in staged)
 
     v = client.post(f"/api/v1/imports/{up['batch_id']}/validate", json={}, headers=auth(ADMIN)).json()
-    assert (v["valid_rows"], v["error_rows"]) == (4, 3)
+    assert (v["valid_rows"], v["error_rows"]) == (3, 4)
     assert v["dropped_columns"] == ["Yaralanan Adı Soyadı"]
     issues = _issues(db, up["batch_id"])
     errors = {(i.row_number - 1, i.rule_code) for i in issues if i.severity == "error"}
-    assert errors == {(4, "lost_days_class_conflict"), (6, "severity_required"), (7, "event_date_in_future")}
+    assert errors == {(2, sfi.OUT_OF_SCOPE_CATEGORY), (4, "lost_days_class_conflict"), (6, "severity_required"),
+                      (6, sfi.OUT_OF_SCOPE_CATEGORY), (7, "event_date_in_future")}
     warnings = {(i.row_number and i.row_number - 1, i.rule_code) for i in issues if i.severity == "warning"}
     assert {(5, "classification_derived_from_lost_days"), (None, "prohibited_columns_dropped")} <= warnings
     assert all(i.record_ref is None or i.record_ref.startswith("ISG-26-") for i in issues)
@@ -303,15 +309,14 @@ def test_safety_import_sample_file_expected_results(client, auth, db, hs):
     assert "ISG-26-0155#1" in csv_text and "Mehmet" not in csv_text
 
     c = client.post(f"/api/v1/imports/{up['batch_id']}/commit", headers=auth(ADMIN)).json()
-    assert c["status"] == "committed" and c["committed_rows"] == 4
+    assert c["status"] == "committed" and c["committed_rows"] == 3
     got = {(e.source_record_id, e.event_type, e.lost_days, e.worker_category, e.case_no) for e in db.execute(
         select(SafetyEvent).where(SafetyEvent.tenant_id == hs["tenant_id"])).scalars()}
-    assert got == {("ISG-26-0141#1", "lost_time_injury", 9, "own_employee", 1),
-                   ("ISG-26-0142#1", "medical_treatment", 0, "subcontractor_worker", 1),
+    assert got == {("ISG-26-0141#1", "lost_time_injury", 9, "own_employee", 1),  # 0142 (Taşeron) never stored
                    ("ISG-26-0150#1", "near_miss", None, None, 1),
                    ("ISG-26-0158#1", "lost_time_injury", 3, "own_employee", 1)}
     assert _case(db, hs, "ISG-26-0141#1").case_status == "closed"
-    assert _case(db, hs, "ISG-26-0142#1").reported_date == D(2026, 3, 12)
+    assert _case(db, hs, "ISG-26-0142#1") is None
     # after commit the raw staging rows keep only mapped source columns (KVKK md.4)
     db.expire_all()
     staged = db.execute(select(ImportStagingRow.raw).where(ImportStagingRow.batch_id == up["batch_id"])).scalars().all()
@@ -321,19 +326,20 @@ def test_safety_import_sample_file_expected_results(client, auth, db, hs):
                                                      DataFeedCoverage.feed_type == "safety")).scalars().all()
     assert {(r.legal_entity_id, r.period_month, r.completeness) for r in rows} == {
         (hs["entities"]["A"], D(2026, 3, 1), "complete"), (hs["entities"]["B"], D(2026, 3, 1), "complete")}
-    assert all(r.attributes == {"includes_subcontractor_cases": True, "includes_near_miss": True} for r in rows)
+    assert all(r.attributes == {"includes_near_miss": True} for r in rows)
 
 
 def test_safety_import_rates_example_42(client, auth, hs):
-    """4.2: numerator and denominator from the same population; FIRMA-B (no hours) case is out of rate."""
+    """4.2: own employees only (D-10) - the FIRMA-B subcontractor case never reached the database."""
     a = ev(client, auth, "KPI-014A", **MAR)
     assert a["numerator"] == 2 and a["denominator"] == 70_000 and a["value"] == pytest.approx(28.5714, abs=1e-4)
     assert a["threshold_status"] is None and a["status_reason"] == "low_exposure"
     b = ev(client, auth, "KPI-014B", **MAR)
     assert b["numerator"] == 2 and b["value"] == pytest.approx(5.7143, abs=1e-4)
     assert b["threshold_status"] is None and b["status_reason"] == "low_exposure"
-    assert b["breakdown"]["out_of_rate_cases"] == {"third_party": 0, "no_hours_in_denominator": 1}
-    assert "Out-of-rate cases: 1" in b["note"]
+    assert "out_of_rate_cases" not in b["breakdown"] and "non_own_cases_not_counted" not in b["breakdown"]
+    assert b["formula"]["parameters"]["own_employees_only"] is True
+    assert "exclude_out_of_rate_cases" not in b["formula"]["parameters"]
     nm = ev(client, auth, "KPI-043", **MAR)
     assert nm["status"] == "ok" and nm["numerator"] == 1 and nm["value"] == pytest.approx(2.8571, abs=1e-4)
     assert nm["threshold_status"] is None and nm["status_reason"] == "low_exposure"
@@ -415,17 +421,40 @@ def test_closed_period_keeps_frozen_safety_value_with_note(client, auth, db, hs)
 # ---------------------------------------------------------------- WP-2 K and L (fatality alert categories / marker)
 
 
-def test_third_party_excluded_from_rates_included_in_fatality_alert(client, auth, db, hs):
-    """WP-2 K / WP-6 acceptance 8: a visitor fatality is not in any rate but always in the alert."""
-    _, v, _ = _run(client, auth, _csv([["ISG-26-0090", "1", "FIRMA-A", "PRJ-01", "2026-02-10", "2026-02-10",
-                                        "Fatality", "", "Ziyaretçi", "Kapalı", ""]]), "isg_subat.csv",
-                   coverage=_decl("2026-02", codes=("FIRMA-A",)))
-    assert v["valid_rows"] == 1
+def test_non_own_employee_cases_rejected_and_not_in_alert(client, auth, db, hs):
+    """Decision D-10 (PO-3, replaces WP-2 K): HSE covers own employees only. Visitor / subcontractor / agency cases are
+    rejected by the import with a rule code (row number + event_ref only, no label or person); an injury without a
+    category is an error. A legacy third-party fatality already stored counts in neither the rate nor the alert."""
+    rows = [["ISG-26-0090", "1", "FIRMA-A", "PRJ-01", "2026-02-10", "2026-02-10", "Fatality", "", "Ziyaretçi",
+             "Kapalı", ""],
+            ["ISG-26-0092", "1", "FIRMA-A", "PRJ-01", "2026-02-11", "2026-02-11", "LTI", "3", "Taşeron", "", ""],
+            ["ISG-26-0093", "1", "FIRMA-A", "PRJ-01", "2026-02-11", "2026-02-11", "MTC", "0", "Geçici iş ilişkisi",
+             "", ""],
+            ["ISG-26-0094", "1", "FIRMA-A", "PRJ-01", "2026-02-11", "2026-02-11", "FAC", "0", "", "", ""]]
+    up = _upload(client, auth, _csv(rows), "isg_subat.csv", coverage=_decl("2026-02", codes=("FIRMA-A",)))
+    v = client.post(f"/api/v1/imports/{up['batch_id']}/validate", json={}, headers=auth(ADMIN)).json()
+    assert (v["valid_rows"], v["error_rows"]) == (0, 4)
+    issues = _issues(db, up["batch_id"])
+    assert {(i.row_number - 1, i.rule_code) for i in issues if i.severity == "error"} == {
+        (1, sfi.OUT_OF_SCOPE_CATEGORY), (2, sfi.OUT_OF_SCOPE_CATEGORY), (3, sfi.OUT_OF_SCOPE_CATEGORY),
+        (4, "unknown_worker_category")}
+    assert not any(w in i.message for i in issues for w in ("Ziyaretçi", "Taşeron", "Geçici", "Fatality"))
+    assert all(i.record_ref is None or i.record_ref.startswith("ISG-26-009") for i in issues)
+    # a legacy row of another category (stored before D-10) - written before the window is first evaluated
+    db.add(SafetyEvent(tenant_id=hs["tenant_id"], legal_entity_id=hs["entities"]["A"],
+                       project_id=hs["projects"]["PRJ-01"], event_date=D(2026, 2, 10), event_type="fatality",
+                       worker_category="third_party", source_system="legacy", source_record_id="LEGACY-1#1"))
+    db.commit()
+    c = client.post(f"/api/v1/imports/{up['batch_id']}/commit", headers=auth(ADMIN)).json()
+    assert c["status"] == "committed" and c["committed_rows"] == 0  # the declaration still records the month
+    db.expire_all()
+    assert db.execute(select(SafetyEvent).where(SafetyEvent.tenant_id == hs["tenant_id"],
+                                                SafetyEvent.event_ref.like("ISG-26-009%"))).first() is None
     a = ev(client, auth, "KPI-014A", **FEB)
-    assert a["numerator"] == 0 and a["value"] == 0.0
-    assert a["breakdown"]["out_of_rate_cases"] == {"third_party": 1, "no_hours_in_denominator": 0}
-    assert a["alerts"] == [{"type": "fatality", "count": 1, "by_month": {"2026-02": 1},
-                            "by_worker_category": {"third_party": 1}}]
+    assert a["status"] == "ok" and a["numerator"] == 0 and a["value"] == 0.0
+    assert a["breakdown"]["non_own_cases_not_counted"] == 1 and "out_of_rate_cases" not in a["breakdown"]
+    assert "decision D-10" in a["note"]
+    assert a["alerts"] == []  # the alert counts own employees only
 
 
 def test_fatality_reclassification_keeps_marker(client, auth, db, hs):
@@ -433,7 +462,7 @@ def test_fatality_reclassification_keeps_marker(client, auth, db, hs):
     base = ["ISG-26-0091", "1", "FIRMA-A", "PRJ-01", "2026-02-12", "2026-02-12", "Ölümlü", "", "Kendi personeli",
             "Kapalı", ""]
     _run(client, auth, _csv([base]), "isg_l1.csv")
-    assert ev(client, auth, "KPI-014A", **FEB)["alerts"][0]["count"] == 2
+    assert ev(client, auth, "KPI-014A", **FEB)["alerts"][0]["count"] == 1  # own employee only (legacy K' row not)
     hdr = HDR + ";Gerekçe Kodu"
     no_reason = [*base[:6], "Medical treatment", "0", *base[8:], ""]
     up, v, _ = _run(client, auth, _csv([no_reason], hdr), "isg_l2.csv")
@@ -448,9 +477,7 @@ def test_fatality_reclassification_keeps_marker(client, auth, db, hs):
     e = _case(db, hs, "ISG-26-0091#1")
     assert (e.event_type, e.reclassified_from_fatality) == ("medical_treatment", True)
     a = ev(client, auth, "KPI-014A", **FEB)
-    assert a["alerts"] == [
-        {"type": "fatality", "count": 1, "by_month": {"2026-02": 1}, "by_worker_category": {"third_party": 1}},
-        {"type": "fatality_reclassified", "count": 1, "by_month": {"2026-02": 1}}]
+    assert a["alerts"] == [{"type": "fatality_reclassified", "count": 1, "by_month": {"2026-02": 1}}]
     d = db.execute(select(AuditLog.details).where(AuditLog.tenant_id == hs["tenant_id"],
                                                   AuditLog.action == "safety.reclassify")
                    .order_by(AuditLog.id.desc()).limit(1)).scalar()
@@ -639,6 +666,7 @@ def test_kpi043_near_miss_rate_exact(client, auth, nm):
 
 
 def test_kpi043_missing_feed_is_insufficient_not_zero(client, auth, nm, mode):
+    mode("default=warn")  # the shipped default enforces safety (D-13); warn behaviour checked explicitly
     o = ev(client, auth, "KPI-043", NM_ADMIN, entity_ids=str(nm["entities"]["SO"]), **MAR)  # O: undeclared
     assert o["value"] == pytest.approx(5.0) and o["threshold_status"] is None and o["status_reason"] == "low_coverage"
     p = ev(client, auth, "KPI-043", NM_ADMIN, entity_ids=str(nm["entities"]["SP"]), **MAR)  # P: real zero
@@ -650,6 +678,7 @@ def test_kpi043_missing_feed_is_insufficient_not_zero(client, auth, nm, mode):
 
 
 def test_includes_near_miss_false_uncovers_kpi043_only(client, auth, nm, mode):
+    mode("default=warn")
     q = ev(client, auth, "KPI-043", NM_ADMIN, entity_ids=str(nm["entities"]["SQ"]), **MAR)
     assert q["status_reason"] == "low_coverage" and q["lineage"]["coverage"]["feeds"]["safety"] == 0.0
     a = ev(client, auth, "KPI-014A", NM_ADMIN, entity_ids=str(nm["entities"]["SQ"]), **MAR)
@@ -675,7 +704,12 @@ def test_kpi043_occupation_filter_insufficient(client, auth, nm):
 def test_formula_parameter_whitelist_for_new_keys():
     validate_parameters({"multiplier": 200_000, "threshold_min_exposure_hours": 200_000,
                          "required_feed_attributes": {"safety": {"includes_near_miss": True}}}, "near_miss_rate")
-    validate_parameters({"exclude_out_of_rate_cases": True}, "trir")
+    validate_parameters({"exclude_out_of_rate_cases": True}, "trir")  # older formula versions
+    validate_parameters({"own_employees_only": True}, "ltifr")  # D-10
+    with pytest.raises(KpiError, match="not used by calculator"):
+        validate_parameters({"own_employees_only": True}, "near_miss_rate")
+    with pytest.raises(KpiError):
+        validate_parameters({"own_employees_only": "yes"}, "trir")
     with pytest.raises(KpiError, match="not used by calculator"):
         validate_parameters({"exclude_out_of_rate_cases": True}, "near_miss_rate")
     with pytest.raises(KpiError):
@@ -696,3 +730,29 @@ def test_ascii_olumlu_is_never_a_fatality():
     assert classify("Olumlu", None)[0] is None
     assert classify("ÖLÜMLÜ", None)[0] == "fatality"
     assert classify("FAT", None)[0] == "fatality"
+
+
+def test_d13_undeclared_safety_feed_insufficient_but_fatality_alert_shown(client, auth, db, nm):
+    """Decision D-13 (PO-6): the shipped default enforces the safety feed. Entity SO has no safety declaration ->
+    KPI-014A and KPI-014B are insufficient_data (never a value), while an own-employee fatality alert still appears."""
+    assert get_settings().coverage_modes == "default=warn,safety=enforce"
+    from app.core.db import SessionLocal
+
+    with SessionLocal() as s:
+        tid = s.get(LegalEntity, nm["entities"]["SO"]).tenant_id
+        e = SafetyEvent(tenant_id=tid, legal_entity_id=nm["entities"]["SO"], event_date=D(2026, 3, 4),
+                        event_type="fatality", worker_category="own_employee", source_system="test-d13",
+                        source_record_id="D13#1")
+        s.add(e)
+        s.commit()
+        eid = e.id
+    try:
+        for code in ("KPI-014A", "KPI-014B"):
+            r = ev(client, auth, code, NM_ADMIN, entity_ids=str(nm["entities"]["SO"]), **MAR)
+            assert r["status"] == "insufficient_data" and r["value"] is None and r["threshold_status"] is None, code
+            assert r["alerts"] == [{"type": "fatality", "count": 1, "by_month": {"2026-03": 1},
+                                    "by_worker_category": {"own_employee": 1}}], code
+    finally:
+        with SessionLocal() as s:
+            s.delete(s.get(SafetyEvent, eid))
+            s.commit()
