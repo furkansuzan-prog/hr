@@ -365,6 +365,8 @@ def import_list(ctx: AccessContext = Depends(require("import.write")), db: Sessi
     q = select(ImportBatch).where(ImportBatch.tenant_id == ctx.tenant_id)
     if ctx.entity_filter("import.write") is not None:  # entity-scoped importers only see their own batches
         q = q.where(ImportBatch.created_by == ctx.user_id)
+    if not ctx.has("hse.read"):  # ADR-021: HSE case batches are visible only with hse.read
+        q = q.where(ImportBatch.entity_type != "safety_event")
     rows = db.execute(q.order_by(ImportBatch.id.desc()).limit(50)).scalars()
     return [imp.summary(db, ctx, b.id) for b in rows]
 

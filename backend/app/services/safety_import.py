@@ -447,7 +447,7 @@ def validate(db: Session, ctx: AccessContext, batch: ImportBatch, mapping: dict)
                 mp["existing_id"] = ex.id
                 if ex.event_type != mp["event_type"]:
                     if ex.event_type == "fatality" and not mp["reclassification_reason"]:
-                        err("fatality_reclassification_reason_required", "a fatality can only be reclassified with "
+                        err("fatality_reclass_reason_required", "a fatality can only be reclassified with "
                             "a reclassification_reason code (WP-2 R2.5) -> not committed")
                     else:
                         mp["reclassify_from"] = ex.event_type
