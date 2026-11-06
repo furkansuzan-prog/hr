@@ -295,15 +295,15 @@ Ortak kurallar: payda 0 → `not_computable` (asla 0); kaynak veri yok → `insu
 ### KPI-018 — İlk 90 Gün Ayrılış Oranı / 90-Day Early Turnover / Текучесть в первые 90 дней
 
 - **Formül:** Hires starting in period who left within 90 days / hires starting in period x 100
-- **Pay:** Early leavers
+- **Pay:** Early leavers; verified planned contract/project ends (SGK code, fixed-term contract type, end within 7 days of the planned end) are excluded from the numerator, the excluded share is shown separately
 - **Payda:** Hires in cohort
 - **Amaç:** Track 90-day early turnover
 - **Dahil:** All records in scope and period
-- **Hariç:** None
+- **Hariç:** Internal transfers; verified planned contract/project ends (planned_end_verified = true). Unverifiable planned ends are counted (never assumed planned)
 - **Veri kaynakları:** employment_relationships · **Veri sahibi:** HR_MANAGER
 - **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
 - **Eşikler (hedef/uyarı/kritik):** 10 / 15 / 20
-- **Parametreler (v1):** `{'days': 90, 'required_feeds': ['employment'], 'min_feed_coverage': 0.8}`
+- **Parametreler (v1):** `{'days': 90, 'planned_end_exclusion': 'verified', 'planned_end_alarm_points': 10, 'same_employer_basis': 'legal_entity', 'required_feeds': ['employment'], 'min_feed_coverage': 0.8}`
 - **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE; coverage gate on feeds employment (ADR-020): coverage below min_feed_coverage -> value without colour, status_reason low_coverage (warn) or insufficient_data (enforce, per HRSWI_COVERAGE_MODES)
 
 ### KPI-019 — Çalışan Başına İşgücü Maliyeti / Labour Cost per Employee / Затраты на сотрудника
@@ -331,35 +331,35 @@ Ortak kurallar: payda 0 → `not_computable` (asla 0); kaynak veri yok → `insu
 - **Veri kaynakları:** employment_relationships · **Veri sahibi:** HR_DIRECTOR
 - **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
 - **Eşikler (hedef/uyarı/kritik):** 12 / 18 / 25 (yıllıklaştırılmış değere uygulanır)
-- **Parametreler (v1):** `{'annualize': True, 'include_categories': ['voluntary'], 'required_feeds': ['employment'], 'min_feed_coverage': 0.8}`
-- **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE; coverage gate on feeds employment (ADR-020): coverage below min_feed_coverage -> value without colour, status_reason low_coverage (warn) or insufficient_data (enforce, per HRSWI_COVERAGE_MODES)
+- **Parametreler (v1):** `{'annualize': True, 'include_categories': ['voluntary'], 'unknown_share_bands': [0.05, 0.2], 'low_information_share': 0.15, 'voluntary_just_cause_codes': ['23', '25'], 'required_feeds': ['employment'], 'min_feed_coverage': 0.8}`
+- **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE; unknown-category share u: u <= 5 % coloured, 5-20 % value without colour (status_reason unknown_category_share) with the possible range, > 20 % insufficient_data; coverage gate on feeds employment (ADR-020): coverage below min_feed_coverage -> value without colour, status_reason low_coverage (warn) or insufficient_data (enforce, per HRSWI_COVERAGE_MODES)
 
 ### KPI-021 — İlk 30 Gün Ayrılış Oranı / 30-Day Early Turnover / Текучесть за 30 дней
 
 - **Formül:** Hires starting in period who left within 30 days / hires starting in period x 100
-- **Pay:** Early leavers (end date < start + 30 days, not a transfer out)
+- **Pay:** Early leavers (end date < start + 30 days, not a transfer out); verified planned contract/project ends (SGK code, fixed-term contract type, end within 7 days of the planned end) are excluded from the numerator, the excluded share is shown separately
 - **Payda:** Hires in cohort (transfers in excluded)
 - **Amaç:** Track 30-day early turnover
 - **Dahil:** All records in scope and period
-- **Hariç:** None
+- **Hariç:** Internal transfers; verified planned contract/project ends (planned_end_verified = true). Unverifiable planned ends are counted (never assumed planned)
 - **Veri kaynakları:** employment_relationships · **Veri sahibi:** HR_MANAGER
 - **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
 - **Eşikler (hedef/uyarı/kritik):** 3 / 5 / 8
-- **Parametreler (v1):** `{'days': 30, 'required_feeds': ['employment'], 'min_feed_coverage': 0.8}`
+- **Parametreler (v1):** `{'days': 30, 'planned_end_exclusion': 'verified', 'planned_end_alarm_points': 10, 'same_employer_basis': 'legal_entity', 'required_feeds': ['employment'], 'min_feed_coverage': 0.8}`
 - **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE; coverage gate on feeds employment (ADR-020): coverage below min_feed_coverage -> value without colour, status_reason low_coverage (warn) or insufficient_data (enforce, per HRSWI_COVERAGE_MODES)
 
 ### KPI-022 — İlk 180 Gün Ayrılış Oranı / 180-Day Early Turnover / Текучесть за 180 дней
 
 - **Formül:** Hires starting in period who left within 180 days / hires starting in period x 100
-- **Pay:** Early leavers (end date < start + 180 days, not a transfer out)
+- **Pay:** Early leavers (end date < start + 180 days, not a transfer out); verified planned contract/project ends (SGK code, fixed-term contract type, end within 7 days of the planned end) are excluded from the numerator, the excluded share is shown separately
 - **Payda:** Hires in cohort (transfers in excluded)
 - **Amaç:** Track 180-day early turnover
 - **Dahil:** All records in scope and period
-- **Hariç:** None
+- **Hariç:** Internal transfers; verified planned contract/project ends (planned_end_verified = true). Unverifiable planned ends are counted (never assumed planned)
 - **Veri kaynakları:** employment_relationships · **Veri sahibi:** HR_MANAGER
 - **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
 - **Eşikler (hedef/uyarı/kritik):** 18 / 25 / 32
-- **Parametreler (v1):** `{'days': 180, 'required_feeds': ['employment'], 'min_feed_coverage': 0.8}`
+- **Parametreler (v1):** `{'days': 180, 'planned_end_exclusion': 'verified', 'planned_end_alarm_points': 10, 'same_employer_basis': 'legal_entity', 'required_feeds': ['employment'], 'min_feed_coverage': 0.8}`
 - **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE; coverage gate on feeds employment (ADR-020): coverage below min_feed_coverage -> value without colour, status_reason low_coverage (warn) or insufficient_data (enforce, per HRSWI_COVERAGE_MODES)
 
 ### KPI-023 — Ortalama Kıdem / Average Tenure / Средний стаж

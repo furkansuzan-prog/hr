@@ -64,7 +64,7 @@ Değişmezler:
 `POST /imports/{id}/validate` `{mapping}` → özet; hatalar `data_quality_issues` + `GET /imports/{id}/errors.csv`
 `POST /imports/{id}/commit` → idempotent; `failed` durumundaki batch tekrar commit edilince kaldığı chunk'tan devam eder.
 Aynı dosya (SHA-256) aynı tenant ve tipte ikinci kez commit edilemez (409).
-Alanlar: `external_id*`, `source_system`, `first_name*`, `last_name*`, `national_id`, `birth_year`, `gender`, `legal_entity_code*`, `employee_number`, `contract_type`, `start_date*`, `end_date`, `termination_category`, `project_code`, `occupation_code`.
+Alanlar: `external_id*`, `source_system`, `first_name*`, `last_name*`, `national_id`, `birth_year`, `gender`, `legal_entity_code*`, `employee_number`, `contract_type`, `start_date*`, `end_date`, `termination_category`, `project_code`, `occupation_code`, `sgk_exit_code`, `planned_end_date` (ADR-023, §6.5).
 
 ### 6.1 İzin import'u (`entity_type=leave`)
 Alanlar: `external_id*` (kaynak sistem kimliği veya sicil no), `source_system`, `legal_entity_code*`, `leave_type*` (kaynak etiketi), `sgk_report_code` (1/2 → work_injury, 3 → sick, 4 → parental; ADR-019), `start_date*`, `end_date*`, `hours`, `days`, `record_id` (kaynağın rapor/izin numarası — "Rapor No", "İzin No", "Belge No"…; yeniden import kimliği, ADR-019).
@@ -105,6 +105,15 @@ Alanlar: `external_id*` (kaynak sistem kimliği veya sicil no), `source_system`,
 - **Satırlar arası (grup düzeyi sayı, `row_number = null`):** `overtime_weekly_inconsistent` (45 sa/hafta; çalışma düzeni madde 15'te), `leave_and_work_same_day`, `planned_on_leave_mismatch` (beyan ↔ gözlem, WP-4 §3.5), `approval_unknown`, `prohibited_columns_dropped`.
 - **KVKK:** ad, kimlik, tanı sütunları upload'da atılır (`dropped_columns`); commit sonrası ham satırlar yalnızca eşlenen sütunlar; `day_type = leave` izin kaydı oluşturmaz (D-6).
 - **Kapsam ve özet:** besleme `timesheet` (§6.2; `planned_on_leave_days` beyanı; başlık-yalnız dosya reddedilir — olay beslemesi değil). Commit `mark_stale_from(en erken work_date)`; `timesheet_monthly` tetikleyicilerle senkron (§5).
+
+### 6.5 İstihdam import'u: SGK çıkış kodu ve planlı bitiş (`entity_type=employment`, ADR-023, WP-5 §3.1–3.3)
+- **`contract_type`:** değer kümesi `permanent | fixed_term | project | seasonal | unknown`; **boş → `unknown`** + uyarı `contract_type_missing` (asla sessizce `permanent` değil).
+- **`sgk_exit_code`:** 1–2 hane (`3`, `03`, `3.0` → `03`; aksi hata `exit_code_format`). Eşleme `termination_code_map` (tenant verisi; ilk yüklemede WP-5 listesi **doğrulanmamış** eklenir); yalnızca `verified_at` dolu satır kategori belirler. Kategori sırası: doğrulanmış kod > kaynak `termination_category` > `unknown` (+ `termination_reason_missing`); çelişkide kod kazanır + `category_code_conflict`. `termination_reason_source` = `sgk` (kod verildiyse) | `hris` (yalnızca kaynak kategori) | `manual` (manuel fesih ucu).
+- **KVKK (L-8 güvenli varsayılan):** `termination_reason_code` yalnızca tabloda bulunan, `health_related = false`, `retain_code = true` ve 09/24/28/11 dışındaki kodu saklar. Diğerleri (sağlık kodları, kod 11, **tabloda olmayan her kod**) upload'da staging'e yazılmadan önce `masked:…` işaretine çevrilir, önizlemede de görünmez, commit sonrası `masked` olur; kategori yine yazılır. Kuyruk mesajları bu kodları yankılamaz. Kod 11 → yalnızca `termination_counters` (tüzel kişilik × ay, `work_accident_death_exits`). Manuel `POST /manage/employments/{id}/terminate` aynı kuralı uygular.
+- **`planned_end_date`:** `≥ start_date` (aksi hata `planned_end_before_start`); `permanent` sözleşmede uyarı `planned_end_on_permanent`. **`planned_end_verified`** import'ta türetilir: kategori `contract_end`/`project_end` değil → false; `permanent` (`contract_end_on_permanent`), doğrulanmış kod planlı bitiş kodu değil (`exit_code_not_planned_end`) veya çıkış < planlanan bitiş − 7 gün (`planned_end_mismatch`) → false; sözleşme `unknown` ya da kod doğrulanamıyor → NULL (`planned_end_unverifiable`); aksi true. NULL hiçbir KPI'da planlı sayılmaz.
+- **Diğer uyarılar:** `exit_code_mapping_unverified`, `unknown_exit_code`, `exit_code_without_end_date`, `transfer_without_new_spell` (kod 16, 7 gün içinde aynı kişinin dosyada/DB'de yeni dönemi yok).
+- **Yeniden import:** var olan dönem (kişi × işveren × başlangıç) çıkış tarihi veya sınıflandırması değiştiyse yerinde güncellenir (`record_version + 1`); değişmeyen satır yazılmaz.
+- **KPI etkisi:** KPI-018/021/022 v2 `planned_end_exclusion = verified` (`breakdown.planned_end_excluded_share`), KPI-020 v2 bilinmeyen pay bantları (`status_reason = unknown_category_share`, > %20 `insufficient_data`), §3 değişmez 6.
 
 ## 7. Bağlayıcı sözleşmesi (FAZ 2+)
 `Connector.fetch(since) -> Iterable[RawRecord]`; yalnızca belgelenmiş ve yetkili API'ler. Erişilemezlik → `data_sources.last_error`, **kısmi veri yazılmaz**, 503 + yeniden deneme (üstel geri çekilme).

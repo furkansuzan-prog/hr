@@ -2,7 +2,7 @@
 
 # Veri Sözlüğü / Data Dictionary
 
-59 tablo. Şema kaynağı: `backend/app/models/*` → Alembic migration'ları.
+61 tablo. Şema kaynağı: `backend/app/models/*` → Alembic migration'ları.
 
 
 ## `ai_analysis_runs`
@@ -262,6 +262,9 @@ One employment spell of a person with one employer (legal entity). Employer chan
 | end_date | DATE | ✓ |  |
 | termination_category | VARCHAR(30) | ✓ |  |
 | termination_reason_code | VARCHAR(40) | ✓ |  |
+| termination_reason_source | VARCHAR(10) | ✓ |  |
+| planned_end_date | DATE | ✓ |  |
+| planned_end_verified | BOOLEAN | ✓ |  |
 | tenant_id | INTEGER |  | → tenants.id idx |
 | created_at | DATETIME |  |  |
 | updated_at | DATETIME |  |  |
@@ -933,6 +936,49 @@ Kısıtlar:
 | updated_at | DATETIME |  |  |
 
 Kısıtlar: 
+
+## `termination_code_map`
+
+SGK exit code -> platform termination category (WP-5 3.1; ADR-023). Mapping is DATA, per tenant, verified line by line by the payroll / SGK practitioner: a row with verified_at NULL is never used for the category (the code falls back to the source category or 'unknown'). health_related / retain_code are honoured even when unverified (KVKK safe default): such a code is never stored on any table.
+
+| Kolon | Tip | Null | Anahtar / FK |
+|---|---|---|---|
+| id | INTEGER |  | PK |
+| code_system | VARCHAR(30) |  |  |
+| code | VARCHAR(4) |  |  |
+| label_tr | VARCHAR(200) |  |  |
+| category | VARCHAR(30) |  |  |
+| planned_end_eligible | BOOLEAN |  |  |
+| health_related | BOOLEAN |  |  |
+| retain_code | BOOLEAN |  |  |
+| counter | VARCHAR(40) | ✓ |  |
+| valid_from | DATE | ✓ |  |
+| valid_to | DATE | ✓ |  |
+| verified_by | VARCHAR(120) | ✓ |  |
+| verified_at | DATETIME | ✓ |  |
+| note | VARCHAR(300) | ✓ |  |
+| tenant_id | INTEGER |  | → tenants.id idx |
+| created_at | DATETIME |  |  |
+| updated_at | DATETIME |  |  |
+
+Kısıtlar: uq_termination_code
+
+## `termination_counters`
+
+Legal entity x month counts of exits whose code is not stored (WP-5 review condition 3): e.g. code 11 (death from a work accident) -> work_accident_death_exits, for the HSE fatality consistency check. No person link.
+
+| Kolon | Tip | Null | Anahtar / FK |
+|---|---|---|---|
+| id | INTEGER |  | PK |
+| legal_entity_id | INTEGER |  | → legal_entities.id idx |
+| period_month | DATE |  |  |
+| counter | VARCHAR(40) |  |  |
+| count | INTEGER |  |  |
+| tenant_id | INTEGER |  | → tenants.id idx |
+| created_at | DATETIME |  |  |
+| updated_at | DATETIME |  |  |
+
+Kısıtlar: uq_termination_counter
 
 ## `timesheet_monthly`
 

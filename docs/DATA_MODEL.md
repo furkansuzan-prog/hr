@@ -11,6 +11,7 @@ Tam kolon listesi: [`DATA_DICTIONARY.md`](DATA_DICTIONARY.md) (koddan üretilir)
 | Organizasyon birimi | `departments` (tüzel kişiliğe bağlı, tarihsel) | |
 | Kişi | `people` (+ `person_identifiers`) | İşverenden bağımsız; çok sistemli kimlik eşleme |
 | İş ilişkisi | `employment_relationships` | Kişi × işveren × dönem; işveren değişince **yeni satır** |
+| Çıkış kodu eşlemesi | `termination_code_map`, `termination_counters` | SGK çıkış kodu → ayrılış kategorisi (tenant verisi, doğrulanmadan etkin değil); saklanmayan kodlar (sağlık, kod 11) yalnızca tüzel kişilik × ay sayacı (ADR-023) |
 | Görevlendirme | `assignments` | İstihdam × proje/departman/pozisyon/meslek × dönem; çoklu ve eşzamanlı |
 | Pozisyon / meslek / yetkinlik | `positions`, `occupations` (`occupation_group`), `competencies`, `occupation_competencies`, `employee_competencies` | |
 | Planlanan ↔ gerçekleşen iş gücü | `workforce_plans` ↔ `employment_relationships` | KPI-006 |
