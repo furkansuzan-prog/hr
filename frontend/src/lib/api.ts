@@ -108,7 +108,14 @@ export async function download(path: string, filename: string) {
 }
 
 export type KpiStatusReason = "short_window" | "low_exposure" | "unknown_category_share" | "low_coverage";
-export type KpiAlert = { type: "fatality"; count: number; by_month: Record<string, number> };
+/** ADR-018 / ADR-021: `fatality` (with `by_worker_category` when the cases carry one) and `fatality_reclassified`
+    (a fatality record later reclassified with a reason code, WP-2 R2.5). Month level only, never a person. */
+export type KpiAlert = {
+  type: "fatality" | "fatality_reclassified";
+  count: number;
+  by_month: Record<string, number>;
+  by_worker_category?: Record<string, number>;
+};
 
 export type KpiResult = {
   code: string;

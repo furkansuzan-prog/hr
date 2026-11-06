@@ -11,20 +11,22 @@ import { Badge, Button, Card, CardBody, CardHeader, CardTitle, ErrorBox, Input, 
 
 type Upload = { batch_id: number; headers: string[]; total_rows: number; suggested_mapping: Record<string, string | null>; required_fields: string[]; preview: Record<string, string>[]; entity_type?: string; dropped_columns?: string[] };
 type Summary = { batch_id: number; status: string; file_name: string; total_rows: number; valid_rows: number; error_rows: number; committed_rows: number; identity_reviews: number; attempt_count: number; error_message: string | null };
+type Kind = "employment" | "leave" | "safety_event";
 type Source = { id: number; code: string; name: string; kind: string; status: string; last_success_at: string | null; last_error: string | null };
 
 export default function Imports() {
   const { t } = useI18n();
   const qc = useQueryClient();
   const canReview = useCan("people.write");
+  const canHse = useCan("hse.read"); // ADR-021: the HSE case import needs hse.read in addition to import.write
   const [up, setUp] = useState<Upload | null>(null);
-  const [kind, setKind] = useState<"employment" | "leave">("employment");
+  const [kind, setKind] = useState<Kind>("employment");
   const [mapping, setMapping] = useState<Record<string, string | null>>({});
   const [sum, setSum] = useState<Summary | null>(null);
   const [err, setErr] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
   // B-20 / ADR-020: optional coverage declaration sent with the upload
-  const [decl, setDecl] = useState({ on: false, from: monthStart(1).slice(0, 7), to: monthStart(1).slice(0, 7), completeness: "complete" as Completeness, entities: "" });
+  const [decl, setDecl] = useState({ on: false, from: monthStart(1).slice(0, 7), to: monthStart(1).slice(0, 7), completeness: "complete" as Completeness, entities: "", subcontractor: true, nearMiss: true });
   const batches = useQuery({ queryKey: ["imports"], queryFn: () => api<Summary[]>("/api/v1/imports") });
   const sources = useQuery({ queryKey: ["sources"], queryFn: () => api<Source[]>("/api/v1/integrations/sources") });
 
@@ -37,6 +39,8 @@ export default function Imports() {
       fd.append("coverage", JSON.stringify({
         period_start: `${decl.from}-01`, period_end: monthEnd(decl.to), completeness: decl.completeness,
         legal_entity_codes: decl.entities.split(",").map((c) => c.trim()).filter(Boolean),
+        // WP-6 HSE 3.6: safety declarations say whether subcontractor cases / near misses are in the file
+        ...(kind === "safety_event" ? { attributes: { includes_subcontractor_cases: decl.subcontractor, includes_near_miss: decl.nearMiss } } : {}),
       }));
     }
     const r = await api<Upload>("/api/v1/imports", { method: "POST", body: fd });
@@ -53,18 +57,20 @@ export default function Imports() {
       <div className="grid gap-4 lg:grid-cols-3">
         <Card className="lg:col-span-2">
           <CardHeader>
-            <CardTitle>{kind === "leave" ? "İzin / devamsızlık içe aktarma" : "Personel / istihdam içe aktarma"} (CSV / XLSX)</CardTitle>
-            <Select aria-label="Veri türü" value={kind} disabled={busy} onChange={(e) => { setKind(e.target.value as "employment" | "leave"); setUp(null); setSum(null); }}>
-              <option value="employment">Personel / istihdam</option>
-              <option value="leave">İzin / devamsızlık</option>
+            <CardTitle>{t(`imp.title.${kind}`)} (CSV / XLSX)</CardTitle>
+            <Select aria-label={t("imp.kind")} value={kind} disabled={busy} onChange={(e) => { setKind(e.target.value as Kind); setUp(null); setSum(null); }}>
+              <option value="employment">{t("imp.kind.employment")}</option>
+              <option value="leave">{t("imp.kind.leave")}</option>
+              {canHse && <option value="safety_event">{t("imp.kind.safety_event")}</option>}
             </Select>
           </CardHeader>
           <CardBody className="space-y-3">
-            {kind === "leave" && (
-              <p className="text-xs text-muted">
-                İzin türleri otomatik eşlenir; doğum, analık (SGK rapor türü 4), süt ve babalık izinleri devamsızlığa
-                hiç girmez. Tanı/teşhis gibi sağlık sütunları dosyadan okunmaz ve saklanmaz.
-              </p>
+            {kind === "leave" && <p className="text-xs text-muted">{t("imp.notice.leave")}</p>}
+            {kind === "safety_event" && (
+              <div role="note" className="space-y-1 rounded-md bg-surface-2 p-2 text-xs">
+                <p><b>KVKK:</b> {t("imp.notice.safety")}</p>
+                <p className="text-muted">{t("imp.notice.safetyRules")}</p>
+              </div>
             )}
             <fieldset className="space-y-2 rounded-md border border-border p-2 text-xs">
               <label className="flex items-center gap-2">
@@ -81,6 +87,12 @@ export default function Imports() {
                     </Select>
                   </label>
                   <label className="flex min-w-48 flex-1 flex-col gap-1">{t("cov.entities")}<Input className="h-9" value={decl.entities} placeholder="MC, SUB01" onChange={(e) => setDecl({ ...decl, entities: e.target.value })} /></label>
+                  {kind === "safety_event" && (
+                    <>
+                      <label className="flex items-center gap-2"><input type="checkbox" checked={decl.subcontractor} onChange={(e) => setDecl({ ...decl, subcontractor: e.target.checked })} />{t("cov.attr.includes_subcontractor_cases")}</label>
+                      <label className="flex items-center gap-2"><input type="checkbox" checked={decl.nearMiss} onChange={(e) => setDecl({ ...decl, nearMiss: e.target.checked })} />{t("cov.attr.includes_near_miss")}</label>
+                    </>
+                  )}
                 </div>
               )}
               <p className="text-muted">{t("cov.uploadHelp")}</p>
@@ -91,7 +103,7 @@ export default function Imports() {
                 <p className="text-sm">{up.total_rows} rows · batch #{up.batch_id}</p>
                 {!!up.dropped_columns?.length && (
                   <p role="status" className="rounded-md bg-surface-2 p-2 text-xs">
-                    KVKK: sağlık bilgisi içeren sütun(lar) okunmadan atıldı: <b>{up.dropped_columns.join(", ")}</b>
+                    KVKK: {t("imp.dropped")} <b>{up.dropped_columns.join(", ")}</b>
                   </p>
                 )}
                 <div className="grid gap-2 sm:grid-cols-2">

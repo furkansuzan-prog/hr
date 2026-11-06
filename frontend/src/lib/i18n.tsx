@@ -323,9 +323,9 @@ const dict = {
   "cov.state.undeclared": { tr: "Beyan yok", en: "Not declared", ru: "Не заявлено" },
   "cov.upload": { tr: "Bu dosyanın kapsamı (isteğe bağlı)", en: "Coverage of this file (optional)", ru: "Охват этого файла (необязательно)" },
   "cov.uploadHelp": {
-    tr: "Beyan yoksa dosyadaki firma × aylar \"kısmi\" kaydedilir. Yalnızca başlık satırı olan izin dosyası \"tam\" beyanla \"kayıt yok\" onayıdır.",
-    en: "Without a declaration the file's employer × months are stored as \"partial\". A header-only leave file with \"complete\" confirms that there are no records.",
-    ru: "Без заявления пары работодатель × месяц из файла сохраняются как «частичные». Файл отпусков только с заголовком и «полные» подтверждает отсутствие записей.",
+    tr: "Beyan yoksa dosyadaki firma × aylar \"kısmi\" kaydedilir. Yalnızca başlık satırı olan izin veya İSG dosyası \"tam\" beyanla \"kayıt yok\" onayıdır.",
+    en: "Without a declaration the file's employer × months are stored as \"partial\". A header-only leave or HSE file with \"complete\" confirms that there are no records.",
+    ru: "Без заявления пары работодатель × месяц из файла сохраняются как «частичные». Файл отпусков или ОТ и ПБ только с заголовком и «полные» подтверждает отсутствие записей.",
   },
   "cov.from": { tr: "İlk ay", en: "First month", ru: "Первый месяц" },
   "cov.to": { tr: "Son ay", en: "Last month", ru: "Последний месяц" },
@@ -342,6 +342,47 @@ const dict = {
     en: "A fatality is recorded in this period and scope. This alert is independent of the rate, colour and small-group rules.",
     ru: "В этом периоде и охвате зарегистрирован смертельный случай. Предупреждение не зависит от показателя, цвета и правила малых групп.",
   },
+  // ADR-021: fatality alert breakdown and reclassification marker (WP-2 R2.3, R2.5)
+  "alert.byCategory": { tr: "Çalışan kategorisi", en: "Worker category", ru: "Категория работника" },
+  "alert.fatalityReclassified": {
+    tr: "Bu dönemde ölümlü kayıt yeniden sınıflandırıldı (gerekçe kodlu)",
+    en: "Fatality record(s) reclassified in this period (with reason code)",
+    ru: "Записи о смертельных случаях переклассифицированы в этом периоде (с кодом причины)",
+  },
+  "wcat.own_employee": { tr: "Kendi çalışanı", en: "Own employee", ru: "Собственный работник" },
+  "wcat.subcontractor_worker": { tr: "Alt yüklenici çalışanı", en: "Subcontractor worker", ru: "Работник субподрядчика" },
+  "wcat.temporary_agency_worker": { tr: "Geçici iş ilişkisi işçisi", en: "Temporary agency worker", ru: "Временный (заёмный) работник" },
+  "wcat.third_party": { tr: "Üçüncü kişi / ziyaretçi", en: "Third party / visitor", ru: "Третье лицо / посетитель" },
+  "wcat.unknown": { tr: "Kategori yok (eski kayıt)", en: "No category (legacy record)", ru: "Без категории (старая запись)" },
+  "imp.kind": { tr: "Veri türü", en: "Data type", ru: "Тип данных" },
+  "imp.kind.employment": { tr: "Personel / istihdam", en: "Personnel / employment", ru: "Персонал / занятость" },
+  "imp.kind.leave": { tr: "İzin / devamsızlık", en: "Leave / absence", ru: "Отпуска / отсутствия" },
+  "imp.kind.safety_event": { tr: "İSG vakaları", en: "HSE cases", ru: "Случаи ОТ и ПБ" },
+  "imp.title.employment": { tr: "Personel / istihdam içe aktarma", en: "Personnel / employment import", ru: "Импорт персонала / занятости" },
+  "imp.title.leave": { tr: "İzin / devamsızlık içe aktarma", en: "Leave / absence import", ru: "Импорт отпусков / отсутствий" },
+  "imp.title.safety_event": { tr: "İSG vaka içe aktarma", en: "HSE case import", ru: "Импорт случаев ОТ и ПБ" },
+  "imp.notice.leave": {
+    tr: "İzin türleri otomatik eşlenir; doğum, analık (SGK rapor türü 4), süt ve babalık izinleri devamsızlığa hiç girmez. Tanı/teşhis gibi sağlık sütunları dosyadan okunmaz ve saklanmaz.",
+    en: "Leave types are mapped automatically; birth, maternity (SGK report type 4), nursing and paternity leave never count as absence. Health columns such as diagnosis are not read and not stored.",
+    ru: "Типы отпусков сопоставляются автоматически; отпуск по беременности и родам (тип справки SGK 4), кормлению и отцовству не считается отсутствием. Медицинские столбцы (диагноз и т. п.) не читаются и не сохраняются.",
+  },
+  "imp.notice.safety": {
+    tr: "Bir satır = etkilenen bir kişinin vakası, kimliği olmadan. Ad, kimlik/sicil no, yaş, cinsiyet, meslek, tanı, yaralanma türü/vücut bölgesi, açıklama, kök neden ve tanık gibi sütunlar yüklemede okunmadan atılır; yalnızca sütun adları listelenir, değerleri hiçbir yerde saklanmaz.",
+    en: "One row = the case of one affected person, without identity. Columns such as name, ID/employee number, age, gender, occupation, diagnosis, injury type/body part, description, root cause and witness are dropped on upload without being read; only the column names are listed, their values are never stored.",
+    ru: "Одна строка = случай одного пострадавшего, без идентификации. Столбцы с ФИО, номером документа/табельным номером, возрастом, полом, должностью, диагнозом, характером травмы/частью тела, описанием, причиной и свидетелями удаляются при загрузке без чтения; показываются только названия столбцов, значения нигде не сохраняются.",
+  },
+  "imp.notice.safetyRules": {
+    tr: "Sınıf etiketi tahmin edilmez: tanınmayan, belirsiz, meslek hastalığı, servis/yol kazası ve kapsam dışı olaylar veri kalite kuyruğunda bekler. Aynı olay no + vaka no yeniden gelirse vaka güncellenir, dosyada olmayan vaka silinmez. Ölümlü kayıt yalnızca gerekçe koduyla yeniden sınıflandırılabilir.",
+    en: "Class labels are never guessed: unknown, ambiguous, occupational illness, commuting and out-of-scope events wait in the data-quality queue. The same event no. + case no. updates the case; a case missing from a later file is not deleted. A fatality can only be reclassified with a reason code.",
+    ru: "Классы не угадываются: нераспознанные, неоднозначные, профзаболевания, ДТП по пути на работу и события вне охвата ждут в очереди качества данных. Тот же номер происшествия + номер случая обновляет случай; отсутствующий в новом файле случай не удаляется. Смертельный случай переклассифицируется только с кодом причины.",
+  },
+  "imp.dropped": {
+    tr: "kişi, sağlık veya serbest metin içeren sütun(lar) okunmadan atıldı:",
+    en: "column(s) with identity, health or free-text content were dropped without being read:",
+    ru: "столбцы с персональными, медицинскими данными или свободным текстом удалены без чтения:",
+  },
+  "cov.attr.includes_subcontractor_cases": { tr: "Alt yüklenici vakaları dahil", en: "Includes subcontractor cases", ru: "Включает случаи субподрядчиков" },
+  "cov.attr.includes_near_miss": { tr: "Ramak kala bildirimleri dahil", en: "Includes near misses", ru: "Включает почти-происшествия" },
 } as const;
 
 export type Key = keyof typeof dict;

@@ -5,21 +5,35 @@ import { ByEntityTable, InfoNote, PermGate, SeriesCard, TileGrid, useKpiTiles } 
 import { useFilters } from "@/components/providers";
 import { PageHeader } from "@/components/ui/primitives";
 
-const CODES = ["KPI-014A", "KPI-014B"];
+const CODES = ["KPI-014A", "KPI-014B", "KPI-043"]; // KPI-043 near-miss rate: neutral context, never coloured (ADR-021)
+const RATE_CODES = ["KPI-014A", "KPI-014B"];
+const CATEGORIES = ["own_employee", "subcontractor_worker", "temporary_agency_worker", "third_party", "unknown"] as const;
 
 /** WP-2 R2 / ADR-017: non-dismissable band above the rates whenever a fatality is recorded in scope and period.
     Shows count and month only (no person, description or day). Shares the tile query, so no extra request. */
 function FatalityBand({ q }: { q: string }) {
   const { t } = useI18n();
   const tiles = useKpiTiles(CODES, q);
-  const r = tiles.data?.find((x) => fatalities(x) > 0);
-  if (!r) return null;
-  const months = Object.entries(r.alerts?.find((a) => a.type === "fatality")?.by_month ?? {});
+  const rates = tiles.data?.filter((x) => RATE_CODES.includes(x.code));
+  const r = rates?.find((x) => fatalities(x) > 0);
+  const re = rates?.map((x) => x.alerts?.find((a) => a.type === "fatality_reclassified")).find(Boolean);
+  if (!r && !re) return null;
+  const fatal = r?.alerts?.find((a) => a.type === "fatality");
+  const months = Object.entries(fatal?.by_month ?? {});
+  const cats = CATEGORIES.filter((c) => fatal?.by_worker_category?.[c]);
   return (
     <div role="alert" className="mb-4 rounded-md border border-crit/40 bg-crit/10 p-3 text-sm text-crit">
-      <p className="font-semibold">{t("alert.fatality")}: {fatalities(r)}</p>
-      <p className="mt-1">{t("alert.fatalityBand")}</p>
-      {months.length > 0 && <p className="mt-1 font-mono text-xs">{months.map(([m, n]) => `${m}: ${n}`).join(" · ")}</p>}
+      {r && (
+        <>
+          <p className="font-semibold">{t("alert.fatality")}: {fatalities(r)}</p>
+          <p className="mt-1">{t("alert.fatalityBand")}</p>
+          {months.length > 0 && <p className="mt-1 font-mono text-xs">{months.map(([m, n]) => `${m}: ${n}`).join(" · ")}</p>}
+          {cats.length > 0 && (
+            <p className="mt-1 text-xs">{t("alert.byCategory")}: {cats.map((c) => `${t(`wcat.${c}`)} ${fatal!.by_worker_category![c]}`).join(" · ")}</p>
+          )}
+        </>
+      )}
+      {re && <p className={r ? "mt-2 text-xs" : "font-semibold"}>{t("alert.fatalityReclassified")}: {re.count}</p>}
     </div>
   );
 }
