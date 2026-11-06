@@ -102,12 +102,12 @@ Ortak kurallar: payda 0 → `not_computable` (asla 0); kaynak veri yok → `insu
 - **Pay:** Leave hours prorated to period for types in parameter absence_types
 - **Payda:** Planned hours on approved timesheets + leave hours (all types except public holidays) of employee working days without a planned timesheet row (planned capacity; ADR-024)
 - **Amaç:** Track absenteeism rate
-- **Dahil:** Unexcused absence, sick-note days (raporlu), work-injury / occupational-disease rest (work_injury - included explicitly pending product-owner decision PO-1), annual leave, unpaid leave, other leave
-- **Hariç:** Public holidays (not working days); parental/maternity and related protected leave (decision D-6)
+- **Dahil:** Unexcused absence, sick-note days (raporlu), annual leave, unpaid leave, other leave
+- **Hariç:** Public holidays (not working days); parental/maternity and related protected leave (decision D-6); work-injury / occupational-disease rest (work_injury, SGK report codes 1/2 - decision D-8, reported under occupational safety)
 - **Veri kaynakları:** leave_records, timesheets · **Veri sahibi:** HR_MANAGER
 - **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
 - **Eşikler (hedef/uyarı/kritik):** 7 / 9 / 11
-- **Parametreler (v1):** `{'absence_types': ['unexcused', 'sick', 'work_injury', 'annual', 'unpaid', 'other'], 'excluded_types': ['public_holiday', 'parental'], 'denominator_basis': 'planned_capacity', 'required_feeds': ['timesheet', 'leave'], 'min_feed_coverage': 0.8}`
+- **Parametreler (v1):** `{'absence_types': ['unexcused', 'sick', 'annual', 'unpaid', 'other'], 'excluded_types': ['public_holiday', 'parental', 'work_injury'], 'denominator_basis': 'planned_capacity', 'required_feeds': ['timesheet', 'leave'], 'min_feed_coverage': 0.8}`
 - **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE; coverage gate on feeds timesheet, leave (ADR-020): coverage below min_feed_coverage -> value without colour, status_reason low_coverage (warn) or insufficient_data (enforce, per HRSWI_COVERAGE_MODES)
 
 ### KPI-004 — İş Gücü Kapasite Kullanımı / Workforce Capacity Utilisation / Использование мощности персонала
@@ -241,13 +241,13 @@ Ortak kurallar: payda 0 → `not_computable` (asla 0); kaynak veri yok → `insu
 - **Formül:** (Lost-time injuries + fatalities) / hours worked x 1,000,000
 - **Pay:** LTI + fatality events
 - **Payda:** Hours worked (timesheets)
-- **Amaç:** Lost-time injury frequency. Colour only when hours worked in the window reach the minimum exposure (formula parameter threshold_min_exposure_hours); below it the value and event counts are shown without colour (status_reason low_exposure) - small scopes are never coloured, judge them at company/tenant level. Any fatality in scope surfaces an alert independent of the rate. The thresholds count as active only once KPI-043 (near-miss reporting rate) is active (HR Director section 3.3 rule 2; docs/hr/hse/WP-2). One safety_events row = one case (ADR-021); third-party cases and subcontractor / agency cases whose employer has no hours worked in the denominator that month are shown as out-of-rate cases, not counted in the rate (WP-6 HSE 3.7). Minimum exposure: 1,000,000 h.
-- **Dahil:** All records in scope and period
-- **Hariç:** None
+- **Amaç:** Lost-time injury frequency. Colour only when hours worked in the window reach the minimum exposure (formula parameter threshold_min_exposure_hours); below it the value and event counts are shown without colour (status_reason low_exposure) - small scopes are never coloured, judge them at company/tenant level. Any fatality in scope surfaces an alert independent of the rate. The thresholds count as active only once KPI-043 (near-miss reporting rate) is active (HR Director section 3.3 rule 2; docs/hr/hse/WP-2). One safety_events row = one case (ADR-021). Scope: the company's own employees only (decision D-10) - the HSE import does not store subcontractor, temporary-agency or third-party cases. Minimum exposure: 1,000,000 h.
+- **Dahil:** Cases of the company's own employees (worker_category own_employee; legacy rows without a category count as own - they were recorded per employing legal entity)
+- **Hariç:** Subcontractor, temporary-agency and third-party cases (decision D-10: rejected by the HSE import; legacy rows of these categories are not counted and shown as a count only)
 - **Veri kaynakları:** safety_events, timesheets · **Veri sahibi:** HSE_SPECIALIST
 - **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
 - **Eşikler (hedef/uyarı/kritik):** 1.5 / 3.0 / 5.0
-- **Parametreler (v1):** `{'multiplier': 1000000, 'threshold_min_exposure_hours': 1000000, 'exclude_out_of_rate_cases': True, 'required_feeds': ['timesheet', 'safety'], 'min_feed_coverage': 0.9}`
+- **Parametreler (v1):** `{'multiplier': 1000000, 'threshold_min_exposure_hours': 1000000, 'own_employees_only': True, 'required_feeds': ['timesheet', 'safety'], 'min_feed_coverage': 0.9}`
 - **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE; coverage gate on feeds timesheet, safety (ADR-020): coverage below min_feed_coverage -> value without colour, status_reason low_coverage (warn) or insufficient_data (enforce, per HRSWI_COVERAGE_MODES)
 
 ### KPI-014B — Toplam Kaydedilebilir Olay Oranı (TRIR) / Total Recordable Incident Rate / TRIR
@@ -255,13 +255,13 @@ Ortak kurallar: payda 0 → `not_computable` (asla 0); kaynak veri yok → `insu
 - **Formül:** Recordable injuries (fatality, LTI, restricted work, medical treatment) / hours worked x 200,000
 - **Pay:** Recordable events
 - **Payda:** Hours worked
-- **Amaç:** Recordable injury frequency. Colour only when hours worked in the window reach the minimum exposure (formula parameter threshold_min_exposure_hours); below it the value and event counts are shown without colour (status_reason low_exposure) - small scopes are never coloured, judge them at company/tenant level. Any fatality in scope surfaces an alert independent of the rate. The thresholds count as active only once KPI-043 (near-miss reporting rate) is active (HR Director section 3.3 rule 2; docs/hr/hse/WP-2). One safety_events row = one case (ADR-021); third-party cases and subcontractor / agency cases whose employer has no hours worked in the denominator that month are shown as out-of-rate cases, not counted in the rate (WP-6 HSE 3.7). Minimum exposure: 500,000 h (HR Director WP-2 Q2).
-- **Dahil:** All records in scope and period
-- **Hariç:** None
+- **Amaç:** Recordable injury frequency. Colour only when hours worked in the window reach the minimum exposure (formula parameter threshold_min_exposure_hours); below it the value and event counts are shown without colour (status_reason low_exposure) - small scopes are never coloured, judge them at company/tenant level. Any fatality in scope surfaces an alert independent of the rate. The thresholds count as active only once KPI-043 (near-miss reporting rate) is active (HR Director section 3.3 rule 2; docs/hr/hse/WP-2). One safety_events row = one case (ADR-021). Scope: the company's own employees only (decision D-10) - the HSE import does not store subcontractor, temporary-agency or third-party cases. Minimum exposure: 500,000 h (HR Director WP-2 Q2).
+- **Dahil:** Cases of the company's own employees (worker_category own_employee; legacy rows without a category count as own - they were recorded per employing legal entity)
+- **Hariç:** Subcontractor, temporary-agency and third-party cases (decision D-10: rejected by the HSE import; legacy rows of these categories are not counted and shown as a count only)
 - **Veri kaynakları:** safety_events, timesheets · **Veri sahibi:** HSE_SPECIALIST
 - **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
 - **Eşikler (hedef/uyarı/kritik):** 1.0 / 2.0 / 3.5
-- **Parametreler (v1):** `{'multiplier': 200000, 'threshold_min_exposure_hours': 500000, 'exclude_out_of_rate_cases': True, 'required_feeds': ['timesheet', 'safety'], 'min_feed_coverage': 0.9}`
+- **Parametreler (v1):** `{'multiplier': 200000, 'threshold_min_exposure_hours': 500000, 'own_employees_only': True, 'required_feeds': ['timesheet', 'safety'], 'min_feed_coverage': 0.9}`
 - **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE; coverage gate on feeds timesheet, safety (ADR-020): coverage below min_feed_coverage -> value without colour, status_reason low_coverage (warn) or insufficient_data (enforce, per HRSWI_COVERAGE_MODES)
 
 ### KPI-016 — Aktif Personel Sayısı / Active Headcount / Численность персонала
@@ -303,7 +303,7 @@ Ortak kurallar: payda 0 → `not_computable` (asla 0); kaynak veri yok → `insu
 - **Veri kaynakları:** employment_relationships · **Veri sahibi:** HR_MANAGER
 - **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
 - **Eşikler (hedef/uyarı/kritik):** 10 / 15 / 20
-- **Parametreler (v1):** `{'days': 90, 'planned_end_exclusion': 'verified', 'planned_end_alarm_points': 10, 'same_employer_basis': 'legal_entity', 'required_feeds': ['employment'], 'min_feed_coverage': 0.8}`
+- **Parametreler (v1):** `{'days': 90, 'planned_end_exclusion': 'verified', 'planned_end_alarm_points': 10, 'same_employer_basis': 'group', 'required_feeds': ['employment'], 'min_feed_coverage': 0.8}`
 - **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE; coverage gate on feeds employment (ADR-020): coverage below min_feed_coverage -> value without colour, status_reason low_coverage (warn) or insufficient_data (enforce, per HRSWI_COVERAGE_MODES)
 
 ### KPI-019 — Çalışan Başına İşgücü Maliyeti / Labour Cost per Employee / Затраты на сотрудника
@@ -345,7 +345,7 @@ Ortak kurallar: payda 0 → `not_computable` (asla 0); kaynak veri yok → `insu
 - **Veri kaynakları:** employment_relationships · **Veri sahibi:** HR_MANAGER
 - **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
 - **Eşikler (hedef/uyarı/kritik):** 3 / 5 / 8
-- **Parametreler (v1):** `{'days': 30, 'planned_end_exclusion': 'verified', 'planned_end_alarm_points': 10, 'same_employer_basis': 'legal_entity', 'required_feeds': ['employment'], 'min_feed_coverage': 0.8}`
+- **Parametreler (v1):** `{'days': 30, 'planned_end_exclusion': 'verified', 'planned_end_alarm_points': 10, 'same_employer_basis': 'group', 'required_feeds': ['employment'], 'min_feed_coverage': 0.8}`
 - **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE; coverage gate on feeds employment (ADR-020): coverage below min_feed_coverage -> value without colour, status_reason low_coverage (warn) or insufficient_data (enforce, per HRSWI_COVERAGE_MODES)
 
 ### KPI-022 — İlk 180 Gün Ayrılış Oranı / 180-Day Early Turnover / Текучесть за 180 дней
@@ -359,7 +359,7 @@ Ortak kurallar: payda 0 → `not_computable` (asla 0); kaynak veri yok → `insu
 - **Veri kaynakları:** employment_relationships · **Veri sahibi:** HR_MANAGER
 - **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
 - **Eşikler (hedef/uyarı/kritik):** 18 / 25 / 32
-- **Parametreler (v1):** `{'days': 180, 'planned_end_exclusion': 'verified', 'planned_end_alarm_points': 10, 'same_employer_basis': 'legal_entity', 'required_feeds': ['employment'], 'min_feed_coverage': 0.8}`
+- **Parametreler (v1):** `{'days': 180, 'planned_end_exclusion': 'verified', 'planned_end_alarm_points': 10, 'same_employer_basis': 'group', 'required_feeds': ['employment'], 'min_feed_coverage': 0.8}`
 - **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE; coverage gate on feeds employment (ADR-020): coverage below min_feed_coverage -> value without colour, status_reason low_coverage (warn) or insufficient_data (enforce, per HRSWI_COVERAGE_MODES)
 
 ### KPI-023 — Ortalama Kıdem / Average Tenure / Средний стаж

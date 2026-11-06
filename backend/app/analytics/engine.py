@@ -568,13 +568,15 @@ PARAM_RULES = {
         and all(isinstance(b, bool) for b in a.values()) for a in v.values()),
     # ADR-021 / WP-6 HSE 3.7: third-party cases and subcontractor / agency cases without hours in the denominator
     # are reported as out-of-rate cases instead of entering the numerator
-    "exclude_out_of_rate_cases": lambda v: isinstance(v, bool),
+    "exclude_out_of_rate_cases": lambda v: isinstance(v, bool),  # older formula versions only (superseded by D-10)
+    # Decision D-10 (PO-3): HSE covers own employees only - cases of any other worker category never enter the rate
+    "own_employees_only": lambda v: isinstance(v, bool),
     # ADR-023 / WP-5 3.4: which early leavers are planned contract/project ends (none = v1, category = C1 only,
     # verified = planned_end_verified IS TRUE; HR Director S-1 -> verified)
     "planned_end_exclusion": lambda v: v in ("none", "category", "verified"),
     # WP-5 3.4 / S-5: note when early turnover falls while the planned-end share rises by >= this many points (3 periods)
     "planned_end_alarm_points": lambda v: isinstance(v, int) and not isinstance(v, bool) and 1 <= v <= 100,
-    # PO-4 switch (not decided): 'same employer' for repeated planned ends - legal_entity (safe default) | group
+    # 'same employer' for repeated planned ends - legal_entity | group (decision D-11 / PO-4: catalog uses group)
     "same_employer_basis": lambda v: v in ("legal_entity", "group"),
     # ADR-023 / WP-5 3.5 (S-4): unknown-category share bands [colour limit, value limit] for KPI-020
     "unknown_share_bands": lambda v: isinstance(v, list) and len(v) == 2 and all(
@@ -606,8 +608,10 @@ CALCULATOR_PARAMS: dict[str, set[str]] = {
     "annual_leave_nonuse": {"hours_per_day", "long_absence_types", "day_basis", "min_pattern_coverage"},
     "capacity_utilization": {"min_coverage"},
     "unit_labor_cost": {"reporting_currency"},
-    "ltifr": {"event_types", "multiplier", "threshold_min_exposure_hours", "exclude_out_of_rate_cases"},
-    "trir": {"event_types", "multiplier", "threshold_min_exposure_hours", "exclude_out_of_rate_cases"},
+    "ltifr": {"event_types", "multiplier", "threshold_min_exposure_hours", "exclude_out_of_rate_cases",
+              "own_employees_only"},
+    "trir": {"event_types", "multiplier", "threshold_min_exposure_hours", "exclude_out_of_rate_cases",
+             "own_employees_only"},
     "near_miss_rate": {"multiplier", "threshold_min_exposure_hours"},
     "early_turnover_90": {"days", "planned_end_exclusion", "planned_end_alarm_points", "same_employer_basis"},
     "labor_cost_per_employee": {"reporting_currency"},

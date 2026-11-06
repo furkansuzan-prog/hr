@@ -27,7 +27,7 @@ export default function Imports() {
   const [err, setErr] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
   // B-20 / ADR-020: optional coverage declaration sent with the upload
-  const [decl, setDecl] = useState({ on: false, from: monthStart(1).slice(0, 7), to: monthStart(1).slice(0, 7), completeness: "complete" as Completeness, entities: "", subcontractor: true, nearMiss: true, plannedOnLeave: "" as PlannedOnLeave });
+  const [decl, setDecl] = useState({ on: false, from: monthStart(1).slice(0, 7), to: monthStart(1).slice(0, 7), completeness: "complete" as Completeness, entities: "", nearMiss: true, plannedOnLeave: "" as PlannedOnLeave });
   // ADR-022: timesheet upload options (re-import correction mode, approval of the source)
   const [tsOpt, setTsOpt] = useState({ mode: "skip" as "skip" | "replace", approved: false });
   const batches = useQuery({ queryKey: ["imports"], queryFn: () => api<Summary[]>("/api/v1/imports") });
@@ -46,8 +46,9 @@ export default function Imports() {
       fd.append("coverage", JSON.stringify({
         period_start: `${decl.from}-01`, period_end: monthEnd(decl.to), completeness: decl.completeness,
         legal_entity_codes: decl.entities.split(",").map((c) => c.trim()).filter(Boolean),
-        // WP-6 HSE 3.6: safety declarations say whether subcontractor cases / near misses are in the file
-        ...(kind === "safety_event" ? { attributes: { includes_subcontractor_cases: decl.subcontractor, includes_near_miss: decl.nearMiss } } : {}),
+        // WP-6 HSE 3.6: safety declarations say whether near misses are in the file. No subcontractor attribute:
+        // decision D-10 - HSE covers own employees only (the import rejects other worker categories)
+        ...(kind === "safety_event" ? { attributes: { includes_near_miss: decl.nearMiss } } : {}),
         // WP-4 3.5: whether the source writes planned hours on leave days (timesheet feed only)
         ...(kind === "timesheet" && decl.plannedOnLeave ? { planned_on_leave_days: decl.plannedOnLeave } : {}),
       }));
@@ -123,10 +124,7 @@ export default function Imports() {
                     </label>
                   )}
                   {kind === "safety_event" && (
-                    <>
-                      <label className="flex items-center gap-2"><input type="checkbox" checked={decl.subcontractor} onChange={(e) => setDecl({ ...decl, subcontractor: e.target.checked })} />{t("cov.attr.includes_subcontractor_cases")}</label>
-                      <label className="flex items-center gap-2"><input type="checkbox" checked={decl.nearMiss} onChange={(e) => setDecl({ ...decl, nearMiss: e.target.checked })} />{t("cov.attr.includes_near_miss")}</label>
-                    </>
+                    <label className="flex items-center gap-2"><input type="checkbox" checked={decl.nearMiss} onChange={(e) => setDecl({ ...decl, nearMiss: e.target.checked })} />{t("cov.attr.includes_near_miss")}</label>
                   )}
                 </div>
               )}

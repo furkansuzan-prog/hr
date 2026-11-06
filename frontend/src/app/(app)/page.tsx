@@ -7,6 +7,7 @@ import { Chart, PALETTE } from "@/components/chart";
 import { FilterBar, KpiTile, filterQs } from "@/components/kpi";
 import { useCan, useFilters } from "@/components/providers";
 import { Badge, Card, CardBody, CardHeader, CardTitle, ErrorBox, PageHeader } from "@/components/ui/primitives";
+import { UsageNotice } from "@/components/usage-notice";
 
 type Point = { period: string; value: number | null; status: string };
 type Dash = {
@@ -137,6 +138,7 @@ export default function Overview() {
           </section>
         </>
       )}
+      <UsageNotice />
     </>
   );
 }

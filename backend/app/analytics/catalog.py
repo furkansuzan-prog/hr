@@ -45,9 +45,15 @@ _SAFETY_PURPOSE = (
     "low_exposure) - small scopes are never coloured, judge them at company/tenant level. Any fatality in scope "
     "surfaces an alert independent of the rate. The thresholds count as active only once KPI-043 (near-miss "
     "reporting rate) is active (HR Director section 3.3 rule 2; docs/hr/hse/WP-2). One safety_events row = one case "
-    "(ADR-021); third-party cases and subcontractor / agency cases whose employer has no hours worked in the "
-    "denominator that month are shown as out-of-rate cases, not counted in the rate (WP-6 HSE 3.7)."
+    "(ADR-021). Scope: the company's own employees only (decision D-10) - the HSE import does not store "
+    "subcontractor, temporary-agency or third-party cases."
 )
+# Decision D-10 (PO-3): HSE covers ONLY the firm's own employees. Formula parameter own_employees_only replaces the
+# ADR-021 out-of-rate rule (exclude_out_of_rate_cases, kept only for older formula versions); new versions via sync.
+_OWN_EMPLOYEES_INCL = ("Cases of the company's own employees (worker_category own_employee; legacy rows without a "
+                       "category count as own - they were recorded per employing legal entity)")
+_OWN_EMPLOYEES_EXCL = ("Subcontractor, temporary-agency and third-party cases (decision D-10: rejected by the HSE "
+                       "import; legacy rows of these categories are not counted and shown as a count only)")
 
 KPI_CATALOG: list[dict] = [
     # ---------------------------------------------------------------- Workforce sustainability / turnover
@@ -77,16 +83,16 @@ KPI_CATALOG: list[dict] = [
        num="Leave hours prorated to period for types in parameter absence_types",
        den="Planned hours on approved timesheets", sources=["leave_records", "timesheets"], owner="HR_MANAGER",
        standards=["ISO 30414 (absenteeism)"],
-       # Company definition (decision D-3): unexcused absence, sick-note days, annual leave, unpaid leave and other
-       # leave count as absence. work_injury (ADR-019) is listed EXPLICITLY as included until the product owner decides
-       # PO-1 (docs/hr/SPRINT1_REVIEW.md section 4; HR Director recommends option C = exclude). Deciding PO-1 = C is a
-       # catalog edit only: move "work_injury" from absence_types to excluded_types (and adjust incl/excl), then run
-       # the catalog sync - it becomes a new formula version, older results keep theirs.
-       incl="Unexcused absence, sick-note days (raporlu), work-injury / occupational-disease rest (work_injury - "
-       "included explicitly pending product-owner decision PO-1), annual leave, unpaid leave, other leave",
-       excl="Public holidays (not working days); parental/maternity and related protected leave (decision D-6)",
-       params={"absence_types": ["unexcused", "sick", "work_injury", "annual", "unpaid", "other"],
-               "excluded_types": ["public_holiday", "parental"]}),
+       # Company definition (decision D-3, revised by D-8 / PO-1 option C): unexcused absence, sick-note days, annual
+       # leave, unpaid leave and other leave count as absence. Work-injury / occupational-disease rest (work_injury,
+       # ADR-019) is EXCLUDED (D-8) - it is reported under safety (KPI-014A/B, lost days), not attendance. The change
+       # was a catalog parameter edit only; the catalog sync created a new formula version, older results keep theirs.
+       incl="Unexcused absence, sick-note days (raporlu), annual leave, unpaid leave, other leave",
+       excl="Public holidays (not working days); parental/maternity and related protected leave (decision D-6); "
+       "work-injury / occupational-disease rest (work_injury, SGK report codes 1/2 - decision D-8, reported under "
+       "occupational safety)",
+       params={"absence_types": ["unexcused", "sick", "annual", "unpaid", "other"],
+               "excluded_types": ["public_holiday", "parental", "work_injury"]}),
     _k("KPI-004", "productivity", "C", "İş Gücü Kapasite Kullanımı", "Workforce Capacity Utilisation",
        "Использование мощности персонала", "%", "higher_better", "capacity_utilization",
        formula="Productive (work-package booked) hours / planned available hours x 100",
@@ -149,14 +155,16 @@ KPI_CATALOG: list[dict] = [
        num="LTI + fatality events", den="Hours worked (timesheets)", sources=["safety_events", "timesheets"],
        owner="HSE_SPECIALIST", standards=["ISO 45001 (context)", "GRI 403-9", "ESRS S1-14", "ISO 30414"],
        purpose="Lost-time injury frequency. " + _SAFETY_PURPOSE + " Minimum exposure: 1,000,000 h.",
-       params={"multiplier": 1_000_000, "threshold_min_exposure_hours": 1_000_000, "exclude_out_of_rate_cases": True}),
+       incl=_OWN_EMPLOYEES_INCL, excl=_OWN_EMPLOYEES_EXCL,
+       params={"multiplier": 1_000_000, "threshold_min_exposure_hours": 1_000_000, "own_employees_only": True}),
     _k("KPI-014B", "health_safety", "G", "Toplam Kaydedilebilir Olay Oranı (TRIR)", "Total Recordable Incident Rate",
        "TRIR", "per 200k h", "lower_better", "trir",
        formula="Recordable injuries (fatality, LTI, restricted work, medical treatment) / hours worked x 200,000",
        num="Recordable events", den="Hours worked", sources=["safety_events", "timesheets"], owner="HSE_SPECIALIST",
        standards=["GRI 403-9 (rate basis must be disclosed)"],
        purpose="Recordable injury frequency. " + _SAFETY_PURPOSE + " Minimum exposure: 500,000 h (HR Director WP-2 Q2).",
-       params={"multiplier": 200_000, "threshold_min_exposure_hours": 500_000, "exclude_out_of_rate_cases": True}),
+       incl=_OWN_EMPLOYEES_INCL, excl=_OWN_EMPLOYEES_EXCL,
+       params={"multiplier": 200_000, "threshold_min_exposure_hours": 500_000, "own_employees_only": True}),
     # WP-2 R3 + HR Director Q3/Q6 (permanently neutral, no thresholds); wave-2 item 10, ADR-021
     _k("KPI-043", "health_safety", "G", "Ramak Kala Bildirim Oranı", "Near-Miss Reporting Rate",
        "Частота сообщений о почти-происшествиях", "per 200k h", "neutral", "near_miss_rate",
@@ -352,11 +360,11 @@ KPI_CATALOG += [
 
 # ---------------------------------------------------------------- Turnover v2 (WP-5 + HR Director review; ADR-023)
 # KPI-018/021/022: verified planned contract/project ends leave the numerator (S-1 'verified'), coding-shift alarm at
-# >= 10 points over 3 periods (S-5), repeated planned ends counted per legal entity until PO-4 is decided (switch:
-# same_employer_basis -> 'group'). KPI-020: unknown-category bands 0.05 / 0.20 (S-4), low-information note > 15 %
+# >= 10 points over 3 periods (S-5), repeated planned ends counted across the company group (decision D-11 / PO-4:
+# seniority is recognised between group companies -> same_employer_basis 'group'). KPI-020: unknown-category bands 0.05 / 0.20 (S-4), low-information note > 15 %
 # (condition 1: unknown + other), voluntary_just_cause = SGK 23 / 25 (condition 4). New formula versions via sync.
 EARLY_TURNOVER_V2 = {"planned_end_exclusion": "verified", "planned_end_alarm_points": 10,
-                     "same_employer_basis": "legal_entity"}
+                     "same_employer_basis": "group"}
 VOLUNTARY_TURNOVER_V2 = {"unknown_share_bands": [0.05, 0.2], "low_information_share": 0.15,
                          "voluntary_just_cause_codes": ["23", "25"]}
 _PLANNED_END_TEXT = ("; verified planned contract/project ends (SGK code, fixed-term contract type, end within 7 days "
@@ -433,7 +441,7 @@ for _item in KPI_CATALOG:
 # Source: docs/hr/data/WP-6_import_field_dictionaries.md section 3.6 + HR Director decision S-1 (general 0.8,
 # safety 0.9). Engine-level formula parameters `required_feeds` / `min_feed_coverage`: the engine checks
 # data_feed_coverage for these feeds over scope x window before a value may be coloured (warn) or shown (enforce).
-# The warn / enforce mode is NOT a formula parameter but deployment configuration HRSWI_COVERAGE_MODES (PO-6).
+# The warn / enforce mode is NOT a formula parameter but deployment configuration HRSWI_COVERAGE_MODES (D-13: default=warn,safety=enforce).
 # A change here is a new formula version (catalog sync); older versions keep their (gate-free) behaviour.
 REQUIRED_FEEDS: dict[str, tuple[str, ...]] = {
     **{c: ("employment",) for c in ("KPI-001", "KPI-002", "KPI-016", "KPI-017", "KPI-018", "KPI-020", "KPI-021",

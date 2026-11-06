@@ -18,6 +18,7 @@
 | [docs/PERFORMANCE_REPORT.md](docs/PERFORMANCE_REPORT.md) | Ölçülmüş gecikmeler (geliştirme ortamı) |
 | [docs/AUDIT_REPORT.md](docs/AUDIT_REPORT.md) | Bağımsız denetim bulguları ve çözüm durumu |
 | [docs/DECISIONS.md](docs/DECISIONS.md) | Ürün kararları (görünürlük, dönem kapatma, devamsızlık tanımı, KPI hedefleri) |
+| [docs/USAGE_POLICY.md](docs/USAGE_POLICY.md) | Kullanım politikası (D-14): çıktılar toplu karar desteğidir; ücret, prim, terfi, disiplin, bireysel değerlendirmede kullanılmaz |
 | [docs/KPI_TARGETS_REQUEST.md](docs/KPI_TARGETS_REQUEST.md) | İK yöneticisi için KPI hedef/eşik formu |
 
 ## Mimari özet
@@ -84,6 +85,7 @@ cd backend && python scripts/perf_smoke.py --concurrency 30 --requests 600
 | `HRSWI_FORECAST_MIN_POINTS` | 12 | Tahmin için asgari aylık gözlem |
 | `HRSWI_DB_POOL_SIZE` / `HRSWI_DB_MAX_OVERFLOW` | 8 / 4 | Worker başına |
 | `HRSWI_LLM_ENABLED` | false | FAZ 6 |
+| `HRSWI_COVERAGE_MODES` | `default=warn,safety=enforce` | Besleme kapsam kapısı (ADR-020, karar D-13): İSG beyanı eksik/yetersizse KPI-014A/B/043 `insufficient_data`; diğer beslemeler uyarı (renksiz değer). Besleme başına `off \| warn \| enforce` |
 | `BACKEND_URL` | http://localhost:8000 | Frontend derleme zamanı: tarayıcı aynı adresten `/api/*` çağırır, Next bu adrese iletir |
 | `NEXT_PUBLIC_API_URL` | (boş) | Yalnızca API başka bir origin'de çağrılacaksa |
 

@@ -8,7 +8,7 @@ A KPI whose formula lists `required_feeds` is checked against `data_feed_coverag
     covered = weight x factor;  factor: complete 1, partial coverage_ratio (unknown -> 0.5), none / undeclared 0
     C = min over the feeds whose mode is not "off"
 
-Mode per feed (settings.coverage_modes; product-owner decision PO-6 is open, every feed ships in "warn"):
+Mode per feed (settings.coverage_modes; decision D-13 / PO-6: default "default=warn,safety=enforce"):
     off      -> the feed is ignored
     warn     -> C < min_feed_coverage: value kept, no colour (status_reason low_coverage), note, quality <= C x 100
     enforce  -> C < min_feed_coverage: insufficient_data, value null, quality = C x 100
