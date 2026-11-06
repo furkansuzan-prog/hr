@@ -382,6 +382,26 @@ const dict = {
     ru: "столбцы с персональными, медицинскими данными или свободным текстом удалены без чтения:",
   },
   "cov.attr.includes_subcontractor_cases": { tr: "Alt yüklenici vakaları dahil", en: "Includes subcontractor cases", ru: "Включает случаи субподрядчиков" },
+  "imp.kind.timesheet": { tr: "Puantaj", en: "Timesheets", ru: "Табель учёта времени" },
+  "imp.title.timesheet": { tr: "Puantaj içe aktarma", en: "Timesheet import", ru: "Импорт табеля учёта времени" },
+  "imp.notice.timesheet": {
+    tr: "Bir satır = bir çalışan × gün × proje; çalışan sicil numarasıyla eşlenir. Ad soyad, kimlik numarası ve sağlık sütunları yüklemede okunmadan atılır. Puantajdaki izin günü izin kaydı oluşturmaz.",
+    en: "One row = one employee × day × project; the employee is matched by employee number. Name, ID number and health columns are dropped on upload without being read. A leave day in the timesheet never creates a leave record.",
+    ru: "Одна строка = сотрудник × день × проект; сотрудник сопоставляется по табельному номеру. Столбцы с ФИО, номером документа и медицинскими данными удаляются при загрузке без чтения. День отпуска в табеле не создаёт запись об отпуске.",
+  },
+  "imp.notice.timesheetRules": {
+    tr: "Boş fazla mesai / gece saati 0 sayılır, boş üretken saat bilinmiyor kalır. Onay sütunu yoksa satırlar taslak olarak saklanır ve KPI'lara girmez — kaynak yalnızca onaylı satır içeriyorsa kutuyu işaretleyin. Kapalı dönem satırları reddedilir; dosyada olmayan satır silinmez.",
+    en: "Blank overtime / night hours count as 0, blank productive hours stay unknown. Without an approval column rows are stored as draft and do not enter KPIs — tick the box if the source contains approved rows only. Rows in closed periods are rejected; rows missing from a file are never deleted.",
+    ru: "Пустые сверхурочные / ночные часы считаются 0, пустые производительные часы остаются неизвестными. Без столбца утверждения строки сохраняются как черновик и не входят в KPI — отметьте флажок, если источник содержит только утверждённые строки. Строки закрытых периодов отклоняются; отсутствующие в файле строки не удаляются.",
+  },
+  "imp.ts.mode": { tr: "Kayıtlı satır farklıysa", en: "If a stored row differs", ru: "Если сохранённая строка отличается" },
+  "imp.ts.mode.skip": { tr: "Atla (varsayılan)", en: "Skip (default)", ru: "Пропустить (по умолчанию)" },
+  "imp.ts.mode.replace": { tr: "Düzelt (yalnızca açık dönem, denetim kaydıyla)", en: "Correct (open periods only, audited)", ru: "Исправить (только открытые периоды, с аудитом)" },
+  "imp.ts.approved": { tr: "Kaynak yalnızca onaylı satır içerir", en: "Source contains approved rows only", ru: "Источник содержит только утверждённые строки" },
+  "cov.plannedOnLeave": { tr: "İzinli günde planlı saat", en: "Planned hours on leave days", ru: "Плановые часы в дни отпуска" },
+  "cov.plannedOnLeave.included": { tr: "Yazılır", en: "Included", ru: "Указываются" },
+  "cov.plannedOnLeave.excluded": { tr: "Yazılmaz", en: "Excluded", ru: "Не указываются" },
+  "cov.plannedOnLeave.unknown": { tr: "Bilinmiyor", en: "Unknown", ru: "Неизвестно" },
   "cov.attr.includes_near_miss": { tr: "Ramak kala bildirimleri dahil", en: "Includes near misses", ru: "Включает почти-происшествия" },
 } as const;
 

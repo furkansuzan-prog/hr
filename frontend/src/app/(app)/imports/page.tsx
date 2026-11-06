@@ -11,7 +11,8 @@ import { Badge, Button, Card, CardBody, CardHeader, CardTitle, ErrorBox, Input, 
 
 type Upload = { batch_id: number; headers: string[]; total_rows: number; suggested_mapping: Record<string, string | null>; required_fields: string[]; preview: Record<string, string>[]; entity_type?: string; dropped_columns?: string[] };
 type Summary = { batch_id: number; status: string; file_name: string; total_rows: number; valid_rows: number; error_rows: number; committed_rows: number; identity_reviews: number; attempt_count: number; error_message: string | null };
-type Kind = "employment" | "leave" | "safety_event";
+type Kind = "employment" | "leave" | "safety_event" | "timesheet";
+type PlannedOnLeave = "" | "included" | "excluded" | "unknown";
 type Source = { id: number; code: string; name: string; kind: string; status: string; last_success_at: string | null; last_error: string | null };
 
 export default function Imports() {
@@ -26,7 +27,9 @@ export default function Imports() {
   const [err, setErr] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
   // B-20 / ADR-020: optional coverage declaration sent with the upload
-  const [decl, setDecl] = useState({ on: false, from: monthStart(1).slice(0, 7), to: monthStart(1).slice(0, 7), completeness: "complete" as Completeness, entities: "", subcontractor: true, nearMiss: true });
+  const [decl, setDecl] = useState({ on: false, from: monthStart(1).slice(0, 7), to: monthStart(1).slice(0, 7), completeness: "complete" as Completeness, entities: "", subcontractor: true, nearMiss: true, plannedOnLeave: "" as PlannedOnLeave });
+  // ADR-022: timesheet upload options (re-import correction mode, approval of the source)
+  const [tsOpt, setTsOpt] = useState({ mode: "skip" as "skip" | "replace", approved: false });
   const batches = useQuery({ queryKey: ["imports"], queryFn: () => api<Summary[]>("/api/v1/imports") });
   const sources = useQuery({ queryKey: ["sources"], queryFn: () => api<Source[]>("/api/v1/integrations/sources") });
 
@@ -35,12 +38,18 @@ export default function Imports() {
     const fd = new FormData();
     fd.append("file", f);
     fd.append("entity_type", kind);
+    if (kind === "timesheet") {
+      fd.append("mode", tsOpt.mode);
+      fd.append("approved_source", String(tsOpt.approved));
+    }
     if (decl.on) {
       fd.append("coverage", JSON.stringify({
         period_start: `${decl.from}-01`, period_end: monthEnd(decl.to), completeness: decl.completeness,
         legal_entity_codes: decl.entities.split(",").map((c) => c.trim()).filter(Boolean),
         // WP-6 HSE 3.6: safety declarations say whether subcontractor cases / near misses are in the file
         ...(kind === "safety_event" ? { attributes: { includes_subcontractor_cases: decl.subcontractor, includes_near_miss: decl.nearMiss } } : {}),
+        // WP-4 3.5: whether the source writes planned hours on leave days (timesheet feed only)
+        ...(kind === "timesheet" && decl.plannedOnLeave ? { planned_on_leave_days: decl.plannedOnLeave } : {}),
       }));
     }
     const r = await api<Upload>("/api/v1/imports", { method: "POST", body: fd });
@@ -61,11 +70,27 @@ export default function Imports() {
             <Select aria-label={t("imp.kind")} value={kind} disabled={busy} onChange={(e) => { setKind(e.target.value as Kind); setUp(null); setSum(null); }}>
               <option value="employment">{t("imp.kind.employment")}</option>
               <option value="leave">{t("imp.kind.leave")}</option>
+              <option value="timesheet">{t("imp.kind.timesheet")}</option>
               {canHse && <option value="safety_event">{t("imp.kind.safety_event")}</option>}
             </Select>
           </CardHeader>
           <CardBody className="space-y-3">
             {kind === "leave" && <p className="text-xs text-muted">{t("imp.notice.leave")}</p>}
+            {kind === "timesheet" && (
+              <div className="space-y-2 rounded-md bg-surface-2 p-2 text-xs">
+                <p role="note"><b>KVKK:</b> {t("imp.notice.timesheet")}</p>
+                <p className="text-muted">{t("imp.notice.timesheetRules")}</p>
+                <div className="flex flex-wrap items-end gap-3">
+                  <label className="flex flex-col gap-1">{t("imp.ts.mode")}
+                    <Select value={tsOpt.mode} disabled={busy} onChange={(e) => setTsOpt({ ...tsOpt, mode: e.target.value as "skip" | "replace" })}>
+                      <option value="skip">{t("imp.ts.mode.skip")}</option>
+                      <option value="replace">{t("imp.ts.mode.replace")}</option>
+                    </Select>
+                  </label>
+                  <label className="flex items-center gap-2"><input type="checkbox" checked={tsOpt.approved} disabled={busy} onChange={(e) => setTsOpt({ ...tsOpt, approved: e.target.checked })} />{t("imp.ts.approved")}</label>
+                </div>
+              </div>
+            )}
             {kind === "safety_event" && (
               <div role="note" className="space-y-1 rounded-md bg-surface-2 p-2 text-xs">
                 <p><b>KVKK:</b> {t("imp.notice.safety")}</p>
@@ -87,6 +112,14 @@ export default function Imports() {
                     </Select>
                   </label>
                   <label className="flex min-w-48 flex-1 flex-col gap-1">{t("cov.entities")}<Input className="h-9" value={decl.entities} placeholder="MC, SUB01" onChange={(e) => setDecl({ ...decl, entities: e.target.value })} /></label>
+                  {kind === "timesheet" && (
+                    <label className="flex flex-col gap-1">{t("cov.plannedOnLeave")}
+                      <Select value={decl.plannedOnLeave} onChange={(e) => setDecl({ ...decl, plannedOnLeave: e.target.value as PlannedOnLeave })}>
+                        <option value="">—</option>
+                        {(["included", "excluded", "unknown"] as const).map((v) => <option key={v} value={v}>{t(`cov.plannedOnLeave.${v}`)}</option>)}
+                      </Select>
+                    </label>
+                  )}
                   {kind === "safety_event" && (
                     <>
                       <label className="flex items-center gap-2"><input type="checkbox" checked={decl.subcontractor} onChange={(e) => setDecl({ ...decl, subcontractor: e.target.checked })} />{t("cov.attr.includes_subcontractor_cases")}</label>
