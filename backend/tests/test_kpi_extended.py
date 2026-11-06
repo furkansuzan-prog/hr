@@ -36,19 +36,31 @@ def test_new_kpis_active_validated_and_params_valid(client, auth):
         validate_parameters(k["formula"]["parameters"])  # every catalog parameter passes the engine's schema
 
 
-def test_kpi020_voluntary_turnover(client, auth, ids):
+def test_kpi020_voluntary_turnover(client, auth, ids, db):
+    from datetime import date
+
+    from app.analytics.calculators import Scope, turnover_rate
+
+    # formula v1 behaviour (include_categories only) on the same data
+    db.info.clear()
+    r = turnover_rate(db, Scope(ids["kpi"]["tenant_id"]), date(2025, 3, 1), date(2025, 3, 31),
+                      {"include_categories": ["voluntary"]})
+    assert r.status == "ok" and r.numerator == 2 and r.denominator == pytest.approx(22.0)
+    assert r.value == pytest.approx(9.0909, abs=1e-4)
+    assert r.quality_score == 75.0 and "NOT counted" in r.note
+    assert r.lineage["included_categories"] == ["voluntary"]
+    # v2 (ADR-023, WP-5 3.5): 1 of 4 separations has no category, u = 25 % > 20 % -> no value
     r = ev(client, auth, "KPI-020", **MAR)
-    assert r["status"] == "ok"
-    assert r["numerator"] == 2 and r["denominator"] == pytest.approx(22.0)
-    assert r["value"] == pytest.approx(9.0909, abs=1e-4)
-    assert r["annualized_value"] == pytest.approx(107.0381, abs=1e-3)
-    assert r["quality_score"] == 75.0 and "NOT counted" in r["note"]
-    assert r["lineage"]["included_categories"] == ["voluntary"]
+    assert r["status"] == "insufficient_data" and r["value"] is None and r["quality_score"] == 75.0
     # KPI-001 semantics unchanged on the same data
     assert ev(client, auth, "KPI-001", **MAR)["value"] == pytest.approx(18.1818, abs=1e-4)
+    # MC: L1, L2, T1 voluntary, L3 employer, L4 unknown -> u = 1/5 = 20 % (band edge): value, no colour, range
     r = ev(client, auth, "KPI-020", entity_ids=ent(ids, "MC"), **MAR)
     assert r["numerator"] == 3 and r["denominator"] == pytest.approx(13.5)
     assert r["value"] == pytest.approx(22.2222, abs=1e-4)
+    assert r["annualized_value"] == pytest.approx(261.6485, abs=1e-3)
+    assert (r["threshold_status"], r["status_reason"]) == (None, "unknown_category_share")
+    assert r["breakdown"]["voluntary_range"] == [22.2222, 29.6296]
 
 
 def test_include_categories_parameter_validated():
@@ -176,10 +188,12 @@ def test_period_close_freezes_all_active_kpis_first(client, auth, ids, db):
         assert body["frozen_results"] == len(active) * (1 + n_entities)
         assert _results(db, ids["kpi"]["tenant_id"], date(2025, 3, 1)) - before == body["frozen_results"]
         # closed month serves frozen values, for plain and sensitive KPIs, tenant and entity scope
-        for code, params, value in [("KPI-020", {}, 9.0909), ("KPI-036", {}, 10.0),
+        for code, params, value in [("KPI-020", {"entity_ids": ent(ids, "MC")}, 22.2222), ("KPI-036", {}, 10.0),
                                     ("KPI-048", {"entity_ids": ent(ids, "MC")}, 45.4545)]:
             res = ev(client, auth, code, **params, **MAR)
             assert res["frozen"] is True and res["value"] == pytest.approx(value, abs=1e-4), code
+        # the colour-suppression reason survives freezing (ADR-018 rule 3)
+        assert ev(client, auth, "KPI-020", entity_ids=ent(ids, "MC"), **MAR)["status_reason"] == "unknown_category_share"
         # suppressed results stay suppressed when served frozen
         res = ev(client, auth, "KPI-048", entity_ids=ent(ids, "S1"), **MAR)
         assert res["frozen"] is True and res["status"] == "suppressed" and not (LEAKY & set(res["lineage"]))
