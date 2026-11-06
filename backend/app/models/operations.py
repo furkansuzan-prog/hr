@@ -292,7 +292,7 @@ class SafetyEvent(Base, TenantMixin, TimestampMixin, SourceMixin):
     event_date: Mapped[date] = mapped_column(Date)
     event_type: Mapped[str] = mapped_column(String(30))  # SAFETY_EVENT_TYPES
     # calendar days away, event day excluded (WP-6 HSE 3.5); NULL = not yet known (open case) - empty is not 0
-    lost_days: Mapped[int | None] = mapped_column(Integer, default=0)
+    lost_days: Mapped[int | None] = mapped_column(Integer)
     # ADR-021 / WP-6 HSE 3.3 (all optional: legacy rows and the demo seed have none of them)
     event_ref: Mapped[str | None] = mapped_column(String(100))
     case_no: Mapped[int | None] = mapped_column(Integer)

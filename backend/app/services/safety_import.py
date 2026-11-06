@@ -82,10 +82,12 @@ _PROHIBITED_SUBSTRINGS = (
     "nature of injury", "injury type", "hastane", "tedavi", "treatment detail", "диагноз", "травма характер",
     "часть тела", "hastalik adi", "medical detail",
     # free text / fault
-    "aciklama", "olayin olus", "olay ozeti", "description", "narrative", "summary", "notes", "comment", "kok neden",
+    "aciklama", "olayin olus", "olay ozeti", "description", "narrative", "summary", "notes", "notlar", "comment",
+    "yorum", "remark", "gozlem", "kok neden",
     "root cause", "kusur", "sorumlu", "fault", "blame", "tanik", "witness", "описание", "причина", "виновн",
 )
-_PROHIBITED_WORDS = ("tc", "not", "yas", "isim", "name", "organ", "gorev", "icd", "имя", "пол")
+_PROHIBITED_WORDS = ("tc", "not", "yas", "isim", "name", "organ", "gorev", "icd", "имя", "пол", "ad", "adi", "soyad",
+                     "soyadi")
 
 
 def _fold(s: str) -> str:
@@ -327,15 +329,17 @@ def validate(db: Session, ctx: AccessContext, batch: ImportBatch, mapping: dict)
                 dates[f] = None
                 err("date_format", f"'{f}' is not a valid date")
         ed = dates["event_date"]
+        future = False
         if ed is not None:
             if ed < MIN_EVENT_DATE:
                 err("date_format", "event_date before 2000-01-01")
                 ed = None
             elif ed > today:
                 err("event_date_in_future", "event_date is after the import day")
-                ed = None
+                ed, future = None, True
         rd, sd = dates["reported_date"], dates["sgk_notification_date"]
-        if rd is not None and ((ed is not None and rd < ed) or rd > today):
+        # one error per root cause: a future event_date already explains a future reported_date (WP-6 HSE 4.1 row 7)
+        if rd is not None and not future and ((ed is not None and rd < ed) or rd > today):
             err("reported_before_event", "reported_date must be on/after event_date and not after the import day")
         if sd is not None and ed is not None and sd < ed:
             err("sgk_date_before_event", "sgk_notification_date before event_date")
