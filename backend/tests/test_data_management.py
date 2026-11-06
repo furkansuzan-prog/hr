@@ -156,7 +156,7 @@ def test_cross_tenant_and_missing_permission(client, auth, ids):
                        json={"code": "NOPE", "name": "x", "entity_type": "employer", "country": "TR"}).status_code == 403
 
 
-def test_privilege_escalation_guard(client, auth, ents, ids, db):
+def test_privilege_escalation_guard(client, auth, ents, ids, db, subcontractors_on):
     t1, t2 = ents["t1"], ents["t2"]
     scoped_admin_id, _, sa = _new_user(client, auth, "COMPANY_ADMIN", t1)
     target = client.post(f"{M}/users", headers=sa, json={"email": f"dm.t.{_uid().lower()}@exact.local",
@@ -414,7 +414,7 @@ def test_identity_review_resolve_flow(client, auth, ents, db):
 # ------------------------------------------------------------------ organisation
 
 
-def test_legal_entities_and_contractor_relationships(client, auth, db):
+def test_legal_entities_and_contractor_relationships(client, auth, db, subcontractors_on):
     h = auth(ADMIN)
     parent, child = _entity(client, auth, "CP"), _entity(client, auth, "CC")
     assert client.post(f"{M}/legal-entities", headers=h, json={"code": parent["code"].lower(), "name": "dup",

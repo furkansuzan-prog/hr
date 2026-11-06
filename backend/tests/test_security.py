@@ -40,7 +40,7 @@ def test_subcontractor_isolation(client, auth, ids):
     assert r["value"] == 7.0 and r["scope"]["entity_ids"] == [e["B"]]
 
 
-def test_main_contractor_sees_only_shared_subcontractors(client, auth, ids):
+def test_main_contractor_sees_only_shared_subcontractors(client, auth, ids, subcontractors_on):
     e = ids["exact"]["entities"]
     codes = {x["code"] for x in client.get("/api/v1/org/legal-entities", headers=auth("ex.aops@exact.local")).json()}
     assert codes == {"A", "B", "F"}  # C: no data sharing; D: relationship ended

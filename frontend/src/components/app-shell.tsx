@@ -14,7 +14,8 @@ import { useI18n, type Key, type Locale } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { useMe, useTheme } from "./providers";
 
-type Item = { href: string; key: Key; icon: typeof Users; perm?: string; planned?: boolean };
+type Feature = "subcontractors";
+type Item = { href: string; key: Key; icon: typeof Users; perm?: string; planned?: boolean; feature?: Feature };
 const NAV: Item[] = [
   { href: "/", key: "nav.overview", icon: BarChart3, perm: "kpi.read" },
   { href: "/contractors?view=org", key: "nav.organization", icon: Building2, perm: "org.read" },
@@ -22,7 +23,7 @@ const NAV: Item[] = [
   { href: "/sustainability", key: "nav.sustainability", icon: Leaf, perm: "sustainability.read" },
   { href: "/productivity", key: "nav.productivity", icon: Activity, perm: "kpi.read" },
   { href: "/planning", key: "nav.planning", icon: TrendingUp, perm: "forecast.read" },
-  { href: "/contractors", key: "nav.contractors", icon: HardHat, perm: "kpi.read" },
+  { href: "/contractors", key: "nav.contractors", icon: HardHat, perm: "kpi.read", feature: "subcontractors" },
   { href: "/hse", key: "nav.hse", icon: ShieldAlert, perm: "hse.read" },
   { href: "/training", key: "nav.training", icon: GraduationCap, perm: "training.read" },
   { href: "/cost", key: "nav.cost", icon: Wallet, perm: "cost.read" },
@@ -51,7 +52,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   }, [router]);
 
   const perms = new Set(me.data?.permissions ?? []);
-  const items = NAV.filter((i) => i.planned || !i.perm || perms.has(i.perm));
+  const items = NAV.filter((i) => (!i.feature || !!me.data?.features?.[i.feature]) && (i.planned || !i.perm || perms.has(i.perm)));
 
   return (
     <div className="min-h-screen lg:flex">

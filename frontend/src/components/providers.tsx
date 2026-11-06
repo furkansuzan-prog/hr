@@ -56,6 +56,11 @@ export function Providers({ children }: { children: ReactNode }) {
 export function useMe() {
   return useQuery({ queryKey: ["me"], queryFn: () => api<Me>("/api/v1/auth/me") });
 }
+/** D-9 / ADR-025: true when the backend reports the feature as enabled (false while /auth/me is loading). */
+export function useFeature(name: keyof NonNullable<Me["features"]>) {
+  const { data } = useMe();
+  return !!data?.features?.[name];
+}
 export function useCan(perm: string) {
   const { data } = useMe();
   return !!data?.permissions.includes(perm);

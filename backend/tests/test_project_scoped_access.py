@@ -45,6 +45,9 @@ from app.security.auth import hash_password
 from app.seed.reference import seed_permissions_and_roles, seed_reference
 from tests.factories import declare_all_feeds
 
+# D-9 / ADR-025: ADR-017 project limits only exist with the subcontractor feature on
+pytestmark = pytest.mark.usefixtures("subcontractors_on")
+
 D = date
 JAN = {"period_start": "2025-01-01", "period_end": "2025-01-31"}
 

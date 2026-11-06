@@ -252,7 +252,8 @@ def wp(database):
 
 def _ctx(w, **extra):
     return AccessContext(user_id=None, tenant_id=w["tenant_id"], email="t", locale="en",
-                         grants={"kpi.read": None, "import.write": None, "timekeeping.read": None, **extra})
+                         grants={"kpi.read": None, "health.read": None, "import.write": None, "timekeeping.read": None,
+                                 **extra})
 
 
 def ev(db, w, code, window, entity, **kw):

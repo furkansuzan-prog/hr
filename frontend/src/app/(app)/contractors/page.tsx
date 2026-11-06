@@ -4,7 +4,7 @@ import { api, type KpiResult } from "@/lib/api";
 import { useI18n, type Key } from "@/lib/i18n";
 import { fmt } from "@/lib/utils";
 import { FilterBar, filterQs, statusTone } from "@/components/kpi";
-import { useFilters } from "@/components/providers";
+import { useFeature, useFilters } from "@/components/providers";
 import { Badge, Card, CardBody, CardHeader, CardTitle, ErrorBox, PageHeader } from "@/components/ui/primitives";
 
 const CODES = ["KPI-016", "KPI-001", "KPI-007", "KPI-003", "KPI-009", "KPI-014A", "KPI-013"];
@@ -13,18 +13,22 @@ type Tree = { nodes: { id: number; code: string; name: string; type: string }[];
 export default function Contractors() {
   const { t } = useI18n();
   const { filters } = useFilters();
+  // D-9 / ADR-025: without the subcontractor feature this page is the firm comparison only (no contractor hierarchy)
+  const subs = useFeature("subcontractors");
   const q = filterQs({ ...filters, entity_ids: undefined });
   const data = useQuery({
     queryKey: ["contractor-cmp", q],
     queryFn: async () => Object.fromEntries(await Promise.all(CODES.map(async (c) => [c, await api<KpiResult[]>(`/api/v1/kpi/by-entity/${c}${q}`)] as const))),
   });
-  const tree = useQuery({ queryKey: ["tree"], queryFn: () => api<Tree>("/api/v1/org/contractor-tree") });
+  const tree = useQuery({ queryKey: ["tree"], queryFn: () => api<Tree>("/api/v1/org/contractor-tree"), enabled: subs });
   const rows = data.data?.["KPI-016"].filter((r) => r.legal_entity!.type !== "client") ?? [];
   const cell = (code: string, id: number) => data.data?.[code].find((r) => r.legal_entity!.id === id);
   const names = Object.fromEntries((tree.data?.nodes ?? []).map((n) => [n.id, n]));
   return (
     <>
-      <PageHeader title={t("nav.contractors")} subtitle="Compare only with scope of work, occupation mix and project phase in mind. Firms that did not grant data sharing are not visible to the main contractor." />
+      <PageHeader title={t(subs ? "nav.contractors" : "nav.organization")}
+        subtitle={subs ? "Compare only with scope of work, occupation mix and project phase in mind. Firms that did not grant data sharing are not visible to the main contractor."
+          : "Compare only with scope of work, occupation mix and project phase in mind."} />
       <FilterBar />
       <ErrorBox error={data.error} />
       <Card className="overflow-x-auto">
@@ -49,7 +53,7 @@ export default function Contractors() {
           </tbody>
         </table>
       </Card>
-      <Card className="mt-4">
+      {subs && <Card className="mt-4">
         <CardHeader><CardTitle>{t("nav.organization")} — contractor hierarchy (today)</CardTitle></CardHeader>
         <CardBody>
           <ul className="space-y-1 text-sm">
@@ -62,7 +66,7 @@ export default function Contractors() {
             ))}
           </ul>
         </CardBody>
-      </Card>
+      </Card>}
     </>
   );
 }

@@ -73,3 +73,22 @@ def auth(client):
         return {"Authorization": f"Bearer {_tokens[email]}"}
 
     return _h
+
+
+@pytest.fixture()
+def subcontractors_on(monkeypatch):
+    """D-9 / ADR-025: the subcontractor feature is OFF by default (firm-based product). Tests of the subcontractor
+    behaviour (contractor-relationship expansion, ADR-017 project limits, D-1/D-2, KPI-050, subcontractor report) run
+    with the flag enabled through this fixture."""
+    from app.core.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "feature_subcontractors", True)
+    yield
+
+
+@pytest.fixture()
+def subcontractors_off(monkeypatch):
+    from app.core.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "feature_subcontractors", False)
+    yield

@@ -50,7 +50,7 @@ export default function LoginPage() {
           <Button type="submit" className="w-full" disabled={busy}>{t("login.submit")}</Button>
         </form>
         <p className="mt-4 text-xs text-muted">
-          Demo: admin@demo.local · hr.director@demo.local · mc.ops@demo.local · sub01.manager@demo.local
+          Demo: admin@demo.local · hr.director@demo.local · mc.ops@demo.local
         </p>
       </Card>
     </main>

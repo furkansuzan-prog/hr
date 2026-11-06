@@ -19,7 +19,7 @@ def test_assistant_intents_and_numbers_come_from_engine(client, auth):
     assert f"{r['data']['period_total']:,.2f}".replace(",", " ") in r["answer"]
 
 
-def test_assistant_turkish_and_russian(client, auth):
+def test_assistant_turkish_and_russian(client, auth, subcontractors_on):
     r = ask(client, auth, DEMO, "Hangi departmanlarda planlanan ve gerçekleşen iş gücü arasında en yüksek fark var?").json()
     assert r["intent"] == "plan_deviation" and r["language"] == "tr"
     r = ask(client, auth, DEMO, "Какие риски у субподрядчиков?").json()
@@ -71,7 +71,7 @@ def test_forecast_ok_on_demo(client, auth):
     assert r["model"] == "linear_trend+seasonal12"
 
 
-def test_reports_all_formats(client, auth):
+def test_reports_all_formats(client, auth, subcontractors_on):
     h = auth(DEMO)
     j = client.get("/api/v1/reports/monthly_hr_performance", params=P, headers=h).json()
     md = j["metadata"]
@@ -132,4 +132,4 @@ def test_sustainability_coverage_disclaimer(client, auth):
 
 def test_health(client):
     assert client.get("/health/live").json()["status"] == "ok"
-    assert client.get("/health/ready").json()["migration"] == "0010"
+    assert client.get("/health/ready").json()["migration"] == "0011"
