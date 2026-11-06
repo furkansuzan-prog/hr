@@ -142,7 +142,10 @@ def _declare(db, cx, rows: list[tuple]) -> None:
             "feed_type": feed, "period_start": first.isoformat(), "period_end": last.isoformat(),
             "legal_entity_ids": [cx[ent]], "project_ids": [None], "completeness": completeness,
             "coverage_ratio": None, "confirmed_empty": bool(extra and extra[0].get("confirmed_empty")),
-            "attributes": None, "planned_on_leave_days": None, "note": "test"})
+            "attributes": None, "note": "test",
+            # the fixture's monthly timesheet rows already hold the planned hours of leave days (WP-4 3.5 scenario A,
+            # ADR-024) - declared, so the planned-capacity denominator adds nothing back and K6/K7 stay unchanged
+            "planned_on_leave_days": "included" if feed == "timesheet" else None})
     engine.mark_stale_from(db, cx["tenant_id"], D(2020, 1, 1))
     db.commit()
 

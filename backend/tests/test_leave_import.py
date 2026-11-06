@@ -61,7 +61,11 @@ def test_leave_import_end_to_end(client, auth, db, emp):
     assert v["valid_rows"] == 5 and v["error_rows"] == 3
     rules = {i.rule_code for i in db.execute(select(DataQualityIssue).where(
         DataQualityIssue.import_batch_id == up["batch_id"])).scalars()}
-    assert {"no_employment", "date_order", "duplicate_in_file", "unmapped_leave_label", "hours_derived"} <= rules
+    # ADR-024 (WP-4 3.2 steps 2-3): the DEMO employers work the 5 x 9 h pattern, so the dates-only annual leave is
+    # counted from the pattern (2 working days x 9 h = 18 h, unchanged) and flagged with the pattern warning codes
+    # instead of the former Mon-Fri 'hours_derived'
+    assert {"no_employment", "date_order", "duplicate_in_file", "unmapped_leave_label", "days_derived_from_pattern",
+            "hours_derived_from_pattern"} <= rules
 
     dv = db.execute(select(Tenant.data_version).where(Tenant.id == emp["tenant_id"])).scalar()
     c = client.post(f"/api/v1/imports/{up['batch_id']}/commit", headers=auth(ADMIN)).json()

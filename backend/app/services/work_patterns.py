@@ -342,7 +342,8 @@ def validate(db: Session, ctx: AccessContext, batch: ImportBatch, mapping: dict)
                         err("pattern_assignment_overlap", "overlaps another assignment of the same target in this "
                                                           "file")
                         break
-                file_spans.setdefault((level, target), []).append((vf, vt, code))
+                if not any(e["severity"] == "error" for e in errs):  # only rows that will be committed
+                    file_spans.setdefault((level, target), []).append((vf, vt, code))
         row.mapped = {"pattern_code": code, "definition": definition, "level": level, "target_id": target,
                       "valid_from": vf.isoformat() if vf else None, "valid_to": vt.isoformat() if vt else None,
                       "source_system": m.get("source_system") or "import",
