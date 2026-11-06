@@ -6,6 +6,7 @@ import { useI18n } from "@/lib/i18n";
 import { FilterBar, filterQs } from "@/components/kpi";
 import { useCan, useFilters } from "@/components/providers";
 import { Badge, Button, Card, ErrorBox, PageHeader } from "@/components/ui/primitives";
+import { UsageNotice } from "@/components/usage-notice";
 
 type Rep = { code: string; name: string; status: string; formats: string[] };
 
@@ -43,6 +44,7 @@ export default function Reports() {
           ))}
         </ul>
       </Card>
+      <UsageNotice />
     </>
   );
 }

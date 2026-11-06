@@ -18,6 +18,7 @@
 | [docs/PERFORMANCE_REPORT.md](docs/PERFORMANCE_REPORT.md) | Ölçülmüş gecikmeler (geliştirme ortamı) |
 | [docs/AUDIT_REPORT.md](docs/AUDIT_REPORT.md) | Bağımsız denetim bulguları ve çözüm durumu |
 | [docs/DECISIONS.md](docs/DECISIONS.md) | Ürün kararları (görünürlük, dönem kapatma, devamsızlık tanımı, KPI hedefleri) |
+| [docs/USAGE_POLICY.md](docs/USAGE_POLICY.md) | Kullanım politikası (D-14): çıktılar toplu karar desteğidir; ücret, prim, terfi, disiplin, bireysel değerlendirmede kullanılmaz |
 | [docs/KPI_TARGETS_REQUEST.md](docs/KPI_TARGETS_REQUEST.md) | İK yöneticisi için KPI hedef/eşik formu |
 
 ## Mimari özet

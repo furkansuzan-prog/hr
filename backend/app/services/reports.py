@@ -1,5 +1,7 @@
 """Reporting engine (section 13). Every report carries: period, filters, data sources, calculation time,
-formula versions and data-quality information. All numbers come from the KPI engine."""
+formula versions and data-quality information. All numbers come from the KPI engine.
+Decision D-14 (docs/USAGE_POLICY.md): every generated report - JSON metadata, XLSX (summary row + page footer), CSV
+(metadata + last line) and PDF (under the title + every page footer) - carries the usage-policy notice."""
 import csv
 import io
 import os
@@ -28,6 +30,21 @@ REPORTS = {
         "status": "available",
     },
 }
+# Decision D-14 / docs/USAGE_POLICY.md - same wording as the UI notice (frontend i18n key usagePolicy.notice)
+USAGE_NOTICE = {
+    "tr": "Kullanım politikası: Bu çıktı toplu (grup düzeyi) karar desteğidir; ücret, prim, terfi, disiplin veya "
+          "bireysel performans değerlendirmesinde kullanılamaz (docs/USAGE_POLICY.md).",
+    "en": "Usage policy: this output is aggregate (group-level) decision support; it must not be used for pay, bonus, "
+          "promotion, discipline or individual performance evaluation (docs/USAGE_POLICY.md).",
+    "ru": "Политика использования: это агрегированная (групповая) поддержка решений; не используется для оплаты, "
+          "премий, повышения, дисциплинарных мер или индивидуальной оценки эффективности (docs/USAGE_POLICY.md).",
+}
+
+
+def usage_notice(locale: str | None) -> str:
+    return USAGE_NOTICE.get(locale or "en", USAGE_NOTICE["en"])
+
+
 PLANNED = ["daily_workforce_summary", "weekly_movements", "turnover_analysis", "productivity_analysis",
            "project_capacity", "labour_cost_analysis", "training_competency", "workforce_sustainability",
            "annual_human_capital", "risk_improvement"]
@@ -76,6 +93,7 @@ def build(db: Session, ctx: AccessContext, code: str, ps: date, pe: date, *, ent
             "omitted_kpis": skipped,
             "data_quality": {k["code"]: {"status": k["status"], "quality_score": k["quality_score"]} for k in kpis},
             "notice": "Generated from synthetic demo data" if os.getenv("HRSWI_DEMO_DATA", "true") == "true" else None,
+            "usage_policy": usage_notice(ctx.locale),
         },
         "kpis": [{"code": k["code"], "name": k["name"], "value": k["value"], "unit": k["unit"], "status": k["status"],
                   "numerator": k["numerator"], "denominator": k["denominator"], "sample_size": k["sample_size"],
@@ -116,6 +134,14 @@ def to_xlsx(rep: dict) -> bytes:
     for r in rep["by_entity"]:
         ws2.append([r.get(c) for c in ecols])
     ws2.column_dimensions["A"].width = 40
+    notice = rep["metadata"].get("usage_policy")
+    if notice:  # D-14: metadata row above + last summary row + printed page footer on both sheets
+        ws.append([])
+        ws.append([notice])
+        ws.cell(ws.max_row, 1).font = Font(italic=True)
+        for sheet in (ws, ws2):
+            sheet.oddFooter.center.text = notice
+            sheet.oddFooter.center.size = 7
     for row in ws.iter_rows():
         for c in row:
             c.alignment = Alignment(vertical="top", wrap_text=False)
@@ -134,6 +160,8 @@ def to_csv(rep: dict) -> str:
     w.writerow(cols)
     for k in rep["kpis"]:
         w.writerow([k.get(c) for c in cols])
+    if rep["metadata"].get("usage_policy"):  # D-14: also the last line, so a truncated paste keeps it visible
+        w.writerow(["# " + rep["metadata"]["usage_policy"]])
     return buf.getvalue()
 
 
@@ -159,13 +187,16 @@ def to_pdf(rep: dict) -> bytes:
     for s in styles.byName.values():
         s.fontName = font
     buf = io.BytesIO()
-    doc = SimpleDocTemplate(buf, pagesize=landscape(A4), title=rep["title"])
     md = rep["metadata"]
+    notice = md.get("usage_policy")
+    doc = SimpleDocTemplate(buf, pagesize=landscape(A4), title=rep["title"], subject=notice or "")
     story = [Paragraph(rep["title"], styles["Title"]),
              Paragraph(f"{md['period_start']} – {md['period_end']} · {md['generated_at']} · {md['generated_by']}",
                        styles["Normal"])]
     if md.get("notice"):
         story.append(Paragraph(f"<b>{md['notice']}</b>", styles["Normal"]))
+    if notice:
+        story.append(Paragraph(f"<i>{notice}</i>", styles["Normal"]))
     story.append(Spacer(1, 10))
 
     def fmt(v):
@@ -192,5 +223,12 @@ def to_pdf(rep: dict) -> bytes:
     story.append(Spacer(1, 8))
     story.append(Paragraph("Formula versions: " + ", ".join(f"{k} v{v}" for k, v in md["formula_versions"].items()),
                            styles["Normal"]))
-    doc.build(story)
+    def footer(canvas, _doc):  # D-14: on every page
+        if notice:
+            canvas.saveState()
+            canvas.setFont(font, 7)
+            canvas.drawCentredString(_doc.pagesize[0] / 2, 18, notice)
+            canvas.restoreState()
+
+    doc.build(story, onFirstPage=footer, onLaterPages=footer)
     return buf.getvalue()

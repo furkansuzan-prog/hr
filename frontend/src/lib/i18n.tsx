@@ -51,6 +51,12 @@ const dict = {
   "login.email": { tr: "E-posta", en: "Email", ru: "Эл. почта" },
   "login.password": { tr: "Parola", en: "Password", ru: "Пароль" },
   "login.submit": { tr: "Giriş yap", en: "Sign in", ru: "Войти" },
+  // Decision D-14 (docs/USAGE_POLICY.md) - same wording as backend reports.USAGE_NOTICE
+  "usagePolicy.notice": {
+    tr: "Kullanım politikası: Bu çıktı toplu (grup düzeyi) karar desteğidir; ücret, prim, terfi, disiplin veya bireysel performans değerlendirmesinde kullanılamaz.",
+    en: "Usage policy: this output is aggregate (group-level) decision support; it must not be used for pay, bonus, promotion, discipline or individual performance evaluation.",
+    ru: "Политика использования: это агрегированная (групповая) поддержка решений; не используется для оплаты, премий, повышения, дисциплинарных мер или индивидуальной оценки эффективности.",
+  },
   "dash.title": { tr: "Üst Yönetim Paneli", en: "Executive Dashboard", ru: "Панель руководства" },
   "dash.headcountTrend": { tr: "Aktif personel trendi", en: "Active headcount trend", ru: "Динамика численности" },
   "dash.turnoverTrend": { tr: "Aylık devir oranı (%)", en: "Monthly turnover (%)", ru: "Текучесть по месяцам (%)" },
@@ -381,7 +387,6 @@ const dict = {
     en: "column(s) with identity, health or free-text content were dropped without being read:",
     ru: "столбцы с персональными, медицинскими данными или свободным текстом удалены без чтения:",
   },
-  "cov.attr.includes_subcontractor_cases": { tr: "Alt yüklenici vakaları dahil", en: "Includes subcontractor cases", ru: "Включает случаи субподрядчиков" },
   "imp.kind.timesheet": { tr: "Puantaj", en: "Timesheets", ru: "Табель учёта времени" },
   "imp.title.timesheet": { tr: "Puantaj içe aktarma", en: "Timesheet import", ru: "Импорт табеля учёта времени" },
   "imp.notice.timesheet": {
