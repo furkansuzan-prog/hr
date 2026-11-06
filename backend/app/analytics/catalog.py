@@ -373,6 +373,42 @@ for _item in KPI_CATALOG:
             "; unknown-category share u: u <= 5 % coloured, 5-20 % value without colour (status_reason "
             "unknown_category_share) with the possible range, > 20 % insufficient_data")
 
+# ---------------------------------------------------------------- Work patterns (WP-4 + HR Director review; ADR-024)
+# KPI-055/056: leave DAYS by work pattern (6-day site: hours / 7.5), entitlement = max(statutory, approved contractual
+# rules), service = leave seniority date or the union of spells; pattern coverage below 0.8 -> insufficient_data
+# (condition 1: key min_pattern_coverage, S-1: no transition value). KPI-003/028/053/054: planned-capacity denominator -
+# leave hours added back per employee-day without a planned timesheet row (condition 2), quality 50 + note when it
+# cannot be verified (S-2). New formula versions via catalog sync; older versions keep their results.
+ANNUAL_LEAVE_V2 = {"day_basis": "leave_days", "min_pattern_coverage": 0.8}
+ABSENCE_DENOMINATOR_V2 = {"denominator_basis": "planned_capacity"}
+_CAPACITY_DEN = ("Planned hours on approved timesheets + leave hours (all types except public holidays) of employee "
+                 "working days without a planned timesheet row (planned capacity; ADR-024)")
+for _item in KPI_CATALOG:
+    if _item["code"] in ("KPI-055", "KPI-056"):
+        _item["formula"]["parameters"] = {**_item["formula"]["parameters"], **ANNUAL_LEAVE_V2}
+        _item["missing_data_behavior"] += (
+            "; work pattern known for < 80 % of the eligible population (min_pattern_coverage) -> insufficient_data "
+            "(quality = pattern coverage); unknown-pattern persons otherwise use 9 h per day")
+        if _item["code"] == "KPI-055":
+            _item["formula"]["numerator_def"] = ("Annual-leave days taken in the period: stored leave days, else hours "
+                                                 "/ daily hours of the person's work pattern (9 h fallback), "
+                                                 "window share by pattern working days")
+            _item["formula"]["denominator_def"] = (
+                "Entitlement = max(statutory 4857 md.53, approved contractual / collective-agreement rules) of persons "
+                "active at period end with >= 1 year of service (leave seniority date, else union of spells), "
+                "prorated to period length")
+            _item["formula"]["formula_text"] = ("Annual-leave days taken / entitlement days (max of statutory and "
+                                                "approved contractual rules, prorated to the period) x 100")
+            _item["inclusion_rules"] = ("Persons with >= 1 year of service with the current employer (payroll leave "
+                                        "seniority date, else the union of all spells - overlaps once, 4857 md.54)")
+        else:
+            _item["formula"]["numerator_def"] = "Eligible persons with zero annual-leave days in the period"
+            _item["exclusion_rules"] += ("; long absence = leave days of these types > half of the window's working "
+                                         "days of the person's work pattern (5-day x 5/7, 6-day x 6/7)")
+    elif _item["code"] in ("KPI-003", "KPI-028", "KPI-053", "KPI-054"):
+        _item["formula"]["parameters"] = {**_item["formula"]["parameters"], **ABSENCE_DENOMINATOR_V2}
+        _item["formula"]["denominator_def"] = _CAPACITY_DEN
+
 # ---------------------------------------------------------------- Approved thresholds (decision D-5)
 # Source: docs/HR_DIRECTOR_RECOMMENDATIONS.md (Agent 17), approved by the product owner on 2026-11-05.
 # (target, warning, critical); None = monitoring only. Thresholds of annualised KPIs apply to the annualised value.

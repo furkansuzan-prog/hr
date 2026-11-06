@@ -30,7 +30,7 @@ from app.analytics import engine
 from app.models import EmploymentRelationship, LeaveRecord, LegalEntity, Person, Tenant, Timesheet
 from app.security.access import AccessContext
 from app.services.timekeeping import normalize_leave_type
-from tests.factories import declare_all_feeds
+from tests.factories import assign_default_pattern, declare_all_feeds
 
 D = date
 
@@ -95,6 +95,9 @@ def leavex():
         db.add(LeaveRecord(tenant_id=t.id, employment_id=e9.id, leave_type="sick", start_date=D(2025, 2, 1),
                            end_date=D(2025, 8, 31), hours=1350))
         declare_all_feeds(db, t.id)  # ADR-020: every feed complete
+        # ADR-024: the leave-days KPI-055/056 version needs known work patterns; 5 x 9 h converts exactly like the
+        # former /9 rule, so every value below is unchanged (WP-4 E2)
+        assign_default_pattern(db, t.id)
         db.commit()
         yield t.id
 

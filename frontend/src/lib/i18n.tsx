@@ -394,6 +394,14 @@ const dict = {
     en: "Blank overtime / night hours count as 0, blank productive hours stay unknown. Without an approval column rows are stored as draft and do not enter KPIs — tick the box if the source contains approved rows only. Rows in closed periods are rejected; rows missing from a file are never deleted.",
     ru: "Пустые сверхурочные / ночные часы считаются 0, пустые производительные часы остаются неизвестными. Без столбца утверждения строки сохраняются как черновик и не входят в KPI — отметьте флажок, если источник содержит только утверждённые строки. Строки закрытых периодов отклоняются; отсутствующие в файле строки не удаляются.",
   },
+  // ADR-024: work pattern import (definitions + effective-dated assignments)
+  "imp.kind.work_pattern": { tr: "Çalışma düzeni", en: "Work patterns", ru: "Режимы работы" },
+  "imp.title.work_pattern": { tr: "Çalışma düzeni içe aktarma", en: "Work pattern import", ru: "Импорт режимов работы" },
+  "imp.notice.workPattern": {
+    tr: "Bir satır = bir düzen tanımı (kod, çalışma günleri ör. 'Pzt-Cmt', günlük saat) ve/veya bir atama (düzey: kişi / proje / işveren, geçerlilik başlangıcı). İzin günü ↔ saat çevrimi ve KPI-055/056 bu düzenleri kullanır; düzeni bilinmeyen kişide 9 saat varsayılır. Kullanılan bir düzen tanımı değiştirilemez (yeni kod açın); aynı hedefte çakışan atama reddedilir.",
+    en: "One row = a pattern definition (code, working days e.g. 'Mon-Sat', daily hours) and/or one assignment (level: employment / project / legal entity, valid from). Leave day ↔ hour conversion and KPI-055/056 use these patterns; 9 h per day is assumed where no pattern is known. A referenced definition never changes (use a new code); overlapping assignments of one target are rejected.",
+    ru: "Одна строка = определение режима (код, рабочие дни, напр. 'Пн-Сб', часы в день) и/или одно назначение (уровень: сотрудник / проект / работодатель, действует с). Пересчёт дней отпуска в часы и KPI-055/056 используют эти режимы; без известного режима принимается 9 ч в день. Используемое определение не меняется (создайте новый код); пересекающиеся назначения одной цели отклоняются.",
+  },
   "imp.ts.mode": { tr: "Kayıtlı satır farklıysa", en: "If a stored row differs", ru: "Если сохранённая строка отличается" },
   "imp.ts.mode.skip": { tr: "Atla (varsayılan)", en: "Skip (default)", ru: "Пропустить (по умолчанию)" },
   "imp.ts.mode.replace": { tr: "Düzelt (yalnızca açık dönem, denetim kaydıyla)", en: "Correct (open periods only, audited)", ru: "Исправить (только открытые периоды, с аудитом)" },

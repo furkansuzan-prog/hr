@@ -49,6 +49,7 @@ from app.models import (
 from app.security.auth import hash_password, national_id_hash
 from app.seed.reference import seed_permissions_and_roles, seed_reference
 from app.services.coverage import declare_complete
+from app.services.work_patterns import assign_pattern, define_pattern
 
 FIRST = ["Ali", "Ayşe", "Mehmet", "Fatma", "Can", "Elif", "Murat", "Zeynep", "Ivan", "Olga", "John", "Maria", "Emre",
          "Deniz", "Selin", "Burak", "Nikolai", "Anna", "Kerem", "Ece"]
@@ -509,8 +510,17 @@ def generate(db: Session, *, employees: int = 1200, subcontractors: int = 12, mo
     ])
     # B-20 / ADR-020: every feed this generator produces is complete for each employer and month it covers, so the
     # demo dashboard keeps its colours; a real tenant gets coverage from imports / manual declarations instead.
+    # ADR-024: the generated timesheets carry the full planned week incl. leave days -> 'included' (WP-4 3.5 scenario A)
     declare_complete(db, tid, [mc.id] + [s[0].id for s in subs], FEED_TYPES, start_hist, as_of,
-                     note="synthetic demo data: generated feeds are complete", invalidate=False)
+                     note="synthetic demo data: generated feeds are complete", invalidate=False,
+                     planned_on_leave_days="included")
+    # ADR-024 / WP-4 3.1: every employer works the 5 x 9 h pattern (the generator's leave hours are 9 h per day, so the
+    # leave-days KPI-055/056 keep the demo values - WP-4 E2); a 6 x 7.5 h site pattern is defined for imports/demos.
+    p59 = define_pattern(db, tid, "TR-5x9", [1, 2, 3, 4, 5], 9, source_system="synthetic")
+    define_pattern(db, tid, "TR-6x7.5", [1, 2, 3, 4, 5, 6], 7.5, source_system="synthetic")
+    for le_id in [mc.id] + [s[0].id for s in subs]:
+        assign_pattern(db, tid, p59, "legal_entity", le_id, date(2000, 1, 1), source_system="synthetic",
+                       invalidate=False)
     db.execute(text("UPDATE tenants SET data_version = data_version + 1 WHERE id = :t"), {"t": tid})
     db.commit()
     summary.refresh(db, tid)  # rebuild the timesheet monthly summary for the freshly loaded data (B-21)

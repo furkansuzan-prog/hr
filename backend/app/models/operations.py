@@ -34,6 +34,77 @@ class WorkCalendar(Base, TenantMixin, TimestampMixin):
     annual_overtime_cap_hours: Mapped[float] = mapped_column(Numeric(6, 2), default=270)
 
 
+# ---------------------------------------------------------------- Work patterns (WP-4 3.1, ADR-024)
+# Resolution order on a date: employment -> project of the employment's primary assignment -> legal entity -> unknown.
+# The tenant's work_calendars row (45 h) is an ASSUMPTION, never a known pattern (only the fallback divisor 9).
+WORK_PATTERN_LEVELS = ("employment", "project", "legal_entity")
+WORK_PATTERN_TYPES = ("weekly",)  # v1: weekly patterns only; rotations (10 weeks on / 2 off) count as unknown (S-4)
+# How leave_records.days was produced (WP-4 3.1(f)); quality score and audit trail
+LEAVE_DAY_BASES = ("source_days", "pattern_counted", "hours_divided", "default_9h")
+DEFAULT_HOURS_PER_DAY = 9  # fallback divisor when no pattern is known (45 h / 5 days; WP-4 3.2 step 5)
+
+
+class WorkPattern(Base, TenantMixin, TimestampMixin, SourceMixin):
+    """Weekly work pattern catalogue (WP-4 3.1(a)): working ISO weekdays (1 = Mon .. 7 = Sun) and daily hours.
+    Definitions are immutable once referenced: a changed pattern gets a new code (re-import rejects a change)."""
+
+    __tablename__ = "work_patterns"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "code", name="uq_work_pattern_code"),
+        CheckConstraint("days_per_week BETWEEN 1 AND 7", name="ck_work_pattern_days"),
+        CheckConstraint("daily_hours > 0 AND daily_hours <= 24", name="ck_work_pattern_daily_hours"),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    code: Mapped[str] = mapped_column(String(40))
+    days_per_week: Mapped[int] = mapped_column(Integer)
+    working_weekdays: Mapped[list] = mapped_column(JSON)  # sorted ISO weekdays, len == days_per_week
+    daily_hours: Mapped[float] = mapped_column(Numeric(4, 2))
+    weekly_hours: Mapped[float] = mapped_column(Numeric(5, 2))
+    country: Mapped[str] = mapped_column(String(2), default="TR")  # public holiday calendar
+    pattern_type: Mapped[str] = mapped_column(String(10), default="weekly")  # WORK_PATTERN_TYPES
+
+
+class WorkPatternAssignment(Base, TenantMixin, TimestampMixin, EffectiveDatedMixin, SourceMixin):
+    """Effective-dated binding of a pattern to an employment, a project or a legal entity (WP-4 3.1(b)); exactly one
+    target column matches `level`. Overlapping intervals on the same target are rejected in code."""
+
+    __tablename__ = "work_pattern_assignments"
+    __table_args__ = (
+        CheckConstraint(
+            "(level = 'employment' AND employment_id IS NOT NULL AND project_id IS NULL AND legal_entity_id IS NULL) OR "
+            "(level = 'project' AND project_id IS NOT NULL AND employment_id IS NULL AND legal_entity_id IS NULL) OR "
+            "(level = 'legal_entity' AND legal_entity_id IS NOT NULL AND employment_id IS NULL AND project_id IS NULL)",
+            name="ck_wpa_target"),
+        CheckConstraint("valid_to IS NULL OR valid_to > valid_from", name="ck_wpa_dates"),
+        Index("ix_wpa_tenant_level", "tenant_id", "level"),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    work_pattern_id: Mapped[int] = mapped_column(ForeignKey("work_patterns.id"), index=True)
+    level: Mapped[str] = mapped_column(String(20))  # WORK_PATTERN_LEVELS
+    employment_id: Mapped[int | None] = mapped_column(ForeignKey("employment_relationships.id", ondelete="CASCADE"),
+                                                      index=True)
+    project_id: Mapped[int | None] = mapped_column(ForeignKey("projects.id"))
+    legal_entity_id: Mapped[int | None] = mapped_column(ForeignKey("legal_entities.id"))
+
+
+class PublicHoliday(Base, TimestampMixin):
+    """Country public-holiday calendar (WP-4 3.1(c)), shared by all tenants: fraction 1.0 = full day, 0.5 = eve
+    (arife) half day (L-2 safe default). A country-year without any row = calendar missing (holiday_calendar_missing).
+    Source must be the official calendar (TR: Law 2429 - current text to be confirmed)."""
+
+    __tablename__ = "public_holidays"
+    __table_args__ = (
+        UniqueConstraint("country", "holiday_date", name="uq_public_holiday"),
+        CheckConstraint("fraction > 0 AND fraction <= 1", name="ck_public_holiday_fraction"),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    country: Mapped[str] = mapped_column(String(2))
+    holiday_date: Mapped[date] = mapped_column(Date)
+    fraction: Mapped[float] = mapped_column(Numeric(3, 2), default=1)
+    name: Mapped[str] = mapped_column(String(100))
+    source: Mapped[str] = mapped_column(String(120), default="manual")
+
+
 class Shift(Base, TenantMixin, TimestampMixin):
     __tablename__ = "shifts"
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -160,6 +231,11 @@ class LeaveRecord(Base, TenantMixin, TimestampMixin, SourceMixin):
     start_date: Mapped[date] = mapped_column(Date)
     end_date: Mapped[date] = mapped_column(Date)
     hours: Mapped[float] = mapped_column(Numeric(6, 2))
+    # WP-4 3.1(f) / ADR-024: leave WORKING days (half days allowed), how they were produced (LEAVE_DAY_BASES) and the
+    # pattern used for the conversion (resolved at the leave start). NULL on rows imported before ADR-024.
+    days: Mapped[float | None] = mapped_column(Numeric(6, 2))
+    day_basis: Mapped[str | None] = mapped_column(String(20))
+    work_pattern_id: Mapped[int | None] = mapped_column(ForeignKey("work_patterns.id"))
 
 
 # ---------------------------------------------------------------- Cost (Module F)

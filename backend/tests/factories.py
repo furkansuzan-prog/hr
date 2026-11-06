@@ -54,8 +54,27 @@ def declare_all_feeds(db: Session, tenant_id: int, entity_ids=None, first: date 
     if entity_ids is None:
         entity_ids = db.execute(select(LegalEntity.id).where(LegalEntity.tenant_id == tenant_id)).scalars().all()
 
+    # hand-built timesheets carry the planned hours of leave days too (WP-4 3.5 scenario A, ADR-024)
     declare_complete(db, tenant_id, entity_ids, FEED_TYPES, first, last, note="test tenant: feeds complete",
-                     invalidate=False)
+                     invalidate=False, planned_on_leave_days="included")
+
+
+def assign_default_pattern(db: Session, tenant_id: int, entity_ids=None, code: str = "TR-5x9", weekdays=(1, 2, 3, 4, 5),
+                           daily_hours: float = 9):
+    """ADR-024: the leave-days KPI-055/056 versions need a known work pattern (min_pattern_coverage). Hand-built
+    tenants whose leave hours are 9 h per day get the 5 x 9 h pattern on every legal entity - their v1 values stay the
+    same (WP-4 E2: a 5-day pattern converts like the old /9 rule)."""
+    from sqlalchemy import select
+
+    from app.services.work_patterns import assign_pattern, define_pattern
+
+    db.flush()
+    if entity_ids is None:
+        entity_ids = db.execute(select(LegalEntity.id).where(LegalEntity.tenant_id == tenant_id)).scalars().all()
+    p = define_pattern(db, tenant_id, code, list(weekdays), daily_hours)
+    for e in entity_ids:
+        assign_pattern(db, tenant_id, p, "legal_entity", e, date(2000, 1, 1), invalidate=False)
+    return p
 
 
 def build_exact_tenant(db: Session) -> dict:

@@ -24,6 +24,7 @@ from app.analytics.domain import (
     ratio,
     suppress_small_counts,
 )
+from app.analytics.patterns import Holidays, PatternResolver, day_weights, leave_days_in_window
 from app.analytics.summary import dirty_from
 from app.core.config import get_settings
 
@@ -364,6 +365,7 @@ def absenteeism_rate(db: Session, scope: Scope, ps: date, pe: date, params: dict
     declared_excluded = params.get("excluded_types")
     hours = _hours(db, scope, ps, pe)
     where, p = _emp_where(scope, date_from=":ps", date_to=":pe")
+    cap = _capacity(db, scope, ps, pe, params, where, p)
     rows = db.execute(
         text(
             "SELECT l.leave_type, sum(l.hours * (LEAST(l.end_date, :pe) - GREATEST(l.start_date, :ps) + 1)::numeric "
@@ -376,7 +378,7 @@ def absenteeism_rate(db: Session, scope: Scope, ps: date, pe: date, params: dict
     by_type = {r[0]: round(float(r[1]), 2) for r in rows}
     people = {r[0]: int(r[2]) for r in rows}
     absent = sum(v for k, v in by_type.items() if k in absence_types)
-    res = ratio(absent, hours["planned"], sample_size=hours["persons"], min_sample=_min_group(),
+    res = ratio(absent, hours["planned"] + cap["addback_hours"], sample_size=hours["persons"], min_sample=_min_group(),
                 has_source_data=hours["rows"] > 0)
     if res.status == OK:
         masked = sorted(t for t in _MASKED_LEAVE_TYPES if 0 < people.get(t, 0) < _min_group())
@@ -390,10 +392,97 @@ def absenteeism_rate(db: Session, scope: Scope, ps: date, pe: date, params: dict
             res.breakdown["excluded_types"] = declared_excluded
         if masked:
             res.breakdown["masked_types"] = masked
+        if cap["basis"]:
+            res.breakdown["denominator"] = _capacity_breakdown(hours, cap)
     res.quality_score = 100.0 if hours["rows"] else 0.0
     res.lineage = {"tables": ["leave_records", "timesheets"], "timesheet_rows": hours["rows"],
                    "leave_types_found": sorted(by_type), "proration": "calendar-day overlap"}
+    _capacity_quality(res, hours, cap)
     return res
+
+
+# WP-4 3.5 + HR Director review condition 2 / S-2 (ADR-024): denominator_basis = planned_capacity
+_CAPACITY_NOTE = ("Planned hours on leave days could not be verified for {n} employee-day(s) (period timesheet rows, "
+                  "no daily granularity): the rate may be overstated")
+
+
+def _capacity(db: Session, scope: Scope, ps: date, pe: date, params: dict, where: str, p: dict) -> dict:
+    """Leave hours added back to the planned-hours denominator (KPI-003/028/053/054 new version, WP-4 3.5).
+    Only with params.denominator_basis = 'planned_capacity'. Per employee-day (review condition 2): the hours of a
+    leave day (every leave type except public_holiday - capacity lost, also parental; D-6 numerators unchanged) are
+    added only when no approved timesheet row with planned_hours > 0 exists for that employee and day. Days of a cell
+    (legal entity x month) whose timesheet feed is declared planned_on_leave_days = 'included' are skipped (the source
+    writes planned hours on leave days - scenario A). A day covered only by a period row (period_days > 1) cannot be
+    checked: nothing is added and it is counted as unverified (quality 50 + note, S-2). Leave hours are spread over
+    the working days of the record's work pattern (Mon-Fri without a pattern) weighted by public-holiday fractions."""
+    out = {"basis": None, "addback_hours": 0.0, "addback_days": 0, "unverified_days": 0}
+    if params.get("denominator_basis") != "planned_capacity":
+        return out
+    out["basis"] = "planned_capacity"
+    proj = " OR c.project_id = :project" if scope.project_id else ""
+    included = (f"SELECT 1 FROM data_feed_coverage c WHERE c.tenant_id = :tenant AND c.feed_type = 'timesheet' "
+                f"AND c.legal_entity_id = e.legal_entity_id AND c.planned_on_leave_days = 'included' "
+                f"AND (c.project_id IS NULL{proj})")
+    rows = db.execute(text(
+        "SELECT l.employment_id, e.legal_entity_id, l.start_date, l.end_date, l.hours, l.work_pattern_id "
+        "FROM leave_records l JOIN employment_relationships e ON e.id = l.employment_id WHERE l.tenant_id = :tenant "
+        f"AND l.start_date <= :pe AND l.end_date >= :ps AND l.leave_type <> 'public_holiday' {where} "
+        "AND EXISTS (SELECT 1 FROM generate_series(GREATEST(l.start_date, :ps), LEAST(l.end_date, :pe), "
+        f"interval '1 day') g(d) WHERE NOT EXISTS ({included} AND c.period_month = date_trunc('month', g.d)::date))"),
+        {**p, "ps": ps, "pe": pe}).all()
+    if not rows:
+        return out
+    emp_ids = {r[0] for r in rows}
+    cells = {(r[0], r[1]) for r in db.execute(text(
+        "SELECT c.legal_entity_id, c.period_month FROM data_feed_coverage c WHERE c.tenant_id = :tenant "
+        "AND c.feed_type = 'timesheet' AND c.planned_on_leave_days = 'included' "
+        f"AND (c.project_id IS NULL{' OR c.project_id = :project' if scope.project_id else ''}) "
+        "AND c.period_month BETWEEN :m0 AND :pe"),
+        {"tenant": scope.tenant_id, "m0": date(ps.year, ps.month, 1), "pe": pe,
+         **({"project": scope.project_id} if scope.project_id else {})})}
+    daily: set[tuple[int, date]] = set()
+    periods: dict[int, list[tuple[date, date]]] = {}
+    for emp, wd, n, _planned in db.execute(text(
+            "SELECT t.employment_id, t.work_date, t.period_days, t.planned_hours FROM timesheets t "
+            "WHERE t.tenant_id = :tenant AND t.status = 'approved' AND t.planned_hours > 0 "
+            "AND t.employment_id = ANY(:emps) AND t.work_date BETWEEN :lo AND :pe"),
+            {"tenant": scope.tenant_id, "emps": list(emp_ids), "lo": ps - timedelta(days=366), "pe": pe}):
+        if (n or 1) > 1:
+            periods.setdefault(emp, []).append((wd, wd + timedelta(days=n - 1)))
+        else:
+            daily.add((emp, wd))
+    resolver, holidays = PatternResolver(db, scope.tenant_id, emp_ids), Holidays(db)
+    for emp, ent, sd, ed, h, wp in rows:
+        pat = resolver.by_id(wp) or resolver.resolve(emp, ent, sd)
+        weights = day_weights(pat, holidays, sd, ed)
+        total = sum(weights.values())
+        if total <= 0:
+            continue
+        for d, w in weights.items():
+            if d < ps or d > pe or (ent, date(d.year, d.month, 1)) in cells or (emp, d) in daily:
+                continue
+            if any(a <= d <= b for a, b in periods.get(emp, ())):
+                out["unverified_days"] += 1
+                continue
+            out["addback_hours"] += float(h) * w / total
+            out["addback_days"] += 1
+    out["addback_hours"] = round(out["addback_hours"], 2)
+    return out
+
+
+def _capacity_breakdown(hours: dict, cap: dict) -> dict:
+    return {"basis": cap["basis"], "planned_hours": round(hours["planned"], 2),
+            "leave_addback_hours": cap["addback_hours"]}
+
+
+def _capacity_quality(res: CalcResult, hours: dict, cap: dict) -> None:
+    if not cap["basis"]:
+        return
+    res.lineage.update({"denominator_basis": cap["basis"], "leave_addback_days": cap["addback_days"],
+                        "unverified_leave_days": cap["unverified_days"]})
+    if cap["unverified_days"] and hours["rows"]:
+        res.quality_score = min(res.quality_score or 0.0, 50.0)
+        res.note = _CAPACITY_NOTE.format(n=cap["unverified_days"])
 
 
 def protected_leave_share(db: Session, scope: Scope, ps: date, pe: date, params: dict) -> CalcResult:
@@ -403,6 +492,7 @@ def protected_leave_share(db: Session, scope: Scope, ps: date, pe: date, params:
     types = params.get("absence_types", ["parental"])
     hours = _hours(db, scope, ps, pe)
     where, p = _emp_where(scope, date_from=":ps", date_to=":pe")
+    cap = _capacity(db, scope, ps, pe, params, where, p)
     r = db.execute(
         text("SELECT coalesce(sum(l.hours * (LEAST(l.end_date, :pe) - GREATEST(l.start_date, :ps) + 1)::numeric "
              "/ (l.end_date - l.start_date + 1)), 0), count(DISTINCT e.person_id) FROM leave_records l "
@@ -415,11 +505,14 @@ def protected_leave_share(db: Session, scope: Scope, ps: date, pe: date, params:
         return CalcResult(SUPPRESSED, quality_score=100.0 if hours["rows"] else 0.0,
                           note=f"Fewer than {_min_group()} people took protected leave in this group",
                           lineage={"tables": ["leave_records", "timesheets"]})
-    res = ratio(leave_h, hours["planned"], sample_size=hours["persons"], min_sample=_min_group(),
-                has_source_data=hours["rows"] > 0)
+    res = ratio(leave_h, hours["planned"] + cap["addback_hours"], sample_size=hours["persons"],
+                min_sample=_min_group(), has_source_data=hours["rows"] > 0)
+    if res.status == OK and cap["basis"]:
+        res.breakdown["denominator"] = _capacity_breakdown(hours, cap)
     res.quality_score = 100.0 if hours["rows"] else 0.0
     res.lineage = {"tables": ["leave_records", "timesheets"], "included_types": types,
                    "proration": "calendar-day overlap"}
+    _capacity_quality(res, hours, cap)
     return res
 
 
@@ -481,7 +574,11 @@ def _annual_leave_lineage(pop: list[dict], params: dict, **extra) -> dict:
 
 def annual_leave_usage(db: Session, scope: Scope, ps: date, pe: date, params: dict) -> CalcResult:
     """KPI-055 (decision D-7): annual-leave days taken / statutory entitlement days x 100 (group level only).
-    Can exceed 100 when carried-over leave is used (a good outcome)."""
+    Can exceed 100 when carried-over leave is used (a good outcome). Versions with params.day_basis = 'leave_days'
+    (ADR-024, WP-4 3.3-3.4): leave days by work pattern, contractual entitlement, md.54 spell union / leave seniority
+    date, pattern coverage gate (min_pattern_coverage)."""
+    if params.get("day_basis") == "leave_days":
+        return _leave_days_result(db, scope, ps, pe, params, nonuse=False)
     pop = _annual_leave_population(db, scope, ps, pe, params)
     res = ratio(sum(x["taken"] for x in pop), sum(x["entitlement"] for x in pop), sample_size=len(pop),
                 min_sample=_min_group(), has_source_data=bool(pop))
@@ -501,6 +598,8 @@ def annual_leave_nonuse(db: Session, scope: Scope, ps: date, pe: date, params: d
     (sick/parental/unpaid/work_injury; reported only as a count) - an injured person is not "not taking leave"
     (WP-1 example 3). Early-warning indicator at team level - never used to rank individuals."""
     long_types = tuple(params.get("long_absence_types", _LEGACY_LONG_ABSENCE))
+    if params.get("day_basis") == "leave_days":  # ADR-024 version (WP-4 3.4)
+        return _leave_days_result(db, scope, ps, pe, params, nonuse=True, long_types=long_types)
     full = _annual_leave_population(db, scope, ps, pe, params, long_types)
     long_absent = sum(1 for x in full if x["one_year_date"] <= ps and x["long_absent"])
     pop = [x for x in full if x["one_year_date"] <= ps and not x["long_absent"]]
@@ -511,6 +610,234 @@ def annual_leave_nonuse(db: Session, scope: Scope, ps: date, pe: date, params: d
                                         long_absence_types=list(long_types))
     if ((pe - ps).days + 1) < 360:
         res.note = "Meaningful on 12-month windows; shorter periods overstate non-use"
+    return res
+
+
+# ---------------------------------------------------------------- KPI-055/056 leave-days version (ADR-024, WP-4 3.3-3.4)
+_STATUTORY_RULE = ("4857 md.53: <=5y 14d, 5-15y 20d, >=15y 26d; age <=18 or >=50 min 20d; entitlement = max(statutory, "
+                   "approved contractual / collective-agreement rules); prorated from max(period start, one-year date)")
+_SENIORITY_MISMATCH_DAYS = 30  # WP-4 3.3: leave seniority date vs spell union
+
+
+def _statutory_days(years: float, birth: int | None, pe: date) -> int:
+    ent = 14 if years <= 5 else 20 if years < 15 else 26  # 4857 md.53 (5 years inclusive -> 14 days)
+    if birth is not None and (pe.year - birth <= 18 or pe.year - birth >= 50):
+        ent = max(ent, 20)
+    return ent
+
+
+def _rule_days(rule_type: str, value: dict, statutory: int, years: float) -> float | None:
+    if rule_type == "extra_days":
+        return statutory + float(value.get("days", 0))
+    bands = sorted(value.get("bands") or [], key=lambda b: b["min_years"])
+    fit = [b for b in bands if years >= b["min_years"]]
+    return float(fit[-1]["days"]) if fit else None
+
+
+def _union_days(spells: list[tuple[date, date]]) -> int:
+    total, cur_s, cur_e = 0, None, None
+    for s, e in sorted(spells):
+        if cur_e is None or s > cur_e + timedelta(days=1):
+            if cur_e is not None:
+                total += (cur_e - cur_s).days + 1
+            cur_s, cur_e = s, e
+        else:
+            cur_e = max(cur_e, e)
+    if cur_e is not None:
+        total += (cur_e - cur_s).days + 1
+    return total
+
+
+def _leave_days_population(db: Session, scope: Scope, ps: date, pe: date, params: dict,
+                           long_types: tuple[str, ...]) -> tuple[list[dict], dict]:
+    """Persons active in scope at period end with their current employer (D-7), per WP-4 3.3:
+    - service: pe - leave_seniority_date + 1 when the payroll supplies it, else the UNION of the spells with the
+      current employer (overlaps once; md.54); > 30 days apart -> seniority_mismatch; no seniority date and the
+      earliest loaded spell starts exactly on the employer's first employment-coverage month -> possibly truncated;
+    - entitlement = max(statutory md.53, every approved rule valid at pe - employment / collective agreement /
+      legal entity / project of the primary assignment); unapproved rules only produce a note (tunnel +4, AL-02);
+    - annual-leave days (and long-absence days for KPI-056) from leave_records.days, else hours / pattern daily
+      hours, else hours / params.hours_per_day (default_9h); window share by pattern working days."""
+    hpd = float(params.get("hours_per_day", 9))
+    w_end, p = _emp_where(scope, date_from=":pe", date_to=":pe")
+    cur = db.execute(text(
+        "SELECT DISTINCT ON (e.person_id) e.id, e.person_id, e.legal_entity_id, pp.birth_year, "
+        "e.collective_agreement_code, e.leave_seniority_date FROM employment_relationships e "
+        "JOIN people pp ON pp.id = e.person_id "
+        f"WHERE e.start_date <= :pe AND (e.end_date IS NULL OR e.end_date >= :pe) {w_end} "
+        "ORDER BY e.person_id, e.start_date DESC"), {**p, "pe": pe}).all()
+    meta = {"day_basis": {}, "pattern_known": 0, "seniority_truncated": 0, "seniority_mismatch": 0,
+            "contractual_rule_persons": 0, "pending_rule_persons": 0, "pending_reasons": set(),
+            "entitlement_rule_missing": 0, "group_transfer_spells": 0, "advance_leave_persons": 0}
+    if not cur:
+        return [], meta
+    persons = [r[1] for r in cur]
+    spells: dict[tuple[int, int], list] = {}
+    other: dict[int, list] = {}
+    all_emp_ids = set()
+    ent_of = {r[1]: r[2] for r in cur}
+    for pid, eid, ent, sd, ed in db.execute(text(
+            "SELECT x.person_id, x.id, x.legal_entity_id, x.start_date, x.end_date FROM employment_relationships x "
+            "WHERE x.tenant_id = :tenant AND x.person_id = ANY(:persons) AND x.start_date <= :pe"),
+            {"tenant": scope.tenant_id, "persons": persons, "pe": pe}):
+        if ent == ent_of[pid]:
+            spells.setdefault((pid, ent), []).append((sd, min(ed or pe, pe), eid))
+            all_emp_ids.add(eid)
+        else:
+            other.setdefault(pid, []).append((sd, ed))
+    leaves: dict[int, list] = {}
+    for eid, lt, sd, ed, h, days, basis, wp in db.execute(text(
+            "SELECT l.employment_id, l.leave_type, l.start_date, l.end_date, l.hours, l.days, l.day_basis, "
+            "l.work_pattern_id FROM leave_records l WHERE l.tenant_id = :tenant AND l.employment_id = ANY(:emps) "
+            "AND l.start_date <= :pe AND l.end_date >= :ps AND l.leave_type = ANY(:types)"),
+            {"tenant": scope.tenant_id, "emps": list(all_emp_ids), "ps": ps, "pe": pe,
+             "types": ["annual", *[t for t in long_types if t != "annual"]]}):
+        leaves.setdefault(eid, []).append((lt, sd, ed, float(h), None if days is None else float(days), basis, wp))
+    first_cov = dict(db.execute(text(
+        "SELECT legal_entity_id, min(period_month) FROM data_feed_coverage WHERE tenant_id = :tenant "
+        "AND feed_type = 'employment' AND project_id IS NULL AND completeness IN ('complete', 'partial') "
+        "GROUP BY 1"), {"tenant": scope.tenant_id}).all())
+    rules = db.execute(text(
+        "SELECT scope_level, employment_id, collective_agreement_code, legal_entity_id, project_id, rule_type, value, "
+        "approved_at IS NOT NULL AND length(source_document) > 0, pending_reason FROM leave_entitlement_rules "
+        "WHERE tenant_id = :tenant AND valid_from <= :pe AND (valid_to IS NULL OR valid_to > :pe)"),
+        {"tenant": scope.tenant_id, "pe": pe}).all()
+    projects: dict[int, int] = {}
+    if any(r[0] == "project" for r in rules):
+        for eid, prj, _prim in db.execute(text(
+                "SELECT a.employment_id, a.project_id, a.is_primary FROM assignments a WHERE a.tenant_id = :tenant "
+                "AND a.employment_id = ANY(:emps) AND a.project_id IS NOT NULL AND a.valid_from <= :pe "
+                "AND (a.valid_to IS NULL OR a.valid_to > :pe) ORDER BY a.is_primary DESC, a.valid_from DESC"),
+                {"tenant": scope.tenant_id, "emps": [r[0] for r in cur], "pe": pe}):
+            projects.setdefault(eid, prj)
+    resolver, holidays = PatternResolver(db, scope.tenant_id, all_emp_ids), Holidays(db)
+    window_days = (pe - ps).days + 1
+    out = []
+    for cur_id, pid, ent, birth, ta_code, lsd in cur:
+        own = spells.get((pid, ent), [])
+        union = _union_days([(s, e) for s, e, _ in own])
+        service = (pe - lsd).days + 1 if lsd else union
+        if lsd and abs(service - union) > _SENIORITY_MISMATCH_DAYS:
+            meta["seniority_mismatch"] += 1
+        earliest = min(s for s, _, _ in own)
+        truncated = lsd is None and first_cov.get(ent) is not None and earliest == first_cov[ent]
+        pat = resolver.resolve(cur_id, ent, pe)
+        taken = absent = 0.0
+        for _s, _e, eid in own:
+            for lt, sd, ed, h, days, basis, wp in leaves.get(eid, ()):
+                lp = resolver.by_id(wp) or resolver.resolve(eid, ent, sd)
+                d, derived = leave_days_in_window(days=days, hours=h, sd=sd, ed=ed, ps=ps, pe=pe, pattern=lp,
+                                                  holidays=holidays, fallback_hpd=hpd)
+                b = basis or derived or "source_days"
+                if service >= 365:
+                    meta["day_basis"][b] = meta["day_basis"].get(b, 0) + 1
+                if lt == "annual":
+                    taken += d
+                else:
+                    absent += d
+        if service < 365:
+            if taken > 0:
+                meta["advance_leave_persons"] += 1  # S-3: lineage count only, never a KPI
+            continue
+        years = service / 365.25
+        statutory = _statutory_days(years, birth, pe)
+        ent_days, pending, ta_rule = float(statutory), [], False
+        for lvl, r_emp, r_code, r_ent, r_prj, rtype, value, active, reason in rules:
+            applies = ((lvl == "employment" and r_emp == cur_id) or (lvl == "legal_entity" and r_ent == ent)
+                       or (lvl == "collective_agreement" and ta_code is not None and r_code == ta_code)
+                       or (lvl == "project" and r_prj is not None and projects.get(cur_id) == r_prj))
+            if not applies:
+                continue
+            ta_rule |= lvl == "collective_agreement"
+            if not active:
+                pending.append(reason or "unapproved")
+                continue
+            days_rule = _rule_days(rtype, value or {}, statutory, years)
+            if days_rule is not None:
+                ent_days = max(ent_days, days_rule)  # never below the statutory floor (L-4)
+        if ent_days > statutory:
+            meta["contractual_rule_persons"] += 1
+        if pending:
+            meta["pending_rule_persons"] += 1
+            meta["pending_reasons"] |= set(pending)
+        if ta_code is not None and not ta_rule:
+            meta["entitlement_rule_missing"] += 1
+        if any(e2 is not None and s0 - timedelta(days=TRANSFER_GAP_DAYS) <= e2 < s0
+               for s0, _, _ in own for _s2, e2 in other.get(pid, ())):
+            meta["group_transfer_spells"] += 1  # HR Director review D (L-5): count only, never merged
+        if pat is not None:
+            meta["pattern_known"] += 1
+        meta["seniority_truncated"] += int(truncated)
+        one_year = pe - timedelta(days=service - 365)
+        start = max(ps, one_year)
+        dpw = pat.days_per_week if pat else 5
+        out.append({"entitlement": ent_days * ((pe - start).days + 1) / 365, "taken": taken,
+                    "one_year_date": one_year, "long_absent": absent > window_days * dpw / 7 / 2,
+                    "birth_known": birth is not None, "pattern_known": pat is not None, "truncated": truncated})
+    return out, meta
+
+
+def _leave_days_result(db: Session, scope: Scope, ps: date, pe: date, params: dict, *, nonuse: bool,
+                       long_types: tuple[str, ...] = ()) -> CalcResult:
+    """KPI-055 / KPI-056 leave-days version. Pattern coverage = share of the eligible population whose work pattern
+    is known at period end; below params.min_pattern_coverage -> insufficient_data, quality = coverage x 100
+    (HR Director S-1: 0.8, no transition value). Otherwise unknown-pattern persons use the hours_per_day fallback and
+    quality = min(birth year known, pattern coverage, not truncated) x 100."""
+    full, meta = _leave_days_population(db, scope, ps, pe, params, long_types)
+    if nonuse:
+        base = [x for x in full if x["one_year_date"] <= ps]
+        long_absent = sum(1 for x in base if x["long_absent"])
+        pop = [x for x in base if not x["long_absent"]]
+    else:
+        base = pop = full
+    coverage = sum(1 for x in base if x["pattern_known"]) / len(base) if base else 0.0
+    lineage = {"tables": ["employment_relationships", "people", "leave_records", "work_patterns",
+                          "leave_entitlement_rules"],
+               "population": "active at period end, >= 1 year of service with the current employer (leave seniority "
+                             "date, else union of all spells - 4857 md.54)",
+               "entitlement_rule": _STATUTORY_RULE, "day_basis": "leave_days",
+               "hours_per_day_fallback": params.get("hours_per_day", 9), "eligible": len(pop),
+               "pattern_coverage": round(coverage, 4), "day_basis_counts": dict(sorted(meta["day_basis"].items())),
+               "contractual_rule_count": meta["contractual_rule_persons"],
+               "seniority_truncated": sum(1 for x in base if x["truncated"]),
+               "seniority_mismatch": meta["seniority_mismatch"], "group_transfer_spells": meta["group_transfer_spells"],
+               "advance_leave_persons": meta["advance_leave_persons"],
+               "entitlement_rule_missing": meta["entitlement_rule_missing"],
+               "pending_entitlement_rules": meta["pending_rule_persons"]}
+    if nonuse:
+        lineage.update({"excluded_long_absence": long_absent, "long_absence_types": list(long_types)})
+    min_cov = float(params.get("min_pattern_coverage", 0.8))
+    unknown = sum(1 for x in base if not x["pattern_known"])
+    if len(base) >= _min_group() and coverage < min_cov:
+        return CalcResult(INSUFFICIENT, sample_size=len(base), quality_score=round(coverage * 100, 1),
+                          lineage=lineage, note=f"Work pattern unknown for {unknown} of {len(base)} eligible person(s) "
+                                                f"(pattern coverage {coverage:.0%} < {min_cov:.0%})")
+    if nonuse:
+        res = ratio(sum(1 for x in pop if x["taken"] <= 0), len(pop), sample_size=len(pop), min_sample=_min_group(),
+                    has_source_data=bool(pop))
+    else:
+        res = ratio(sum(x["taken"] for x in pop), sum(x["entitlement"] for x in pop), sample_size=len(pop),
+                    min_sample=_min_group(), has_source_data=bool(pop))
+    if base:
+        shares = [sum(1 for x in base if x["birth_known"]) / len(base), coverage,
+                  sum(1 for x in base if not x["truncated"]) / len(base)]
+        res.quality_score = round(100 * min(shares), 1) if not nonuse else round(100 * min(shares[1:]), 1)
+    else:
+        res.quality_score = 0.0
+    res.lineage = lineage
+    notes = []
+    if unknown and res.status == OK:
+        notes.append(f"Work pattern unknown for {unknown} person(s): their leave days use "
+                     f"{params.get('hours_per_day', 9)} h per day")
+    if meta["pending_rule_persons"] and res.status == OK:
+        notes.append(f"{meta['pending_rule_persons']} person(s) are covered by entitlement rule(s) awaiting approval / "
+                     f"legal confirmation ({', '.join(sorted(meta['pending_reasons']))}; e.g. underground +4 days): "
+                     "utilisation may be overstated" if not nonuse else
+                     f"{meta['pending_rule_persons']} person(s) are covered by entitlement rule(s) awaiting approval")
+    if nonuse and ((pe - ps).days + 1) < 360:
+        notes.append("Meaningful on 12-month windows; shorter periods overstate non-use")
+    if notes:
+        res.note = "; ".join(notes)
     return res
 
 

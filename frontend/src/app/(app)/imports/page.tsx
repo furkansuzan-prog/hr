@@ -11,7 +11,7 @@ import { Badge, Button, Card, CardBody, CardHeader, CardTitle, ErrorBox, Input, 
 
 type Upload = { batch_id: number; headers: string[]; total_rows: number; suggested_mapping: Record<string, string | null>; required_fields: string[]; preview: Record<string, string>[]; entity_type?: string; dropped_columns?: string[] };
 type Summary = { batch_id: number; status: string; file_name: string; total_rows: number; valid_rows: number; error_rows: number; committed_rows: number; identity_reviews: number; attempt_count: number; error_message: string | null };
-type Kind = "employment" | "leave" | "safety_event" | "timesheet";
+type Kind = "employment" | "leave" | "safety_event" | "timesheet" | "work_pattern";
 type PlannedOnLeave = "" | "included" | "excluded" | "unknown";
 type Source = { id: number; code: string; name: string; kind: string; status: string; last_success_at: string | null; last_error: string | null };
 
@@ -42,7 +42,7 @@ export default function Imports() {
       fd.append("mode", tsOpt.mode);
       fd.append("approved_source", String(tsOpt.approved));
     }
-    if (decl.on) {
+    if (decl.on && kind !== "work_pattern") { // ADR-024: work patterns are not a data feed (no coverage)
       fd.append("coverage", JSON.stringify({
         period_start: `${decl.from}-01`, period_end: monthEnd(decl.to), completeness: decl.completeness,
         legal_entity_codes: decl.entities.split(",").map((c) => c.trim()).filter(Boolean),
@@ -71,11 +71,13 @@ export default function Imports() {
               <option value="employment">{t("imp.kind.employment")}</option>
               <option value="leave">{t("imp.kind.leave")}</option>
               <option value="timesheet">{t("imp.kind.timesheet")}</option>
+              <option value="work_pattern">{t("imp.kind.work_pattern")}</option>
               {canHse && <option value="safety_event">{t("imp.kind.safety_event")}</option>}
             </Select>
           </CardHeader>
           <CardBody className="space-y-3">
             {kind === "leave" && <p className="text-xs text-muted">{t("imp.notice.leave")}</p>}
+            {kind === "work_pattern" && <p role="note" className="text-xs text-muted">{t("imp.notice.workPattern")}</p>}
             {kind === "timesheet" && (
               <div className="space-y-2 rounded-md bg-surface-2 p-2 text-xs">
                 <p role="note"><b>KVKK:</b> {t("imp.notice.timesheet")}</p>
@@ -97,7 +99,7 @@ export default function Imports() {
                 <p className="text-muted">{t("imp.notice.safetyRules")}</p>
               </div>
             )}
-            <fieldset className="space-y-2 rounded-md border border-border p-2 text-xs">
+            {kind !== "work_pattern" && <fieldset className="space-y-2 rounded-md border border-border p-2 text-xs">
               <label className="flex items-center gap-2">
                 <input type="checkbox" checked={decl.on} disabled={busy} onChange={(e) => setDecl({ ...decl, on: e.target.checked })} />
                 {t("cov.upload")}
@@ -129,7 +131,7 @@ export default function Imports() {
                 </div>
               )}
               <p className="text-muted">{t("cov.uploadHelp")}</p>
-            </fieldset>
+            </fieldset>}
             <input type="file" accept=".csv,.xlsx" aria-label="File" disabled={busy} onChange={(e) => e.target.files?.[0] && onFile(e.target.files[0])} className="text-sm" />
             {up && (
               <>

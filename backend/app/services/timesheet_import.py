@@ -3,7 +3,9 @@
 Source: docs/hr/data/WP-6_import_field_dictionaries.md 3.1-3.2 + HR Director review (conditions 1-6); the WP-4
 review (condition 2: `period_days > 1` = no daily granularity) for the planned-on-leave observation. Review conditions
 override the spec text where they differ. Work patterns (WP-4, item 15) are NOT implemented: the weekly overtime check
-uses 45 h, the planned-on-leave observation counts Mon-Fri leave days, `pattern_timesheet_mismatch` waits for item 15.
+Work patterns (ADR-024, item 15): the weekly overtime check uses the employee's pattern weekly hours (45 h where no
+pattern is known), the planned-on-leave observation counts the pattern's working days (Mon-Fri without a pattern) minus
+full public holidays, and `pattern_timesheet_mismatch` compares planned days with the pattern (WP-4 section 8).
 
 - one row = one employee x day x project (`period_days > 1` = a period total starting at work_date, flagged
   `non_daily_granularity`); natural key (employment, work_date, project) = uq_timesheet_day (NULLS NOT DISTINCT);
@@ -20,7 +22,7 @@ uses 45 h, the planned-on-leave observation counts Mon-Fri leave days, `pattern_
   (`period_closed`, D-2), so a correction only ever touches open periods. Rows missing from a later file are never
   deleted;
 - cross-row checks are group-level counts only (no person list): `overtime_weekly_inconsistent`,
-  `leave_and_work_same_day`, `planned_on_leave_mismatch`;
+  `leave_and_work_same_day`, `planned_on_leave_mismatch`, `pattern_timesheet_mismatch`;
 - KVKK md.4: name / national-id / health columns are dropped on upload before anything is stored (names of the
   columns only); a `day_type = leave` row never creates a leave record (D-6).
 The timesheet_monthly summary is kept exact by the DB triggers of migration 0005 (insert/update of timesheets marks
@@ -33,6 +35,7 @@ from datetime import date, timedelta
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.analytics.patterns import DEFAULT_WEEKDAYS, Holidays, PatternResolver
 from app.models import (
     TIMESHEET_CORRECT_ACTION,
     Assignment,
@@ -71,7 +74,8 @@ TIMESHEET_FIELDS = {
     "period_days": {"required": False, "aliases": ["dönem gün", "period days"]},
 }
 MODES = ("skip", "replace")
-WEEKLY_HOURS = 45  # 4857 md. 63; WP-4 work pattern replaces it with item 15 (L-15: weekly basis, warning only)
+WEEKLY_HOURS = 45  # 4857 md. 63 - fallback when no work pattern is known (ADR-024; L-15: weekly basis, warning only)
+PATTERN_MISMATCH_SHARE = 0.5  # WP-4 section 8: >= 50 % of an employee's complete weeks off the pattern
 DAILY_MAX = 11  # md. 63 (L-16: warning, the row is loaded)
 NIGHT_MAX = 7.5  # md. 69 (L-16: warning)
 CERTIFIED_LEAVE = ("annual", "sick", "work_injury")  # WP-6 3.2.2 "yıllık/raporlu izin" (E.1 paper-leave check)
@@ -440,6 +444,14 @@ def _cross_row(db: Session, ctx: AccessContext, batch: ImportBatch, rows: list[d
         return out, None
     # overtime is defined weekly (md. 41): ISO weeks lying completely inside the file's date span
     dates = [date.fromisoformat(r["work_date"]) for r in daily]
+    emp_ids = {r["employment_id"] for r in daily}
+    entity_of = dict(db.execute(select(EmploymentRelationship.id, EmploymentRelationship.legal_entity_id).where(
+        EmploymentRelationship.id.in_(emp_ids))).all()) if emp_ids else {}
+    resolver, holidays = PatternResolver(db, ctx.tenant_id, emp_ids), Holidays(db)
+
+    def pattern(emp: int, d: date):
+        return resolver.resolve(emp, entity_of.get(emp), d)
+
     weeks: dict[tuple[int, date], list[float]] = defaultdict(lambda: [0.0, 0.0])
     for r in daily:
         d = date.fromisoformat(r["work_date"])
@@ -448,12 +460,16 @@ def _cross_row(db: Session, ctx: AccessContext, batch: ImportBatch, rows: list[d
         w[1] += r["overtime_hours"] or 0
     if dates:
         lo, hi = min(dates), max(dates)
-        bad = sum(1 for (_, mon), (worked, ot) in weeks.items()
-                  if mon >= lo and mon + timedelta(days=6) <= hi and abs(ot - max(0.0, worked - WEEKLY_HOURS)) > 1)
+        bad = 0
+        for (emp, mon), (worked, ot) in weeks.items():
+            if mon >= lo and mon + timedelta(days=6) <= hi:
+                p = pattern(emp, mon)
+                if abs(ot - max(0.0, worked - (p.weekly_hours if p else WEEKLY_HOURS))) > 1:
+                    bad += 1
         if bad:
             out.append(("overtime_weekly_inconsistent", f"{bad} employee-week(s): weekly overtime differs by more "
-                        f"than 1 h from worked hours above {WEEKLY_HOURS} h (4857 md. 41; equalisation L-15)"))
-    emp_ids = {r["employment_id"] for r in daily}
+                        f"than 1 h from worked hours above the work pattern's weekly hours ({WEEKLY_HOURS} h where no "
+                        "pattern is known; 4857 md. 41; equalisation L-15)"))
     if not dates:
         return out, {"profile": "unknown", "leave_workdays": 0, "with_planned_hours": 0}
     lo, hi = min(dates), max(dates)
@@ -473,7 +489,10 @@ def _cross_row(db: Session, ctx: AccessContext, batch: ImportBatch, rows: list[d
             rs = by_day.get((emp, d), [])
             if lt in CERTIFIED_LEAVE and any((r["worked_hours"] or 0) > 0 for r in rs):
                 paper_days.add((emp, d))
-            if d.weekday() < 5 and not any(r["day_type"] in ("weekly_rest", "public_holiday") for r in rs):
+            p = pattern(emp, d)
+            workday = d.isoweekday() in (p.weekdays if p else DEFAULT_WEEKDAYS) and (
+                p is None or holidays.fraction(p.country, d) < 1)
+            if workday and not any(r["day_type"] in ("weekly_rest", "public_holiday") for r in rs):
                 leave_days.add((emp, d))
             d += timedelta(days=1)
     paper = len(paper_days)
@@ -492,8 +511,53 @@ def _cross_row(db: Session, ctx: AccessContext, batch: ImportBatch, rows: list[d
     declared = (batch.coverage or {}).get("planned_on_leave_days")
     if declared in ("included", "excluded") and profile in ("included", "excluded", "mixed") and profile != declared:
         out.append(("planned_on_leave_mismatch", f"declared planned_on_leave_days '{declared}' but the file shows "
-                    f"'{profile}' ({with_planned} of {n} Mon-Fri leave day(s) carry planned hours; WP-4 3.5)"))
+                    f"'{profile}' ({with_planned} of {n} leave working day(s) carry planned hours; WP-4 3.5)"))
+    mism = _pattern_mismatch(daily, pattern, holidays, leaves, lo, hi)
+    if mism:
+        out.append(("pattern_timesheet_mismatch", f"{mism} employee(s): planned hours on days outside the work "
+                    "pattern, or missing on pattern working days, in >= 50 % of complete weeks (WP-4 section 8 - check "
+                    "the declared pattern)"))
     return out, {"profile": profile, "leave_workdays": n, "with_planned_hours": with_planned}
+
+
+def _pattern_mismatch(daily: list[dict], pattern, holidays: Holidays, leaves, lo: date, hi: date) -> int:
+    """WP-4 section 8 manipulation control (count of employees only): per complete ISO week inside the file span, a
+    week is off-pattern when planned hours > 0 fall on a weekday outside the pattern (e.g. Saturday in a 5-day
+    pattern) or a pattern working day has no planned hours although it is not a leave day, a public holiday or a
+    rest/holiday row (e.g. Saturday never planned in a 6-day pattern). An employee with a known pattern and >= 50 % of
+    such weeks is counted. Employees without a known pattern are not judged."""
+    planned: dict[tuple[int, date], bool] = defaultdict(bool)
+    excused: set[tuple[int, date]] = set()
+    has_rows: set[tuple[int, date]] = set()  # (employee, Monday) weeks with at least one row (no judging before hire)
+    for r in daily:
+        k = (r["employment_id"], date.fromisoformat(r["work_date"]))
+        has_rows.add((k[0], k[1] - timedelta(days=k[1].weekday())))
+        planned[k] |= (r["planned_hours"] or 0) > 0
+        if r["day_type"] in ("weekly_rest", "public_holiday", "leave"):
+            excused.add(k)
+    for emp, _lt, sd, ed in leaves:
+        d = max(sd, lo)
+        while d <= min(ed, hi):
+            excused.add((emp, d))
+            d += timedelta(days=1)
+    first = lo + timedelta(days=(7 - lo.weekday()) % 7)
+    weeks: dict[int, list[bool]] = defaultdict(list)
+    for emp in {r["employment_id"] for r in daily}:
+        mon = first
+        while mon + timedelta(days=6) <= hi:
+            p = pattern(emp, mon) if (emp, mon) in has_rows else None
+            if p is not None:
+                off = False
+                for i in range(7):
+                    d = mon + timedelta(days=i)
+                    k = (emp, d)
+                    if d.isoweekday() not in p.weekdays:
+                        off |= planned[k]
+                    elif not planned[k] and k not in excused and holidays.fraction(p.country, d) < 1:
+                        off = True
+                weeks[emp].append(off)
+            mon += timedelta(days=7)
+    return sum(1 for w in weeks.values() if w and sum(w) / len(w) >= PATTERN_MISMATCH_SHARE)
 
 
 def commit_row(db: Session, ctx: AccessContext, row: ImportStagingRow) -> date | None:

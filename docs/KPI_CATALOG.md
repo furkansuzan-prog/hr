@@ -100,14 +100,14 @@ Ortak kurallar: payda 0 → `not_computable` (asla 0); kaynak veri yok → `insu
 
 - **Formül:** Absence hours of included types / planned working hours x 100
 - **Pay:** Leave hours prorated to period for types in parameter absence_types
-- **Payda:** Planned hours on approved timesheets
+- **Payda:** Planned hours on approved timesheets + leave hours (all types except public holidays) of employee working days without a planned timesheet row (planned capacity; ADR-024)
 - **Amaç:** Track absenteeism rate
 - **Dahil:** Unexcused absence, sick-note days (raporlu), work-injury / occupational-disease rest (work_injury - included explicitly pending product-owner decision PO-1), annual leave, unpaid leave, other leave
 - **Hariç:** Public holidays (not working days); parental/maternity and related protected leave (decision D-6)
 - **Veri kaynakları:** leave_records, timesheets · **Veri sahibi:** HR_MANAGER
 - **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
 - **Eşikler (hedef/uyarı/kritik):** 7 / 9 / 11
-- **Parametreler (v1):** `{'absence_types': ['unexcused', 'sick', 'work_injury', 'annual', 'unpaid', 'other'], 'excluded_types': ['public_holiday', 'parental'], 'required_feeds': ['timesheet', 'leave'], 'min_feed_coverage': 0.8}`
+- **Parametreler (v1):** `{'absence_types': ['unexcused', 'sick', 'work_injury', 'annual', 'unpaid', 'other'], 'excluded_types': ['public_holiday', 'parental'], 'denominator_basis': 'planned_capacity', 'required_feeds': ['timesheet', 'leave'], 'min_feed_coverage': 0.8}`
 - **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE; coverage gate on feeds timesheet, leave (ADR-020): coverage below min_feed_coverage -> value without colour, status_reason low_coverage (warn) or insufficient_data (enforce, per HRSWI_COVERAGE_MODES)
 
 ### KPI-004 — İş Gücü Kapasite Kullanımı / Workforce Capacity Utilisation / Использование мощности персонала
@@ -380,14 +380,14 @@ Ortak kurallar: payda 0 → `not_computable` (asla 0); kaynak veri yok → `insu
 
 - **Formül:** Sick leave hours / planned hours x 100 (aggregate only)
 - **Pay:** Sick leave hours prorated to period
-- **Payda:** Planned hours on approved timesheets
+- **Payda:** Planned hours on approved timesheets + leave hours (all types except public holidays) of employee working days without a planned timesheet row (planned capacity; ADR-024)
 - **Amaç:** Track sickness absence rate (excl. work injury)
 - **Dahil:** Leave type 'sick' only
 - **Hariç:** Work-injury / occupational-disease rest (work_injury, SGK report codes 1/2 - WP-1, ADR-019) and all other leave types. Before ADR-019 work-injury rest was imported as 'sick'
 - **Veri kaynakları:** leave_records, timesheets · **Veri sahibi:** HR_MANAGER
 - **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
 - **Eşikler (hedef/uyarı/kritik):** 2.0 / 3.0 / 4.5
-- **Parametreler (v1):** `{'absence_types': ['sick'], 'excluded_types': ['unexcused', 'work_injury', 'annual', 'unpaid', 'other', 'public_holiday', 'parental'], 'required_feeds': ['timesheet', 'leave'], 'min_feed_coverage': 0.8}`
+- **Parametreler (v1):** `{'absence_types': ['sick'], 'excluded_types': ['unexcused', 'work_injury', 'annual', 'unpaid', 'other', 'public_holiday', 'parental'], 'denominator_basis': 'planned_capacity', 'required_feeds': ['timesheet', 'leave'], 'min_feed_coverage': 0.8}`
 - **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE; coverage gate on feeds timesheet, leave (ADR-020): coverage below min_feed_coverage -> value without colour, status_reason low_coverage (warn) or insufficient_data (enforce, per HRSWI_COVERAGE_MODES)
 
 ### KPI-032 — Gece Çalışması Oranı / Night Work Share / Доля ночной работы
@@ -478,43 +478,43 @@ Ortak kurallar: payda 0 → `not_computable` (asla 0); kaynak veri yok → `insu
 
 - **Formül:** (Unexcused absence + sick-note hours) / planned working hours x 100
 - **Pay:** Unexcused and sick leave hours prorated to period
-- **Payda:** Planned hours on approved timesheets
+- **Payda:** Planned hours on approved timesheets + leave hours (all types except public holidays) of employee working days without a planned timesheet row (planned capacity; ADR-024)
 - **Amaç:** Standard (unplanned) absenteeism, comparable with sector practice; complements the company KPI-003
 - **Dahil:** Unexcused absence, sick-note days
 - **Hariç:** Work-injury / occupational-disease rest (work_injury, SGK report codes 1/2 - WP-1, ADR-019; before ADR-019 imported as 'sick'), annual leave, unpaid leave, other leave, public holidays, maternity/parental and other protected leave
 - **Veri kaynakları:** leave_records, timesheets · **Veri sahibi:** HR_MANAGER
 - **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
 - **Eşikler (hedef/uyarı/kritik):** 2.5 / 3.5 / 5.0
-- **Parametreler (v1):** `{'absence_types': ['unexcused', 'sick'], 'excluded_types': ['work_injury', 'annual', 'unpaid', 'other', 'public_holiday', 'parental'], 'required_feeds': ['timesheet', 'leave'], 'min_feed_coverage': 0.8}`
+- **Parametreler (v1):** `{'absence_types': ['unexcused', 'sick'], 'excluded_types': ['work_injury', 'annual', 'unpaid', 'other', 'public_holiday', 'parental'], 'denominator_basis': 'planned_capacity', 'required_feeds': ['timesheet', 'leave'], 'min_feed_coverage': 0.8}`
 - **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE; coverage gate on feeds timesheet, leave (ADR-020): coverage below min_feed_coverage -> value without colour, status_reason low_coverage (warn) or insufficient_data (enforce, per HRSWI_COVERAGE_MODES)
 
 ### KPI-054 — Korunan İzin Payı / Protected Leave Share / Доля охраняемых отпусков
 
 - **Formül:** Maternity / parental and related protected leave hours / planned working hours x 100
 - **Pay:** Protected leave hours prorated to period (leave type 'parental')
-- **Payda:** Planned hours on approved timesheets
+- **Payda:** Planned hours on approved timesheets + leave hours (all types except public holidays) of employee working days without a planned timesheet row (planned capacity; ADR-024)
 - **Amaç:** Capacity-planning figure only. Never part of absenteeism, never a target (decision D-6)
 - **Dahil:** Leave type 'parental' (maternity, paternity, parental, nursing, pregnancy check-ups - mapped on import)
 - **Hariç:** All other leave
 - **Veri kaynakları:** leave_records, timesheets · **Veri sahibi:** HR_DIRECTOR
 - **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
 - **Eşikler (hedef/uyarı/kritik):** None / None / None
-- **Parametreler (v1):** `{'absence_types': ['parental'], 'required_feeds': ['timesheet', 'leave'], 'min_feed_coverage': 0.8}`
+- **Parametreler (v1):** `{'absence_types': ['parental'], 'denominator_basis': 'planned_capacity', 'required_feeds': ['timesheet', 'leave'], 'min_feed_coverage': 0.8}`
 - **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE; coverage gate on feeds timesheet, leave (ADR-020): coverage below min_feed_coverage -> value without colour, status_reason low_coverage (warn) or insufficient_data (enforce, per HRSWI_COVERAGE_MODES)
 
 ### KPI-055 — Yıllık İzin Kullanım Oranı / Annual Leave Utilisation / Использование ежегодного отпуска
 
-- **Formül:** Annual-leave days taken / statutory entitlement days (4857 md.53, prorated to the period) x 100
-- **Pay:** Annual-leave days taken in the period (hours / hours_per_day)
-- **Payda:** Statutory entitlement of persons active at period end with >= 1 year tenure, prorated to period length
+- **Formül:** Annual-leave days taken / entitlement days (max of statutory and approved contractual rules, prorated to the period) x 100
+- **Pay:** Annual-leave days taken in the period: stored leave days, else hours / daily hours of the person's work pattern (9 h fallback), window share by pattern working days
+- **Payda:** Entitlement = max(statutory 4857 md.53, approved contractual / collective-agreement rules) of persons active at period end with >= 1 year of service (leave seniority date, else union of spells), prorated to period length
 - **Amaç:** Sustainable, humane leave practice: leave is taken, not accumulated (decision D-7). Group level only
-- **Dahil:** Persons with >= 1 year of service with the current employer (all spells, 4857 md.54)
+- **Dahil:** Persons with >= 1 year of service with the current employer (payroll leave seniority date, else the union of all spells - overlaps once, 4857 md.54)
 - **Hariç:** Persons with < 1 year of service
 - **Veri kaynakları:** leave_records, employment_relationships, people · **Veri sahibi:** HR_DIRECTOR
 - **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
 - **Eşikler (hedef/uyarı/kritik):** 90 / 75 / 60
-- **Parametreler (v1):** `{'hours_per_day': 9, 'threshold_min_days': 360, 'required_feeds': ['employment', 'leave'], 'min_feed_coverage': 0.8}`
-- **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE; coverage gate on feeds employment, leave (ADR-020): coverage below min_feed_coverage -> value without colour, status_reason low_coverage (warn) or insufficient_data (enforce, per HRSWI_COVERAGE_MODES)
+- **Parametreler (v1):** `{'hours_per_day': 9, 'threshold_min_days': 360, 'day_basis': 'leave_days', 'min_pattern_coverage': 0.8, 'required_feeds': ['employment', 'leave'], 'min_feed_coverage': 0.8}`
+- **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE; work pattern known for < 80 % of the eligible population (min_pattern_coverage) -> insufficient_data (quality = pattern coverage); unknown-pattern persons otherwise use 9 h per day; coverage gate on feeds employment, leave (ADR-020): coverage below min_feed_coverage -> value without colour, status_reason low_coverage (warn) or insufficient_data (enforce, per HRSWI_COVERAGE_MODES)
 
 ### KPI-056 — Yıllık İzin Kullanmayan Çalışan Oranı / Employees Without Annual Leave / Доля сотрудников без отпуска
 
@@ -523,9 +523,9 @@ Ortak kurallar: payda 0 → `not_computable` (asla 0); kaynak veri yok → `insu
 - **Payda:** Persons active at period end with >= 1 year tenure
 - **Amaç:** Early warning for workload / burnout at team level (decision D-7); never used to rank individuals
 - **Dahil:** Persons whose one-year date is on/before the period start
-- **Hariç:** Persons with < 1 year of service at period start; persons on long sick / parental / unpaid / work-injury absence (> half of the window; reported as a count - an injured person is not 'not taking leave', WP-1 example 3, ADR-019)
+- **Hariç:** Persons with < 1 year of service at period start; persons on long sick / parental / unpaid / work-injury absence (> half of the window; reported as a count - an injured person is not 'not taking leave', WP-1 example 3, ADR-019); long absence = leave days of these types > half of the window's working days of the person's work pattern (5-day x 5/7, 6-day x 6/7)
 - **Veri kaynakları:** leave_records, employment_relationships · **Veri sahibi:** HR_DIRECTOR
 - **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
 - **Eşikler (hedef/uyarı/kritik):** 5 / 10 / 15
-- **Parametreler (v1):** `{'hours_per_day': 9, 'threshold_min_days': 360, 'long_absence_types': ['sick', 'parental', 'unpaid', 'work_injury'], 'required_feeds': ['employment', 'leave'], 'min_feed_coverage': 0.8}`
-- **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE; coverage gate on feeds employment, leave (ADR-020): coverage below min_feed_coverage -> value without colour, status_reason low_coverage (warn) or insufficient_data (enforce, per HRSWI_COVERAGE_MODES)
+- **Parametreler (v1):** `{'hours_per_day': 9, 'threshold_min_days': 360, 'long_absence_types': ['sick', 'parental', 'unpaid', 'work_injury'], 'day_basis': 'leave_days', 'min_pattern_coverage': 0.8, 'required_feeds': ['employment', 'leave'], 'min_feed_coverage': 0.8}`
+- **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE; work pattern known for < 80 % of the eligible population (min_pattern_coverage) -> insufficient_data (quality = pattern coverage); unknown-pattern persons otherwise use 9 h per day; coverage gate on feeds employment, leave (ADR-020): coverage below min_feed_coverage -> value without colour, status_reason low_coverage (warn) or insufficient_data (enforce, per HRSWI_COVERAGE_MODES)

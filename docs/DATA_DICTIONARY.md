@@ -2,7 +2,7 @@
 
 # Veri Sözlüğü / Data Dictionary
 
-61 tablo. Şema kaynağı: `backend/app/models/*` → Alembic migration'ları.
+65 tablo. Şema kaynağı: `backend/app/models/*` → Alembic migration'ları.
 
 
 ## `ai_analysis_runs`
@@ -265,6 +265,9 @@ One employment spell of a person with one employer (legal entity). Employer chan
 | termination_reason_source | VARCHAR(10) | ✓ |  |
 | planned_end_date | DATE | ✓ |  |
 | planned_end_verified | BOOLEAN | ✓ |  |
+| collective_agreement_code | VARCHAR(40) | ✓ |  |
+| collective_agreement_known | BOOLEAN | ✓ |  |
+| leave_seniority_date | DATE | ✓ |  |
 | tenant_id | INTEGER |  | → tenants.id idx |
 | created_at | DATETIME |  |  |
 | updated_at | DATETIME |  |  |
@@ -506,6 +509,33 @@ Kısıtlar:
 | calculated_at | DATETIME |  |  |
 | tenant_id | INTEGER |  | → tenants.id idx |
 
+## `leave_entitlement_rules`
+
+Contractual / collective-agreement annual-leave entitlement (KPI-055 denominator). A rule is ACTIVE only with a source_document AND approval (approved_at): an unverified reading of the law is not a source document (HR Director review D, L-3). entitlement = max(statutory, every active rule) - never below the statutory floor (L-4). value: extra_days -> {"days": N}; band_table -> {"bands": [{"min_years": 0, "days": 18}, ...]}. pending_reason: why an unapproved rule exists (e.g. 'AL-02' underground +4 days awaiting legal confirmation) - its persons get a visible note in KPI-055 instead of a silent change.
+
+| Kolon | Tip | Null | Anahtar / FK |
+|---|---|---|---|
+| id | INTEGER |  | PK |
+| scope_level | VARCHAR(25) |  |  |
+| employment_id | INTEGER | ✓ | → employment_relationships.id |
+| collective_agreement_code | VARCHAR(40) | ✓ |  |
+| legal_entity_id | INTEGER | ✓ | → legal_entities.id |
+| project_id | INTEGER | ✓ | → projects.id |
+| rule_type | VARCHAR(20) |  |  |
+| value | JSON |  |  |
+| source_document | VARCHAR(200) |  |  |
+| approved_by | VARCHAR(120) | ✓ |  |
+| approved_at | DATETIME | ✓ |  |
+| pending_reason | VARCHAR(40) | ✓ |  |
+| note | VARCHAR(300) | ✓ |  |
+| tenant_id | INTEGER |  | → tenants.id idx |
+| created_at | DATETIME |  |  |
+| updated_at | DATETIME |  |  |
+| valid_from | DATE |  |  |
+| valid_to | DATE | ✓ |  |
+
+Kısıtlar: ck_entitlement_source_document, ck_entitlement_scope
+
 ## `leave_records`
 
 Absence/leave. counts_as_absence follows the tenant's absenteeism definition (KPI-003). source_record_id: the source's leave/report number when the feed has one (re-import identity key, ADR-019), otherwise the employee's external id (legacy rows).
@@ -518,6 +548,9 @@ Absence/leave. counts_as_absence follows the tenant's absenteeism definition (KP
 | start_date | DATE |  |  |
 | end_date | DATE |  |  |
 | hours | NUMERIC(6, 2) |  |  |
+| days | NUMERIC(6, 2) | ✓ |  |
+| day_basis | VARCHAR(20) | ✓ |  |
+| work_pattern_id | INTEGER | ✓ | → work_patterns.id |
 | tenant_id | INTEGER |  | → tenants.id idx |
 | created_at | DATETIME |  |  |
 | updated_at | DATETIME |  |  |
@@ -739,6 +772,23 @@ Standard labour hours per accepted output unit. KPI-005 is only computed where o
 | updated_by | BIGINT | ✓ |  |
 
 Kısıtlar: 
+
+## `public_holidays`
+
+Country public-holiday calendar (WP-4 3.1(c)), shared by all tenants: fraction 1.0 = full day, 0.5 = eve (arife) half day (L-2 safe default). A country-year without any row = calendar missing (holiday_calendar_missing). Source must be the official calendar (TR: Law 2429 - current text to be confirmed).
+
+| Kolon | Tip | Null | Anahtar / FK |
+|---|---|---|---|
+| id | INTEGER |  | PK |
+| country | VARCHAR(2) |  |  |
+| holiday_date | DATE |  |  |
+| fraction | NUMERIC(3, 2) |  |  |
+| name | VARCHAR(100) |  |  |
+| source | VARCHAR(120) |  |  |
+| created_at | DATETIME |  |  |
+| updated_at | DATETIME |  |  |
+
+Kısıtlar: ck_public_holiday_fraction, uq_public_holiday
 
 ## `requisitions`
 
@@ -1036,7 +1086,7 @@ Approved daily time record per employment and project. worked_hours = paid worki
 | record_version | INTEGER |  |  |
 | updated_by | BIGINT | ✓ |  |
 
-Kısıtlar: uq_timesheet_day, ck_ts_period_days, ck_ts_nonneg
+Kısıtlar: ck_ts_period_days, ck_ts_nonneg, uq_timesheet_day
 
 ## `training_records`
 
@@ -1154,6 +1204,54 @@ Kısıtlar:
 | tenant_id | INTEGER |  | → tenants.id idx |
 | created_at | DATETIME |  |  |
 | updated_at | DATETIME |  |  |
+
+## `work_pattern_assignments`
+
+Effective-dated binding of a pattern to an employment, a project or a legal entity (WP-4 3.1(b)); exactly one target column matches `level`. Overlapping intervals on the same target are rejected in code.
+
+| Kolon | Tip | Null | Anahtar / FK |
+|---|---|---|---|
+| id | INTEGER |  | PK |
+| work_pattern_id | INTEGER |  | → work_patterns.id idx |
+| level | VARCHAR(20) |  |  |
+| employment_id | INTEGER | ✓ | → employment_relationships.id idx |
+| project_id | INTEGER | ✓ | → projects.id |
+| legal_entity_id | INTEGER | ✓ | → legal_entities.id |
+| tenant_id | INTEGER |  | → tenants.id idx |
+| created_at | DATETIME |  |  |
+| updated_at | DATETIME |  |  |
+| valid_from | DATE |  |  |
+| valid_to | DATE | ✓ |  |
+| source_system | VARCHAR(50) |  |  |
+| source_record_id | VARCHAR(120) | ✓ |  |
+| record_version | INTEGER |  |  |
+| updated_by | BIGINT | ✓ |  |
+
+Kısıtlar: ck_wpa_dates, ck_wpa_target
+
+## `work_patterns`
+
+Weekly work pattern catalogue (WP-4 3.1(a)): working ISO weekdays (1 = Mon .. 7 = Sun) and daily hours. Definitions are immutable once referenced: a changed pattern gets a new code (re-import rejects a change).
+
+| Kolon | Tip | Null | Anahtar / FK |
+|---|---|---|---|
+| id | INTEGER |  | PK |
+| code | VARCHAR(40) |  |  |
+| days_per_week | INTEGER |  |  |
+| working_weekdays | JSON |  |  |
+| daily_hours | NUMERIC(4, 2) |  |  |
+| weekly_hours | NUMERIC(5, 2) |  |  |
+| country | VARCHAR(2) |  |  |
+| pattern_type | VARCHAR(10) |  |  |
+| tenant_id | INTEGER |  | → tenants.id idx |
+| created_at | DATETIME |  |  |
+| updated_at | DATETIME |  |  |
+| source_system | VARCHAR(50) |  |  |
+| source_record_id | VARCHAR(120) | ✓ |  |
+| record_version | INTEGER |  |  |
+| updated_by | BIGINT | ✓ |  |
+
+Kısıtlar: uq_work_pattern_code, ck_work_pattern_daily_hours, ck_work_pattern_days
 
 ## `workforce_plans`
 

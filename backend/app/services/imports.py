@@ -19,8 +19,10 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.analytics.engine import mark_stale_from
+from app.analytics.patterns import Holidays, PatternResolver, working_days
 from app.core.config import get_settings
 from app.models import (
+    DEFAULT_HOURS_PER_DAY,
     LEAVE_RECLASSIFY_ACTION,
     SICK_NOTE_FAMILY,
     Assignment,
@@ -50,6 +52,7 @@ from app.services import coverage as cov
 from app.services import exit_codes as xc
 from app.services import safety_import as sfi
 from app.services import timesheet_import as tsi
+from app.services import work_patterns as wps
 from app.services.timekeeping import classify_leave
 
 log = logging.getLogger("hrswi.imports")
@@ -90,6 +93,12 @@ FIELDS = {
     "planned_end_date": {"required": False, "aliases": ["sözleşme bitiş", "sözleşme bitiş tarihi", "planlanan bitiş",
                                                         "planned end", "planned end date", "contract end date",
                                                         "дата окончания договора"]},
+    # ADR-024 / WP-4 3.1(e): collective agreement (TIS) code and the payroll's leave seniority date (md.54 merged)
+    "collective_agreement_code": {"required": False, "aliases": ["tis", "tis kodu", "toplu sözleşme",
+                                                                 "collective agreement", "коллективный договор"]},
+    "leave_seniority_date": {"required": False, "aliases": ["izin kıdem tarihi", "izne esas kıdem tarihi",
+                                                            "izin hak ediş başlangıç", "leave seniority date",
+                                                            "дата стажа для отпуска"]},
 }
 # Target schema for entity_type = "leave" (one row = one leave/absence record of one employee) - B-07/B-27
 LEAVE_FIELDS = {
@@ -114,9 +123,12 @@ LEAVE_FIELDS = {
 }
 # ADR-021: HSE cases (one row = one affected person's outcome, no identity) - app.services.safety_import
 # ADR-022: timesheets (one row = one employee x day x project) - app.services.timesheet_import
+# ADR-024: work patterns (one row = a pattern definition and/or one assignment) - app.services.work_patterns
 FIELD_SETS = {"employment": FIELDS, "leave": LEAVE_FIELDS, "safety_event": sfi.SAFETY_FIELDS,
-              "timesheet": tsi.TIMESHEET_FIELDS}
-LEAVE_HOURS_PER_DAY = 9  # 45 h / 5 days; work-pattern specific conversion is backlog B-28
+              "timesheet": tsi.TIMESHEET_FIELDS, "work_pattern": wps.WORK_PATTERN_FIELDS}
+LEAVE_HOURS_PER_DAY = DEFAULT_HOURS_PER_DAY  # fallback only: no known work pattern (ADR-024 converts by pattern)
+HOURS_DAYS_TOLERANCE = 0.10  # WP-4 section 8: |hours - days x daily hours| > 10 % -> hours_days_inconsistent
+_NO_AGREEMENT = {"-", "yok", "none", "no", "n/a", "kapsam dışı", "нет"}
 # KVKK md.6 (data minimisation): diagnosis / medical detail is never needed for workforce analytics. Columns that
 # look like it are dropped BEFORE anything is stored or echoed back.
 _HEALTH_COLUMN_HINTS = ("tanı", "tani", "teşhis", "teshis", "diagnos", "icd", "hastalık adı", "hastalik adi",
@@ -201,6 +213,8 @@ def _coverage_decl(db: Session, ctx: AccessContext, entity_type: str, coverage: 
     """B-20 / ADR-020: optional coverage declaration of the upload, validated before anything is stored."""
     if coverage is None:
         return None
+    if entity_type not in cov.IMPORT_FEEDS:
+        raise ImportError_(f"entity_type '{entity_type}' is not a data feed; no coverage declaration")
     try:
         return cov.normalize(db, ctx, cov.IMPORT_FEEDS[entity_type], coverage, manual=False)
     except cov.CoverageError as e:
@@ -239,7 +253,7 @@ def upload(db: Session, ctx: AccessContext, *, entity_type: str, filename: str, 
     headers, rows = parse_file(filename, content)
     if len(rows) > MAX_ROWS:
         raise ImportError_(f"Too many rows ({len(rows)} > {MAX_ROWS}); split the file")
-    if not rows and not (cov.IMPORT_FEEDS[entity_type] in cov.EVENT_FEEDS and decl
+    if not rows and not (cov.IMPORT_FEEDS.get(entity_type) in cov.EVENT_FEEDS and decl
                          and decl["completeness"] == "complete"):
         # WP-6 3.5 step 2: an empty month is confirmable only for event feeds and only as an explicit 'complete'
         raise ImportError_("The file has no data rows. A header-only file is accepted only for event feeds (leave, "
@@ -337,6 +351,8 @@ def validate(db: Session, ctx: AccessContext, batch_id: int, mapping: dict[str, 
         return sfi.validate(db, ctx, batch, mapping)
     if batch.entity_type == "timesheet":
         return tsi.validate(db, ctx, batch, mapping)
+    if batch.entity_type == "work_pattern":
+        return wps.validate(db, ctx, batch, mapping)
 
     import_scope = _import_scope(ctx)
     ents = {le.code: le for le in db.execute(select(LegalEntity).where(LegalEntity.tenant_id == ctx.tenant_id)).scalars()}
@@ -399,6 +415,7 @@ def validate(db: Session, ctx: AccessContext, batch_id: int, mapping: dict[str, 
         elif ct not in CONTRACT_TYPES:
             err("contract_type", f"unknown contract type '{ct}'")
         m["contract_type"] = ct
+        _agreement_fields(m, err, bool(mapping.get("collective_agreement_code")))
         _classify_exit(db, ctx, cmap, m, err, new_spells)
         if m.get("project_code") and m["project_code"] not in projects:
             err("unknown_project", f"project '{m['project_code']}' not found")
@@ -439,6 +456,30 @@ def validate(db: Session, ctx: AccessContext, batch_id: int, mapping: dict[str, 
     batch.valid_rows, batch.error_rows, batch.status = valid, errors, "validated"
     db.commit()
     return summary(db, ctx, batch_id)
+
+
+def _agreement_fields(m: dict, err, agreement_mapped: bool) -> None:
+    """ADR-024 / WP-4 3.1(e): TIS code (blank = unknown, an explicit 'none' = known not covered) and the leave
+    seniority date (must not be after the spell start)."""
+    code = (m.pop("collective_agreement_code", "") or "").strip()
+    if code and code.lower() in _NO_AGREEMENT:
+        m["collective_agreement_code"], m["collective_agreement_known"] = None, True
+    elif code:
+        m["collective_agreement_code"], m["collective_agreement_known"] = code[:40], True
+    elif agreement_mapped:
+        m["collective_agreement_code"], m["collective_agreement_known"] = None, False
+    raw = (m.pop("leave_seniority_date", "") or "").strip()
+    if raw:
+        try:
+            lsd = _parse_date(raw)
+        except ValueError as e:
+            err("date_format", str(e))
+            return
+        if lsd and m.get("start_date") and lsd > date.fromisoformat(m["start_date"]):
+            err("leave_seniority_after_start", "leave_seniority_date is after start_date (it carries earlier "
+                                               "service, 4857 md.54)")
+        elif lsd:
+            m["leave_seniority_date"] = lsd.isoformat()
 
 
 def _file_spells(staged: list[ImportStagingRow], mapping: dict) -> dict[tuple[str, str], list[date]]:
@@ -599,6 +640,7 @@ def commit(db: Session, ctx: AccessContext, batch_id: int, *, fail_after_rows: i
                 d = (_commit_leave_row(db, ctx, r) if batch.entity_type == "leave"
                      else sfi.commit_row(db, ctx, r) if batch.entity_type == "safety_event"
                      else tsi.commit_row(db, ctx, r) if batch.entity_type == "timesheet"
+                     else wps.commit_row(db, ctx, r) if batch.entity_type == "work_pattern"
                      else _commit_row(db, ctx, batch, r, ents, projects, occs))
                 if d == "review":  # sent to manual identity review: not committed, not retried automatically
                     r.has_error = True
@@ -671,6 +713,7 @@ def _validate_leave(db: Session, ctx: AccessContext, batch: ImportBatch, mapping
     decision D-6), derive hours, flag unmapped labels (B-27), detect duplicates in file and in the database."""
     import_scope = _import_scope(ctx)
     ents = {le.code: le for le in db.execute(select(LegalEntity).where(LegalEntity.tenant_id == ctx.tenant_id)).scalars()}
+    resolver, holidays = PatternResolver(db, ctx.tenant_id), Holidays(db)  # ADR-024: day conversion by work pattern
     seen: set[tuple] = set()
     fam_spans: dict[tuple, list[tuple[date, date]]] = {}
     valid = errors = 0
@@ -708,17 +751,12 @@ def _validate_leave(db: Session, ctx: AccessContext, batch: ImportBatch, mapping
         if lt == "other" and _norm(label) != "other":
             err("unmapped_leave_label", f"leave label '{label}' not recognised -> counted as 'other' (review mapping)",
                 "warning")
-        hours = None
+        src_hours = src_days = None
         try:
-            if m.get("hours"):
-                hours = float(m["hours"].replace(",", "."))
-            elif m.get("days"):
-                hours = float(m["days"].replace(",", ".")) * LEAVE_HOURS_PER_DAY
-            elif sd and ed:
-                hours = _working_days(sd, ed) * LEAVE_HOURS_PER_DAY
-                err("hours_derived", f"hours derived from Mon-Fri working days x {LEAVE_HOURS_PER_DAY}", "warning")
-            if hours is not None and not 0 < hours <= 24 * ((ed - sd).days + 1 if sd and ed else 1):
-                err("hours_range", "hours must be positive and not exceed 24 h per calendar day")
+            src_hours = float(m["hours"].replace(",", ".")) if m.get("hours") else None
+            src_days = float(m["days"].replace(",", ".")) if m.get("days") else None
+            if src_days is not None and not 0 < src_days <= ((ed - sd).days + 1 if sd and ed else 366):
+                err("days_range", "days must be positive and not exceed the calendar days of the leave")
         except ValueError:
             err("hours_format", "hours/days must be numbers")
         emp, how = None, None
@@ -734,6 +772,11 @@ def _validate_leave(db: Session, ctx: AccessContext, batch: ImportBatch, mapping
                 if ed and emp.end_date and ed > emp.end_date:
                     err("past_employment_end", "leave ends after the employment end date -> clipped", "warning")
                     ed = emp.end_date
+        conv = _convert_leave(resolver, holidays, emp.id if emp else None, le.id if le else None, sd, ed, src_hours,
+                              src_days, err)
+        hours = conv["hours"]
+        if hours is not None and not 0 < hours <= 24 * ((ed - sd).days + 1 if sd and ed else 1):
+            err("hours_range", "hours must be positive and not exceed 24 h per calendar day")
         src, rid = m.get("source_system") or "import", m.get("record_id") or None
         reclass: LeaveRecord | None = None
         if emp is not None and sd and ed:
@@ -754,7 +797,9 @@ def _validate_leave(db: Session, ctx: AccessContext, batch: ImportBatch, mapping
         row.mapped = {"external_id": m.get("external_id"), "legal_entity_code": m.get("legal_entity_code"),
                       "employment_id": emp.id if emp else None, "leave_type": lt,
                       "start_date": sd.isoformat() if sd else None, "end_date": ed.isoformat() if ed else None,
-                      "hours": hours, "source_system": src, "matched_by": how, "record_id": rid,
+                      "hours": hours, "days": conv["days"], "day_basis": conv["day_basis"],
+                      "work_pattern_id": conv["work_pattern_id"], "source_system": src, "matched_by": how,
+                      "record_id": rid,
                       "reclassify_id": reclass.id if reclass is not None else None,
                       "reclassify_from": reclass.leave_type if reclass is not None else None}
         row.errors = errs
@@ -788,9 +833,70 @@ def _commit_leave_row(db: Session, ctx: AccessContext, row: ImportStagingRow) ->
             LeaveRecord.start_date == sd, LeaveRecord.end_date == ed)).first():
         return None  # idempotent: identical record already present (re-import / resumed commit)
     db.add(LeaveRecord(tenant_id=ctx.tenant_id, employment_id=emp.id, leave_type=m["leave_type"], start_date=sd,
-                       end_date=ed, hours=m["hours"], source_system=m["source_system"],
+                       end_date=ed, hours=m["hours"], days=m.get("days"), day_basis=m.get("day_basis"),
+                       work_pattern_id=m.get("work_pattern_id"), source_system=m["source_system"],
                        source_record_id=m.get("record_id") or m["external_id"], updated_by=ctx.user_id))
     return sd
+
+
+def _convert_leave(resolver: PatternResolver, holidays: Holidays, employment_id: int | None, entity_id: int | None,
+                   sd: date | None, ed: date | None, hours: float | None, days: float | None, err) -> dict:
+    """WP-4 3.2 / ADR-024: leave days <-> hours by the work pattern resolved at the leave start. Source values are never
+    overwritten; every derived value carries day_basis and a warning code.
+    1. source days -> kept (source_days); > pattern working days -> days_exceed_pattern_working_days;
+    2. no days -> pattern working days in [sd, ed] minus public-holiday fractions (pattern_counted) when the source
+       gave no hours or its hours match that count (+-10 %); otherwise hours / daily hours (hours_divided - partial days);
+    3. no hours -> days x pattern daily hours (hours_derived_from_pattern);
+    5. no pattern -> pre-ADR-024 behaviour: hours / 9 or Mon-Fri count x 9 (default_9h, pattern_unknown_default_9h);
+    6. no holiday calendar for the pattern's country-year -> holidays not deducted (holiday_calendar_missing)."""
+    pattern = resolver.resolve(employment_id, entity_id, sd) if sd else None
+    out = {"hours": hours, "days": days, "day_basis": None, "work_pattern_id": pattern.id if pattern else None}
+    if sd is None or ed is None:
+        return out
+    if pattern is None:
+        hpd = float(LEAVE_HOURS_PER_DAY)
+        if days is not None:
+            out["day_basis"] = "source_days"
+        elif hours is not None:
+            out["days"], out["day_basis"] = round(hours / hpd, 2), "default_9h"
+        else:
+            out["days"], out["day_basis"] = float(_working_days(sd, ed)), "default_9h"
+        if hours is None:
+            out["hours"] = round(out["days"] * hpd, 2)
+        err("pattern_unknown_default_9h", f"no work pattern known for this employee on {sd.isoformat()} -> Mon-Fri "
+                                          f"days / {LEAVE_HOURS_PER_DAY} h per day assumed (KPI-055/056 pattern "
+                                          "coverage)", "warning")
+        return out
+    dh = pattern.daily_hours
+    wd = working_days(pattern, holidays, sd, ed)
+    if holidays.missing_years(pattern.country, sd, ed):
+        err("holiday_calendar_missing", f"no public-holiday calendar for {pattern.country} in the leave's year(s) -> "
+                                        "public holidays not deducted", "warning")
+    if days is not None:
+        out["day_basis"] = "source_days"
+        if days > wd + 1e-9:
+            err("days_exceed_pattern_working_days", f"source days ({days:g}) exceed the working days of pattern "
+                                                    f"{pattern.code} in the date range ({wd:g})", "warning")
+        if hours is None:
+            out["hours"] = round(days * dh, 2)
+            err("hours_derived_from_pattern", f"hours derived from days x {dh:g} h (pattern {pattern.code})", "warning")
+        elif abs(hours - days * dh) > HOURS_DAYS_TOLERANCE * days * dh:
+            err("hours_days_inconsistent", f"hours ({hours:g}) differ by more than 10 % from days x {dh:g} h "
+                                           f"(pattern {pattern.code}); both stored", "warning")
+    elif hours is not None:
+        if wd > 0 and abs(hours - wd * dh) <= HOURS_DAYS_TOLERANCE * wd * dh:
+            out["days"], out["day_basis"] = wd, "pattern_counted"
+            err("days_derived_from_pattern", f"days counted from pattern {pattern.code} working days in the date "
+                                             "range", "warning")
+        else:
+            out["days"], out["day_basis"] = round(hours / dh, 2), "hours_divided"
+    else:
+        out["days"], out["day_basis"] = wd, "pattern_counted"
+        out["hours"] = round(wd * dh, 2)
+        err("days_derived_from_pattern", f"days counted from pattern {pattern.code} working days in the date range",
+            "warning")
+        err("hours_derived_from_pattern", f"hours derived from days x {dh:g} h (pattern {pattern.code})", "warning")
+    return out
 
 
 # ---------------------------------------------------------------- leave reclassification (WP-1 3.4, ADR-019)
@@ -919,7 +1025,7 @@ def _invalidate_from_committed(db: Session, ctx: AccessContext, batch_id: int) -
     dates = []
     for (m,) in db.execute(select(ImportStagingRow.mapped).where(ImportStagingRow.batch_id == batch_id,
                                                                  ImportStagingRow.committed.is_(True))):
-        for k in ("start_date", "end_date", "event_date", "work_date"):
+        for k in ("start_date", "end_date", "event_date", "work_date", "valid_from"):
             if m and m.get(k):
                 dates.append(date.fromisoformat(m[k]))
     if dates:
@@ -968,12 +1074,15 @@ def _commit_row(db, ctx, batch, row, ents, projects, occs) -> date | None:
         EmploymentRelationship.start_date == sd)).scalar()
     exit_fields = _exit_fields(m, ed)
     ped = date.fromisoformat(m["planned_end_date"]) if m.get("planned_end_date") else None
+    leave_fields = {k: m[k] for k in ("collective_agreement_code", "collective_agreement_known") if k in m}
+    if m.get("leave_seniority_date"):
+        leave_fields["leave_seniority_date"] = date.fromisoformat(m["leave_seniority_date"])
     if emp is None:
         emp = EmploymentRelationship(tenant_id=ctx.tenant_id, person_id=person.id, legal_entity_id=le_id,
                                      employee_number=m.get("employee_number") or None,
                                      contract_type=m.get("contract_type") or "unknown", start_date=sd, end_date=ed,
                                      planned_end_date=ped, source_system=src, source_record_id=m["external_id"],
-                                     updated_by=ctx.user_id, **exit_fields)
+                                     updated_by=ctx.user_id, **exit_fields, **leave_fields)
         db.add(emp)
         db.flush()
         if m.get("project_code") or m.get("occupation_code"):
@@ -988,6 +1097,14 @@ def _commit_row(db, ctx, batch, row, ents, projects, occs) -> date | None:
     changed = {k: v for k, v in exit_fields.items() if getattr(emp, k) != v}
     if ped and emp.planned_end_date != ped:
         changed["planned_end_date"] = ped
+    leave_changed = {k: v for k, v in leave_fields.items() if getattr(emp, k) != v}
+    if leave_changed and not (ed and (emp.end_date != ed or changed)):
+        for k, v in leave_changed.items():  # ADR-024: TIS code / leave seniority date arriving later
+            setattr(emp, k, v)
+        emp.record_version += 1
+        emp.updated_by = ctx.user_id
+        return sd
+    changed.update(leave_changed)
     if ed and (emp.end_date != ed or changed):
         new_end = emp.end_date != ed
         emp.end_date = ed
