@@ -87,6 +87,11 @@ class EmploymentRelationship(Base, TenantMixin, TimestampMixin, SourceMixin):
     planned_end_date: Mapped[date | None] = mapped_column(Date)  # contractual planned end (fixed-term / project)
     # WP-5 3.3: True = verified planned end, False = not a planned end, NULL = could not be evaluated (never excluded)
     planned_end_verified: Mapped[bool | None] = mapped_column(Boolean)
+    # WP-4 3.1(e) / ADR-024: collective agreement (TIS) code (NULL + known False = not supplied; NULL + known True = not
+    # covered) and the payroll's leave seniority date (4857 md.54 merge done at source; must be <= start_date)
+    collective_agreement_code: Mapped[str | None] = mapped_column(String(40))
+    collective_agreement_known: Mapped[bool | None] = mapped_column(Boolean)
+    leave_seniority_date: Mapped[date | None] = mapped_column(Date)
 
 
 class TerminationCodeMap(Base, TenantMixin, TimestampMixin):
@@ -128,6 +133,44 @@ class TerminationCounter(Base, TenantMixin, TimestampMixin):
     period_month: Mapped[date] = mapped_column(Date)  # first day of the month of the exit (end_date)
     counter: Mapped[str] = mapped_column(String(40))
     count: Mapped[int] = mapped_column(default=0)
+
+
+# WP-4 3.1(d) / ADR-024: annual-leave entitlement above the statutory floor (4857 md.53). 'project' marks e.g. tunnel
+# projects (underground +4 days, legal question AL-02 / L-3): such a rule stays inactive until approved.
+ENTITLEMENT_SCOPE_LEVELS = ("employment", "collective_agreement", "legal_entity", "project")
+ENTITLEMENT_RULE_TYPES = ("extra_days", "band_table")
+
+
+class LeaveEntitlementRule(Base, TenantMixin, TimestampMixin, EffectiveDatedMixin):
+    """Contractual / collective-agreement annual-leave entitlement (KPI-055 denominator). A rule is ACTIVE only with
+    a source_document AND approval (approved_at): an unverified reading of the law is not a source document
+    (HR Director review D, L-3). entitlement = max(statutory, every active rule) - never below the statutory floor
+    (L-4). value: extra_days -> {"days": N}; band_table -> {"bands": [{"min_years": 0, "days": 18}, ...]}.
+    pending_reason: why an unapproved rule exists (e.g. 'AL-02' underground +4 days awaiting legal confirmation) - its
+    persons get a visible note in KPI-055 instead of a silent change."""
+
+    __tablename__ = "leave_entitlement_rules"
+    __table_args__ = (
+        CheckConstraint(
+            "(scope_level = 'employment' AND employment_id IS NOT NULL) OR "
+            "(scope_level = 'collective_agreement' AND collective_agreement_code IS NOT NULL) OR "
+            "(scope_level = 'legal_entity' AND legal_entity_id IS NOT NULL) OR "
+            "(scope_level = 'project' AND project_id IS NOT NULL)", name="ck_entitlement_scope"),
+        CheckConstraint("length(source_document) > 0", name="ck_entitlement_source_document"),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    scope_level: Mapped[str] = mapped_column(String(25))  # ENTITLEMENT_SCOPE_LEVELS
+    employment_id: Mapped[int | None] = mapped_column(ForeignKey("employment_relationships.id", ondelete="CASCADE"))
+    collective_agreement_code: Mapped[str | None] = mapped_column(String(40))
+    legal_entity_id: Mapped[int | None] = mapped_column(ForeignKey("legal_entities.id"))
+    project_id: Mapped[int | None] = mapped_column(ForeignKey("projects.id"))
+    rule_type: Mapped[str] = mapped_column(String(20))  # ENTITLEMENT_RULE_TYPES
+    value: Mapped[dict] = mapped_column(JSON)
+    source_document: Mapped[str] = mapped_column(String(200))  # TIS no / contract clause - mandatory (audit trail)
+    approved_by: Mapped[str | None] = mapped_column(String(120))
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    pending_reason: Mapped[str | None] = mapped_column(String(40))
+    note: Mapped[str | None] = mapped_column(String(300))
 
 
 class Assignment(Base, TenantMixin, TimestampMixin, EffectiveDatedMixin):
