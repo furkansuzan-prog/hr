@@ -36,11 +36,18 @@ from app.models import (
     Person,
     PersonIdentifier,
     Project,
+    TerminationCounter,
 )
-from app.models.people import TERMINATION_CATEGORIES
+from app.models.people import (
+    CONTRACT_TYPES,
+    PLANNED_END_CATEGORIES,
+    PLANNED_END_CONTRACT_TYPES,
+    TERMINATION_CATEGORIES,
+)
 from app.security.access import AccessContext
 from app.security.auth import national_id_hash
 from app.services import coverage as cov
+from app.services import exit_codes as xc
 from app.services import safety_import as sfi
 from app.services import timesheet_import as tsi
 from app.services.timekeeping import classify_leave
@@ -77,6 +84,12 @@ FIELDS = {
     "termination_category": {"required": False, "aliases": ["çıkış nedeni", "ayrılış türü", "termination reason", "причина"]},
     "project_code": {"required": False, "aliases": ["proje", "project", "проект"]},
     "occupation_code": {"required": False, "aliases": ["meslek", "meslek kodu", "occupation", "профессия"]},
+    # ADR-023 / WP-5 3.1: SGK exit code (recommended when end_date is set) and the contractual planned end
+    "sgk_exit_code": {"required": False, "aliases": ["sgk çıkış kodu", "işten çıkış kodu", "çıkış kodu", "ayrılış kodu",
+                                                     "sgk exit code", "exit code", "код увольнения"]},
+    "planned_end_date": {"required": False, "aliases": ["sözleşme bitiş", "sözleşme bitiş tarihi", "planlanan bitiş",
+                                                        "planned end", "planned end date", "contract end date",
+                                                        "дата окончания договора"]},
 }
 # Target schema for entity_type = "leave" (one row = one leave/absence record of one employee) - B-07/B-27
 LEAVE_FIELDS = {
@@ -113,7 +126,7 @@ MAX_ROWS = 200_000
 OUTSIDE_COVERAGE = "row_outside_declared_coverage"
 OUTSIDE_COVERAGE_MSG = ("row's legal entity / dates are outside the coverage declared with the upload -> loaded, but it "
                         "creates no coverage")
-CONTRACT_TYPES = {"permanent", "fixed_term", "project", "seasonal"}
+PLANNED_END_TOLERANCE_DAYS = 7  # WP-5 3.3 C4: an exit up to 7 days before the planned end still counts as planned
 
 
 def _norm(h: str) -> str:
@@ -254,6 +267,9 @@ def upload(db: Session, ctx: AccessContext, *, entity_type: str, filename: str, 
     suggested = suggest_mapping(headers, fields)
     # KVKK: identity numbers are pseudonymised BEFORE the raw row is persisted or echoed back in the preview
     _pseudonymise(rows, suggested.get("national_id"))
+    if entity_type == "employment":  # ADR-023: health-implying / unmapped exit codes never reach storage either
+        xc.ensure_map(db, ctx.tenant_id)
+        _stage_exit_codes(xc.CodeMap(db, ctx.tenant_id), rows, suggested)
     batch = ImportBatch(tenant_id=ctx.tenant_id, entity_type=entity_type, file_name=filename[:255], file_sha256=sha,
                         status="uploaded", total_rows=len(rows), created_by=ctx.user_id,
                         mapping=suggested, coverage=decl, dropped_columns=dropped or None, options=opts)
@@ -279,6 +295,24 @@ def _pseudonymise(rows: list[dict], column: str | None) -> None:
         v = str(r.get(column) or "").strip()
         if v and not v.startswith(_HMAC_PREFIX):
             r[column] = _HMAC_PREFIX + national_id_hash(v)
+
+
+def _stage_exit_codes(cmap: "xc.CodeMap", rows: list[dict], mapping: dict) -> None:
+    """Replace exit codes that may not be kept (health-implying, withheld, not in the table) by a marker in the raw row,
+    in place - same moment as the national-id pseudonymisation. The code's validity date is the row's end date."""
+    col = mapping.get("sgk_exit_code")
+    if not col:
+        return
+    end_col = mapping.get("end_date")
+    for r in rows:
+        v = r.get(col)
+        if v is None or str(v).strip() == "":
+            continue
+        try:
+            on = _parse_date(str(r.get(end_col) or "")) if end_col else None
+        except ValueError:
+            on = None
+        r[col] = cmap.stage_value(v, on)
 
 
 def validate(db: Session, ctx: AccessContext, batch_id: int, mapping: dict[str, str | None] | None) -> dict:
@@ -312,13 +346,23 @@ def validate(db: Session, ctx: AccessContext, batch_id: int, mapping: dict[str, 
     valid = errors = 0
     issues = []
     nid_col = mapping.get("national_id")
-    for row in db.execute(select(ImportStagingRow).where(ImportStagingRow.batch_id == batch.id)
-                          .order_by(ImportStagingRow.row_number)).scalars():
+    xc.ensure_map(db, ctx.tenant_id)
+    cmap = xc.CodeMap(db, ctx.tenant_id)
+    staged = list(db.execute(select(ImportStagingRow).where(ImportStagingRow.batch_id == batch.id)
+                             .order_by(ImportStagingRow.row_number)).scalars())
+    new_spells = _file_spells(staged, mapping)  # code 16 check: spells of the same file
+    for row in staged:
         if nid_col and str(row.raw.get(nid_col) or "").strip() and not str(row.raw[nid_col]).startswith(_HMAC_PREFIX):
             # user mapped a different column than suggested: pseudonymise it in the stored raw row too
             raw = dict(row.raw)
             _pseudonymise([raw], nid_col)
             row.raw = raw
+        if mapping.get("sgk_exit_code"):
+            # user mapped a different column than suggested (or the table changed): no raw code stays behind
+            raw = dict(row.raw)
+            _stage_exit_codes(cmap, [raw], mapping)
+            if raw != row.raw:
+                row.raw = raw
         m = {f: (row.raw.get(src, "") if src else "") for f, src in mapping.items()}
         errs: list[dict] = []
 
@@ -347,16 +391,15 @@ def validate(db: Session, ctx: AccessContext, batch_id: int, mapping: dict[str, 
                 batch.coverage, le.id, date.fromisoformat(m["start_date"]) if m.get("start_date") else None,
                 date.fromisoformat(m["end_date"]) if m.get("end_date") else None):
             err(OUTSIDE_COVERAGE, OUTSIDE_COVERAGE_MSG, "warning")
-        cat = (m.get("termination_category") or "").strip().lower()
-        if cat and cat not in TERMINATION_CATEGORIES:
-            err("termination_category", f"unknown termination category '{cat}'")
-        if m.get("end_date") and not cat:
-            m["termination_category"] = "unknown"
-            err("termination_reason_missing", "end_date without reason -> stored as 'unknown' (not assumed)", "warning")
-        ct = (m.get("contract_type") or "permanent").strip().lower()
-        if ct not in CONTRACT_TYPES:
+        ct = (m.get("contract_type") or "").strip().lower()
+        if not ct:  # WP-5 M7 / ADR-023: missing is never silently 'permanent'
+            ct = "unknown"
+            err("contract_type_missing", "contract type is blank -> stored as 'unknown' (not assumed permanent)",
+                "warning")
+        elif ct not in CONTRACT_TYPES:
             err("contract_type", f"unknown contract type '{ct}'")
         m["contract_type"] = ct
+        _classify_exit(db, ctx, cmap, m, err, new_spells)
         if m.get("project_code") and m["project_code"] not in projects:
             err("unknown_project", f"project '{m['project_code']}' not found")
         if m.get("occupation_code") and m["occupation_code"] not in occs:
@@ -396,6 +439,136 @@ def validate(db: Session, ctx: AccessContext, batch_id: int, mapping: dict[str, 
     batch.valid_rows, batch.error_rows, batch.status = valid, errors, "validated"
     db.commit()
     return summary(db, ctx, batch_id)
+
+
+def _file_spells(staged: list[ImportStagingRow], mapping: dict) -> dict[tuple[str, str], list[date]]:
+    """(source_system, external_id) -> start dates of the spells in this file (code 16 needs the follow-up spell)."""
+    out: dict[tuple[str, str], list[date]] = {}
+    src_col, id_col, sd_col = mapping.get("source_system"), mapping.get("external_id"), mapping.get("start_date")
+    for r in staged:
+        try:
+            sd = _parse_date(str(r.raw.get(sd_col) or "")) if sd_col else None
+        except ValueError:
+            sd = None
+        if sd and id_col:
+            src = (str(r.raw.get(src_col) or "").strip() if src_col else "") or "import"
+            out.setdefault((src, str(r.raw.get(id_col) or "").strip()), []).append(sd)
+    return out
+
+
+def _has_follow_up_spell(db: Session, ctx: AccessContext, m: dict, ed: date, file_spells: dict) -> bool:
+    """A new spell of the same person starting within TRANSFER_GAP_DAYS after `ed` - in the file or in the database
+    (any legal entity of the tenant: the same window as the KPI transfer rule)."""
+    from app.analytics.calculators import TRANSFER_GAP_DAYS
+
+    lo, hi = ed, ed + timedelta(days=TRANSFER_GAP_DAYS)
+    key = ((m.get("source_system") or "").strip() or "import", (m.get("external_id") or "").strip())
+    if any(lo < d <= hi for d in file_spells.get(key, ())):
+        return True
+    person = select(PersonIdentifier.person_id).where(PersonIdentifier.tenant_id == ctx.tenant_id,
+                                                      PersonIdentifier.source_system == key[0],
+                                                      PersonIdentifier.external_id == key[1])
+    return db.execute(select(EmploymentRelationship.id).where(
+        EmploymentRelationship.tenant_id == ctx.tenant_id, EmploymentRelationship.person_id.in_(person),
+        EmploymentRelationship.start_date > lo, EmploymentRelationship.start_date <= hi).limit(1)).first() is not None
+
+
+def _classify_exit(db: Session, ctx: AccessContext, cmap: "xc.CodeMap", m: dict, err, file_spells: dict) -> None:
+    """WP-5 3.1 / 3.3 + HR Director review (ADR-023): category order (verified SGK code > source category > unknown),
+    which code may be stored, planned end date and planned_end_verified. Messages never echo a withheld code."""
+    def as_date(k):
+        try:
+            return date.fromisoformat(m[k]) if m.get(k) else None
+        except (ValueError, TypeError):
+            return None
+
+    sd, ed = as_date("start_date"), as_date("end_date")
+    ped = None
+    if m.get("planned_end_date"):
+        try:
+            ped = _parse_date(m["planned_end_date"])
+        except ValueError as e:
+            err("date_format", f"planned_end_date: {e}")
+        if ped and sd and ped < sd:
+            err("planned_end_before_start", "planned_end_date before start_date")
+            ped = None
+        if ped and m.get("contract_type") == "permanent":
+            err("planned_end_on_permanent", "planned_end_date given for a permanent contract", "warning")
+    m["planned_end_date"] = ped.isoformat() if ped else None
+
+    raw = str(m.pop("sgk_exit_code", "") or "").strip()
+    res: xc.Resolution | None = None
+    if xc.is_masked(raw):
+        res = xc.unmask(raw)[1]
+    elif raw:
+        try:
+            code = xc.normalize_code(raw)
+            res = cmap.resolve(code, ed) if code else None
+        except ValueError:
+            err("exit_code_format", "SGK exit code must be a 1-2 digit number -> ignored")
+    if res is not None and not ed:
+        err("exit_code_without_end_date", "SGK exit code without end_date -> ignored", "warning")
+        res = None
+    if res is not None and not res.known:
+        err("unknown_exit_code", "SGK exit code is not in the exit code table -> not stored; category from the source "
+            "or 'unknown'", "warning")
+    elif res is not None and not res.verified:
+        err("exit_code_mapping_unverified", "SGK exit code mapping is not verified yet (L-12) -> category from the "
+            "source or 'unknown'", "warning")
+
+    src_cat = (m.get("termination_category") or "").strip().lower()
+    if src_cat and src_cat not in TERMINATION_CATEGORIES:
+        err("termination_category", f"unknown termination category '{src_cat}'")
+        src_cat = ""
+    cat = source = None
+    if ed:
+        if res is not None and res.verified:
+            cat = res.category
+            if src_cat and src_cat != cat:
+                err("category_code_conflict", f"source category '{src_cat}' differs from the SGK exit code's category "
+                    f"'{cat}' -> the code wins (statutory notification)", "warning")
+        elif src_cat:
+            cat = src_cat
+        else:
+            cat = "unknown"
+            err("termination_reason_missing", "end_date without reason -> stored as 'unknown' (not assumed)", "warning")
+        source = "sgk" if res is not None else "hris" if src_cat else None
+    elif src_cat:
+        cat = src_cat  # as before: a category is stored only together with an end date
+    m["termination_category"] = cat
+    m["termination_reason_code"] = res.code if res is not None else None
+    m["termination_reason_source"] = source
+    m["_exit_counter"] = res.counter if res is not None else None
+    if res is not None and res.code == xc.TRANSFER_CODE and not _has_follow_up_spell(db, ctx, m, ed, file_spells):
+        err("transfer_without_new_spell", "exit code 16 (transfer) but no new spell of the person within 7 days",
+            "warning")
+
+    # WP-5 3.3: C1 category, C2 contract type, C3 code eligibility, C4 planned end date (-7 days)
+    pev = None
+    if ed:
+        if cat not in PLANNED_END_CATEGORIES:
+            pev = False
+        else:
+            ct = m.get("contract_type")
+            fails = []
+            if ct == "permanent":
+                fails.append(("contract_end_on_permanent", "contract/project end on a permanent contract -> not a "
+                              "planned end (counted as an early leaver)"))
+            if res is not None and res.verified and res.planned_end_eligible is False:
+                fails.append(("exit_code_not_planned_end", "the SGK exit code is not a planned-end code"))
+            if ped and ed < ped - timedelta(days=PLANNED_END_TOLERANCE_DAYS):
+                fails.append(("planned_end_mismatch", "employment ended more than 7 days before the planned end date "
+                              "-> not a planned end"))
+            for rule, msg in fails:
+                err(rule, msg, "warning")
+            if fails:
+                pev = False
+            elif ct in PLANNED_END_CONTRACT_TYPES and (res is None or res.verified):
+                pev = True
+            else:  # contract type unknown, or a code that cannot be confirmed yet -> never excluded
+                err("planned_end_unverifiable", "planned end cannot be verified (contract type unknown or exit code "
+                    "mapping not verified) -> counted as an early leaver", "warning")
+    m["planned_end_verified"] = pev
 
 
 def commit(db: Session, ctx: AccessContext, batch_id: int, *, fail_after_rows: int | None = None) -> dict:
@@ -447,6 +620,8 @@ def commit(db: Session, ctx: AccessContext, batch_id: int, *, fail_after_rows: i
         cov.record_import(db, ctx, batch)  # B-20: coverage rows in the same transaction as the status change
         if batch.entity_type in ("safety_event", "timesheet"):
             sfi.minimise_raw(db, batch)
+        elif batch.entity_type == "employment":
+            _minimise_exit_codes(db, batch)
         db.commit()
     except Exception as exc:
         db.rollback()
@@ -791,27 +966,77 @@ def _commit_row(db, ctx, batch, row, ents, projects, occs) -> date | None:
     emp = db.execute(select(EmploymentRelationship).where(
         EmploymentRelationship.person_id == person.id, EmploymentRelationship.legal_entity_id == le_id,
         EmploymentRelationship.start_date == sd)).scalar()
+    exit_fields = _exit_fields(m, ed)
+    ped = date.fromisoformat(m["planned_end_date"]) if m.get("planned_end_date") else None
     if emp is None:
         emp = EmploymentRelationship(tenant_id=ctx.tenant_id, person_id=person.id, legal_entity_id=le_id,
-                                     employee_number=m.get("employee_number") or None, contract_type=m["contract_type"],
-                                     start_date=sd, end_date=ed, termination_category=m.get("termination_category")
-                                     if ed else None, source_system=src, source_record_id=m["external_id"],
-                                     updated_by=ctx.user_id)
+                                     employee_number=m.get("employee_number") or None,
+                                     contract_type=m.get("contract_type") or "unknown", start_date=sd, end_date=ed,
+                                     planned_end_date=ped, source_system=src, source_record_id=m["external_id"],
+                                     updated_by=ctx.user_id, **exit_fields)
         db.add(emp)
         db.flush()
         if m.get("project_code") or m.get("occupation_code"):
             db.add(Assignment(tenant_id=ctx.tenant_id, employment_id=emp.id, project_id=projects.get(m.get("project_code")),
                               occupation_id=occs.get(m.get("occupation_code")), valid_from=sd,
                               valid_to=(ed.fromordinal(ed.toordinal() + 1) if ed else None)))
+        if ed:
+            _count_exit(db, ctx, le_id, ed, m.get("_exit_counter"))
         return sd
-    # existing spell: back-dated termination is an update of end date (versioned), never a delete
-    if ed and emp.end_date != ed:
+    # existing spell: back-dated termination is an update of end date (versioned), never a delete. ADR-023: a re-import
+    # that only adds / corrects the exit classification (e.g. the SGK code arriving later) updates it in place too.
+    changed = {k: v for k, v in exit_fields.items() if getattr(emp, k) != v}
+    if ped and emp.planned_end_date != ped:
+        changed["planned_end_date"] = ped
+    if ed and (emp.end_date != ed or changed):
+        new_end = emp.end_date != ed
         emp.end_date = ed
-        emp.termination_category = m.get("termination_category") or "unknown"
+        for k, v in changed.items():
+            setattr(emp, k, v)
         emp.record_version += 1
         emp.updated_by = ctx.user_id
+        if new_end:  # counted once per exit date (an unchanged re-import never counts again)
+            _count_exit(db, ctx, le_id, ed, m.get("_exit_counter"))
         return ed
     return None
+
+
+def _exit_fields(m: dict, ed: date | None) -> dict:
+    if not ed:
+        return {"termination_category": None, "termination_reason_code": None, "termination_reason_source": None,
+                "planned_end_verified": None}
+    return {"termination_category": m.get("termination_category") or "unknown",
+            "termination_reason_code": m.get("termination_reason_code"),
+            "termination_reason_source": m.get("termination_reason_source"),
+            "planned_end_verified": m.get("planned_end_verified")}
+
+
+def _count_exit(db: Session, ctx: AccessContext, legal_entity_id: int, ed: date, counter: str | None) -> None:
+    """WP-5 review condition 3: legal entity x month count only (no person link) for exits whose code is withheld."""
+    if not counter:
+        return
+    month = ed.replace(day=1)
+    row = db.execute(select(TerminationCounter).where(
+        TerminationCounter.tenant_id == ctx.tenant_id, TerminationCounter.legal_entity_id == legal_entity_id,
+        TerminationCounter.period_month == month, TerminationCounter.counter == counter).with_for_update()).scalar()
+    if row is None:
+        db.add(TerminationCounter(tenant_id=ctx.tenant_id, legal_entity_id=legal_entity_id, period_month=month,
+                                  counter=counter, count=1))
+        db.flush()
+    else:
+        row.count += 1
+
+
+def _minimise_exit_codes(db: Session, batch: ImportBatch) -> None:
+    """After commit no staging row keeps what a withheld code implied (category / counter marker): raw value ->
+    'masked', mapped counter key dropped. Kept codes (non-sensitive, in the table) stay as imported."""
+    col = (batch.mapping or {}).get("sgk_exit_code")
+    for r in db.execute(select(ImportStagingRow).where(ImportStagingRow.batch_id == batch.id)).scalars():
+        raw, mapped = r.raw or {}, r.mapped or {}
+        if col and xc.is_masked(raw.get(col)) and raw.get(col) != xc.MINIMISED:
+            r.raw = {**raw, col: xc.MINIMISED}
+        if "_exit_counter" in mapped:
+            r.mapped = {k: v for k, v in mapped.items() if k != "_exit_counter"}
 
 
 def _review(db, ctx, batch, row, cand, reason):

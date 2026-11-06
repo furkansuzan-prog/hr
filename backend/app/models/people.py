@@ -1,10 +1,11 @@
-from datetime import date
+from datetime import date, datetime
 
 from sqlalchemy import (
     JSON,
     Boolean,
     CheckConstraint,
     Date,
+    DateTime,
     ForeignKey,
     Index,
     Numeric,
@@ -26,6 +27,11 @@ TERMINATION_CATEGORIES = (
     "other",
     "unknown",  # reason not provided -> never assumed (Module E)
 )
+# ADR-023: 'unknown' = the source did not say (never silently 'permanent'); planned-end categories need a fixed-term type
+CONTRACT_TYPES = ("permanent", "fixed_term", "project", "seasonal", "unknown")
+PLANNED_END_CONTRACT_TYPES = ("fixed_term", "project", "seasonal")
+PLANNED_END_CATEGORIES = ("contract_end", "project_end")
+TERMINATION_REASON_SOURCES = ("sgk", "hris", "manual")
 
 
 class Person(Base, TenantMixin, TimestampMixin, SourceMixin):
@@ -71,11 +77,57 @@ class EmploymentRelationship(Base, TenantMixin, TimestampMixin, SourceMixin):
     person_id: Mapped[int] = mapped_column(ForeignKey("people.id"), index=True)
     legal_entity_id: Mapped[int] = mapped_column(ForeignKey("legal_entities.id"), index=True)
     employee_number: Mapped[str | None] = mapped_column(String(40))
-    contract_type: Mapped[str] = mapped_column(String(20), default="permanent")  # permanent|fixed_term|project|seasonal
+    contract_type: Mapped[str] = mapped_column(String(20), default="permanent")  # CONTRACT_TYPES
     start_date: Mapped[date] = mapped_column(Date)
     end_date: Mapped[date | None] = mapped_column(Date)  # last day employed (inclusive)
     termination_category: Mapped[str | None] = mapped_column(String(30))
+    # SGK exit code (2 digits) - NEVER a health-implying / unmapped code (KVKK md.6, WP-5 L-8; ADR-023)
     termination_reason_code: Mapped[str | None] = mapped_column(String(40))
+    termination_reason_source: Mapped[str | None] = mapped_column(String(10))  # TERMINATION_REASON_SOURCES
+    planned_end_date: Mapped[date | None] = mapped_column(Date)  # contractual planned end (fixed-term / project)
+    # WP-5 3.3: True = verified planned end, False = not a planned end, NULL = could not be evaluated (never excluded)
+    planned_end_verified: Mapped[bool | None] = mapped_column(Boolean)
+
+
+class TerminationCodeMap(Base, TenantMixin, TimestampMixin):
+    """SGK exit code -> platform termination category (WP-5 3.1; ADR-023). Mapping is DATA, per tenant, verified line
+    by line by the payroll / SGK practitioner: a row with verified_at NULL is never used for the category (the code
+    falls back to the source category or 'unknown'). health_related / retain_code are honoured even when unverified
+    (KVKK safe default): such a code is never stored on any table."""
+
+    __tablename__ = "termination_code_map"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "code_system", "code", "valid_from", name="uq_termination_code",
+                         postgresql_nulls_not_distinct=True),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    code_system: Mapped[str] = mapped_column(String(30), default="SGK_ISTEN_CIKIS")
+    code: Mapped[str] = mapped_column(String(4))
+    label_tr: Mapped[str] = mapped_column(String(200))
+    category: Mapped[str] = mapped_column(String(30))  # TERMINATION_CATEGORIES
+    planned_end_eligible: Mapped[bool] = mapped_column(Boolean, default=False)
+    health_related: Mapped[bool] = mapped_column(Boolean, default=False)  # also maternity-related codes (D-6)
+    retain_code: Mapped[bool] = mapped_column(Boolean, default=True)  # False: category only (L-8 pending, e.g. 11)
+    counter: Mapped[str | None] = mapped_column(String(40))  # entity x month counter (e.g. work_accident_death_exits)
+    valid_from: Mapped[date | None] = mapped_column(Date)
+    valid_to: Mapped[date | None] = mapped_column(Date)
+    verified_by: Mapped[str | None] = mapped_column(String(120))
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    note: Mapped[str | None] = mapped_column(String(300))
+
+
+class TerminationCounter(Base, TenantMixin, TimestampMixin):
+    """Legal entity x month counts of exits whose code is not stored (WP-5 review condition 3): e.g. code 11 (death from
+    a work accident) -> work_accident_death_exits, for the HSE fatality consistency check. No person link."""
+
+    __tablename__ = "termination_counters"
+    __table_args__ = (UniqueConstraint("tenant_id", "legal_entity_id", "period_month", "counter",
+                                       name="uq_termination_counter"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    legal_entity_id: Mapped[int] = mapped_column(ForeignKey("legal_entities.id"), index=True)
+    period_month: Mapped[date] = mapped_column(Date)  # first day of the month of the exit (end_date)
+    counter: Mapped[str] = mapped_column(String(40))
+    count: Mapped[int] = mapped_column(default=0)
 
 
 class Assignment(Base, TenantMixin, TimestampMixin, EffectiveDatedMixin):

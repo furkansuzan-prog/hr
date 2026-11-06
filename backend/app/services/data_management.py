@@ -38,6 +38,7 @@ from app.models import (
 )
 from app.security.access import AccessContext
 from app.security.auth import hash_password, national_id_hash, random_password
+from app.services import exit_codes
 
 CONTRACT_TYPES = ("permanent", "fixed_term", "project", "seasonal")
 ENTITY_TYPES = ("client", "main_contractor", "subcontractor", "employer")
@@ -478,7 +479,10 @@ def terminate_employment(db: Session, ctx: AccessContext, employment_id: int, *,
     old_end = emp.end_date
     emp.end_date = end_date
     emp.termination_category = termination_category
-    emp.termination_reason_code = termination_reason_code
+    # ADR-023 / WP-5 L-8: a health-implying, withheld or unmapped SGK exit code is never stored, also not manually
+    emp.termination_reason_code = exit_codes.storable_code(db, ctx.tenant_id, termination_reason_code, end_date)
+    emp.termination_reason_source = "manual"
+    emp.planned_end_verified = None  # a manual correction is never a verified planned end (WP-5 3.3: NULL = counted)
     emp.record_version += 1
     emp.updated_by = ctx.user_id
     _close_assignments(db, emp, end_date)

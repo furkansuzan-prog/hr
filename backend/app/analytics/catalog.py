@@ -350,6 +350,29 @@ KPI_CATALOG += [
        params={"hours_per_day": 9, "threshold_min_days": 360, "long_absence_types": list(LONG_ABSENCE_TYPES)}),
 ]
 
+# ---------------------------------------------------------------- Turnover v2 (WP-5 + HR Director review; ADR-023)
+# KPI-018/021/022: verified planned contract/project ends leave the numerator (S-1 'verified'), coding-shift alarm at
+# >= 10 points over 3 periods (S-5), repeated planned ends counted per legal entity until PO-4 is decided (switch:
+# same_employer_basis -> 'group'). KPI-020: unknown-category bands 0.05 / 0.20 (S-4), low-information note > 15 %
+# (condition 1: unknown + other), voluntary_just_cause = SGK 23 / 25 (condition 4). New formula versions via sync.
+EARLY_TURNOVER_V2 = {"planned_end_exclusion": "verified", "planned_end_alarm_points": 10,
+                     "same_employer_basis": "legal_entity"}
+VOLUNTARY_TURNOVER_V2 = {"unknown_share_bands": [0.05, 0.2], "low_information_share": 0.15,
+                         "voluntary_just_cause_codes": ["23", "25"]}
+_PLANNED_END_TEXT = ("; verified planned contract/project ends (SGK code, fixed-term contract type, end within 7 days "
+                     "of the planned end) are excluded from the numerator, the excluded share is shown separately")
+for _item in KPI_CATALOG:
+    if _item["code"] in ("KPI-018", "KPI-021", "KPI-022"):
+        _item["formula"]["parameters"] = {**_item["formula"]["parameters"], **EARLY_TURNOVER_V2}
+        _item["formula"]["numerator_def"] += _PLANNED_END_TEXT
+        _item["exclusion_rules"] = ("Internal transfers; verified planned contract/project ends (planned_end_verified "
+                                    "= true). Unverifiable planned ends are counted (never assumed planned)")
+    elif _item["code"] == "KPI-020":
+        _item["formula"]["parameters"] = {**_item["formula"]["parameters"], **VOLUNTARY_TURNOVER_V2}
+        _item["missing_data_behavior"] += (
+            "; unknown-category share u: u <= 5 % coloured, 5-20 % value without colour (status_reason "
+            "unknown_category_share) with the possible range, > 20 % insufficient_data")
+
 # ---------------------------------------------------------------- Approved thresholds (decision D-5)
 # Source: docs/HR_DIRECTOR_RECOMMENDATIONS.md (Agent 17), approved by the product owner on 2026-11-05.
 # (target, warning, critical); None = monitoring only. Thresholds of annualised KPIs apply to the annualised value.

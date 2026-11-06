@@ -224,7 +224,7 @@ def evaluate(
 
 _LINEAGE_SAFE_KEYS = {"tables", "method", "transfer_gap_days", "proration", "excluded_categories", "event_types_counted",
                       "window_days", "reporting_currency", "fx_source", "units", "as_of", "average_headcount",
-                      "included_categories"}
+                      "included_categories", "planned_end_exclusion", "same_employer_basis"}
 
 
 def enforce_privacy(res: CalcResult) -> CalcResult:
@@ -506,6 +506,21 @@ PARAM_RULES = {
     # ADR-021 / WP-6 HSE 3.7: third-party cases and subcontractor / agency cases without hours in the denominator
     # are reported as out-of-rate cases instead of entering the numerator
     "exclude_out_of_rate_cases": lambda v: isinstance(v, bool),
+    # ADR-023 / WP-5 3.4: which early leavers are planned contract/project ends (none = v1, category = C1 only,
+    # verified = planned_end_verified IS TRUE; HR Director S-1 -> verified)
+    "planned_end_exclusion": lambda v: v in ("none", "category", "verified"),
+    # WP-5 3.4 / S-5: note when early turnover falls while the planned-end share rises by >= this many points (3 periods)
+    "planned_end_alarm_points": lambda v: isinstance(v, int) and not isinstance(v, bool) and 1 <= v <= 100,
+    # PO-4 switch (not decided): 'same employer' for repeated planned ends - legal_entity (safe default) | group
+    "same_employer_basis": lambda v: v in ("legal_entity", "group"),
+    # ADR-023 / WP-5 3.5 (S-4): unknown-category share bands [colour limit, value limit] for KPI-020
+    "unknown_share_bands": lambda v: isinstance(v, list) and len(v) == 2 and all(
+        isinstance(x, int | float) and not isinstance(x, bool) for x in v) and 0 < v[0] < v[1] < 1,
+    # WP-5 review condition 1: (unknown + other) / all separations above this -> low-information note
+    "low_information_share": lambda v: isinstance(v, int | float) and not isinstance(v, bool) and 0 < v < 1,
+    # WP-5 review condition 4: breakdown of counted separations with these stored SGK exit codes (23 / 25)
+    "voluntary_just_cause_codes": lambda v: isinstance(v, list) and bool(v) and all(
+        isinstance(x, str) and len(x) == 2 and x.isdigit() for x in v),
 }
 
 
@@ -513,7 +528,8 @@ PARAM_RULES = {
 # exclude_categories on early_turnover_90, silently changed nothing). Engine-level keys apply to every calculator.
 _ENGINE_PARAMS = {"annualize", "threshold_min_days", "required_feeds", "min_feed_coverage", "required_feed_attributes"}
 CALCULATOR_PARAMS: dict[str, set[str]] = {
-    "turnover_rate": {"exclude_categories", "include_categories"},
+    "turnover_rate": {"exclude_categories", "include_categories", "unknown_share_bands", "low_information_share",
+                      "voluntary_just_cause_codes"},
     "absenteeism_rate": {"absence_types", "excluded_types"},
     "protected_leave_share": {"absence_types"},
     "annual_leave_usage": {"hours_per_day"},
@@ -523,7 +539,7 @@ CALCULATOR_PARAMS: dict[str, set[str]] = {
     "ltifr": {"event_types", "multiplier", "threshold_min_exposure_hours", "exclude_out_of_rate_cases"},
     "trir": {"event_types", "multiplier", "threshold_min_exposure_hours", "exclude_out_of_rate_cases"},
     "near_miss_rate": {"multiplier", "threshold_min_exposure_hours"},
-    "early_turnover_90": {"days"},
+    "early_turnover_90": {"days", "planned_end_exclusion", "planned_end_alarm_points", "same_employer_basis"},
     "labor_cost_per_employee": {"reporting_currency"},
     "overtime_cost_share": {"reporting_currency"},
 }

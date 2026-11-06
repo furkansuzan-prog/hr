@@ -164,9 +164,14 @@ def average_headcount(db: Session, scope: Scope, ps: date, pe: date) -> tuple[fl
     return avg, {"method": "mean of headcount at period start and each month end", "points": len(series)}
 
 
-def _separations(db: Session, scope: Scope, ps: date, pe: date) -> dict[str, int]:
+def _separations(db: Session, scope: Scope, ps: date, pe: date, *, codes: list[str] | None = None) -> dict[str, int]:
+    """Separations by termination category (internal transfers excluded). `codes` (ADR-023): count only spells whose
+    stored SGK exit code is one of these (withheld / health codes are never stored, so they can never be counted)."""
     where, p = _emp_where(scope, date_from=":ps", date_to=":pe")
     where2, _ = _emp_where(scope.entities_only(), alias="e2", **_spell("e2"))
+    if codes is not None:
+        where += " AND e.termination_reason_code = ANY(:codes)"
+        p["codes"] = list(codes)
     rows = db.execute(
         text(
             "SELECT coalesce(e.termination_category, 'unknown'), count(*) FROM employment_relationships e "
@@ -274,6 +279,52 @@ def turnover_rate(db: Session, scope: Scope, ps: date, pe: date, params: dict) -
             res.note = (f"{unknown} separation(s) have no recorded reason and are NOT counted; the true rate may be "
                         "higher")
     res.lineage = lineage
+    return _turnover_v2(db, scope, ps, pe, params, res, seps, n, avg)
+
+
+def _turnover_v2(db: Session, scope: Scope, ps: date, pe: date, params: dict, res: CalcResult, seps: dict[str, int],
+                 n: int, avg: float) -> CalcResult:
+    """KPI-020 v2 (WP-5 3.5 + HR Director review; ADR-023). u = unknown / all separations:
+    u <= bands[0] -> value + colour; bands[0] < u <= bands[1] -> value without colour (status_reason
+    unknown_category_share, ADR-018) + breakdown.voluntary_range [counted, counted + unknown] / average headcount;
+    u > bands[1] -> insufficient_data. Low-information note when (unknown + other) / all > low_information_share.
+    voluntary_just_cause: counted separations with these stored SGK codes (23 / 25; never the health code 24)."""
+    bands = params.get("unknown_share_bands")
+    low_info = params.get("low_information_share")
+    jc_codes = params.get("voluntary_just_cause_codes")
+    all_seps = sum(seps.values())
+    unknown = seps.get("unknown", 0)
+    u = unknown / all_seps if all_seps else 0.0
+    if jc_codes and res.status == OK:
+        included = params.get("include_categories")
+        jc = sum(v for k, v in _separations(db, scope, ps, pe, codes=jc_codes).items()
+                 if included is None or k in included)
+        res.breakdown.update(suppress_small_counts({"voluntary_just_cause": jc}, round(avg), _min_group()))
+    if low_info is not None and all_seps:
+        share = (unknown + seps.get("other", 0)) / all_seps
+        res.lineage["low_information_share"] = round(share, 4)
+        if share > low_info and res.status == OK:
+            msg = (f"Low information share: {share * 100:.1f} % of separations are 'unknown' or 'other' (> "
+                   f"{low_info * 100:g} %) - check the exit reason coding")
+            res.note = f"{res.note}; {msg}" if res.note else msg
+    if not bands or res.status != OK:
+        return res
+    lo, hi = bands
+    res.lineage["unknown_share"] = round(u, 4)
+    if u > hi:
+        out = CalcResult(INSUFFICIENT, None, None, None, res.sample_size, res.quality_score, lineage=res.lineage,
+                         note=f"{u * 100:.1f} % of separations have no category (> {hi * 100:g} %): the rate is not "
+                         "shown - complete the exit reasons / SGK exit codes")
+        return out
+    if u > lo:
+        days = (pe - ps).days + 1
+        rng = [round(n / avg * 100, 4), round((n + unknown) / avg * 100, 4)]
+        res.breakdown["voluntary_range"] = rng
+        res.breakdown["voluntary_range_annualized"] = [round(v * 365 / days, 4) for v in rng]
+        res.status_reason = "unknown_category_share"
+        msg = (f"category data incomplete ({u * 100:.1f} % unknown): the true rate lies between {rng[0]:g} % and "
+               f"{rng[1]:g} %")
+        res.note = f"{res.note}; {msg}" if res.note else msg
     return res
 
 
@@ -923,30 +974,92 @@ def new_hire_count(db: Session, scope: Scope, ps: date, pe: date, params: dict) 
                       lineage={"tables": ["employment_relationships"], "transfer_gap_days": TRANSFER_GAP_DAYS})
 
 
-def early_turnover_90(db: Session, scope: Scope, ps: date, pe: date, params: dict) -> CalcResult:
-    """KPI-018: share of hires (start in period) who left within `days` days of starting."""
-    days = params.get("days", 90)
+_PLANNED_END_CATS = "('contract_end', 'project_end')"
+
+
+def _early_cohort(db: Session, scope: Scope, ps: date, pe: date, days: int, mode: str, basis: str) -> dict:
+    """Cohort counts for KPI-018/021/022. Transfers in are not hires, transfers out are not early leavers (same rule
+    as KPI-001/017, ADR-017 helpers). mode (WP-5 3.4): none = v1; category = contract/project end excluded;
+    verified = planned_end_verified IS TRUE excluded (NULL is never excluded). basis (PO-4 switch): what 'same
+    employer' means for repeated planned ends - legal_entity (safe default) or group (any entity in scope)."""
     where, p = _emp_where(scope, date_from=":ps", date_to=":pe")
     ents = scope.entities_only()
     w_in, _ = _emp_where(ents, alias="e2", **_spell("e2"))
     w_out, _ = _emp_where(ents, alias="e3", **_spell("e3"))
-    # same transfer rule as KPI-001/017: transfers in are not hires, transfers out are not early leavers
+    excl = {"none": "false", "category": f"e.termination_category IN {_PLANNED_END_CATS}",
+            "verified": f"e.planned_end_verified IS TRUE AND e.termination_category IN {_PLANNED_END_CATS}"}[mode]
+    excl4 = excl.replace("e.", "e4.")
+    if basis == "group":
+        w4, _ = _emp_where(ents, alias="e4", **_spell("e4"))
+    else:
+        w4 = " AND e4.tenant_id = :tenant AND e4.legal_entity_id = c.legal_entity_id"
     r = db.execute(
-        text("SELECT count(*), count(*) FILTER (WHERE e.end_date IS NOT NULL AND e.end_date < e.start_date + :days "
+        text("WITH c AS (SELECT e.id, e.person_id, e.legal_entity_id, e.end_date, "
+             "coalesce(e.termination_category, 'unknown') AS tc, e.planned_end_verified AS pev, "
+             f"({excl}) AS excl, "
+             "(e.end_date IS NOT NULL AND e.end_date < e.start_date + :days "
              "AND NOT EXISTS (SELECT 1 FROM employment_relationships e3 WHERE e3.person_id = e.person_id "
              f"AND e3.id <> e.id AND e3.start_date > e.end_date AND e3.start_date <= e.end_date + :gap {w_out})) "
-             f"FROM employment_relationships e WHERE e.start_date BETWEEN :ps AND :pe {where} "
+             f"AS early FROM employment_relationships e WHERE e.start_date BETWEEN :ps AND :pe {where} "
              "AND NOT EXISTS (SELECT 1 FROM employment_relationships e2 WHERE e2.person_id = e.person_id "
-             f"AND e2.id <> e.id AND e2.end_date < e.start_date AND e2.end_date >= e.start_date - :gap {w_in})"),
+             f"AND e2.id <> e.id AND e2.end_date < e.start_date AND e2.end_date >= e.start_date - :gap {w_in})) "
+             "SELECT count(*), count(*) FILTER (WHERE early), count(*) FILTER (WHERE early AND excl), "
+             f"count(*) FILTER (WHERE early AND NOT excl AND tc IN {_PLANNED_END_CATS} AND pev IS NULL), "
+             f"count(*) FILTER (WHERE early AND (tc = 'unknown' OR (tc IN {_PLANNED_END_CATS} AND pev IS NULL))), "
+             "count(DISTINCT c.person_id) FILTER (WHERE early AND excl AND EXISTS (SELECT 1 FROM "
+             "employment_relationships e4 WHERE e4.person_id = c.person_id AND e4.id <> c.id "
+             f"AND e4.end_date < c.end_date AND e4.end_date >= c.end_date - 365 AND {excl4} {w4})) FROM c"),
         {**p, "ps": ps, "pe": pe, "days": days, "gap": TRANSFER_GAP_DAYS},
     ).one()
-    hires, early = int(r[0]), int(r[1])
+    return {"hires": int(r[0]), "early_all": int(r[1]), "excluded": int(r[2]), "unverified_counted": int(r[3]),
+            "ambiguous": int(r[4]), "repeated": int(r[5]), "early": int(r[1]) - int(r[2])}
+
+
+def early_turnover_90(db: Session, scope: Scope, ps: date, pe: date, params: dict) -> CalcResult:
+    """KPI-018/021/022: share of hires (start in period) who left within `days` days of starting.
+    v2 (WP-5 3.4, ADR-023): `planned_end_exclusion` removes verified planned contract/project ends from the numerator
+    (denominator unchanged), reports the excluded share, repeated planned ends and a coding-shift alarm."""
+    days = params.get("days", 90)
+    mode = params.get("planned_end_exclusion", "none")
+    basis = params.get("same_employer_basis", "legal_entity")
+    alarm_points = params.get("planned_end_alarm_points")
+    c = _early_cohort(db, scope, ps, pe, days, mode, basis)
+    hires, early = c["hires"], c["early"]
     res = ratio(early, hires, sample_size=hires, min_sample=_min_group(), has_source_data=True)
     observed_until = date.today()
     res.quality_score = 100.0 if pe + timedelta(days=days) <= observed_until else 50.0
     if pe + timedelta(days=days) > observed_until:
         res.note = f"Cohort not yet fully observed ({days} days after period end); value may still rise"
     res.lineage = {"tables": ["employment_relationships"], "hires": hires, "early_leavers": early, "window_days": days}
+    if mode == "none":
+        return res
+    # classification quality: early leavers whose planned-end status could not be established (WP-5 3.4)
+    if c["early_all"]:
+        res.quality_score = min(res.quality_score, round(100 * (1 - c["ambiguous"] / c["early_all"]), 1))
+    res.lineage.update({"planned_end_exclusion": mode, "same_employer_basis": basis,
+                        "early_leavers_before_exclusion": c["early_all"], "planned_end_excluded": c["excluded"],
+                        "planned_end_unverified_counted": c["unverified_counted"],
+                        "repeated_short_fixed_term_persons": c["repeated"]})
+    if res.status != OK:
+        return res
+    share = round(c["excluded"] / hires * 100, 4) if hires else 0.0
+    res.breakdown["planned_end_excluded_share"] = share
+    notes = [res.note] if res.note else []
+    if c["excluded"]:
+        notes.append(f"{c['excluded']} verified planned contract/project end(s) excluded ({share:g} % of hires)")
+    if c["repeated"]:  # HR Director S-2: visible as a number until legal answer L-11
+        notes.append(f"{c['repeated']} person(s) with repeated planned ends within 12 months (same employer)")
+    if alarm_points:
+        span = pe - ps + timedelta(days=1)
+        hist = [_early_cohort(db, scope, ps - span * k, pe - span * k, days, mode, basis) for k in (2, 1)]
+        if all(h["hires"] for h in hist):
+            first = hist[0]
+            v_first, s_first = first["early"] / first["hires"] * 100, first["excluded"] / first["hires"] * 100
+            if res.value < v_first and share - s_first >= alarm_points:
+                res.lineage["planned_end_alarm"] = True
+                notes.append(f"early turnover fell while the planned-end share rose by {share - s_first:.1f} points "
+                             "over 3 periods - check the exit coding (data quality)")
+    res.note = "; ".join(notes) or None
     return res
 
 
