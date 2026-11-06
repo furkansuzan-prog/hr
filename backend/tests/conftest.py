@@ -31,14 +31,21 @@ def database():
     from tests.factories import build_exact_tenant
 
     with SessionLocal() as db:
-        demo = generate(db, employees=220, subcontractors=5, months=26, as_of=AS_OF, seed=7, tenant_code="DEMO")
+        # D-16 / ADR-028: the DEMO test tenant keeps the CONTRACTOR shape (relationships, mc.ops, sub01/sub02) so the
+        # subcontractor tests (subcontractors_on) have data and flag-off tests prove stored relationships are ignored
+        demo = generate(db, employees=220, subcontractors=5, months=26, as_of=AS_OF, seed=7, tenant_code="DEMO",
+                        contractor_demo=True)
+    with SessionLocal() as db:
+        # ... and the FIRM tenant is the flag-off demo shape (firm group: HQ + GC01.., no relationships, gc01.hr)
+        firm = generate(db, employees=60, subcontractors=3, months=6, as_of=AS_OF, seed=11, tenant_code="FIRM",
+                        contractor_demo=False)
     with SessionLocal() as db:
         exact = build_exact_tenant(db)
     from tests.factories_kpi import build_kpi_tenant
 
     with SessionLocal() as db:
         kpi = build_kpi_tenant(db)
-    yield {"demo": demo, "exact": exact, "kpi": kpi}
+    yield {"demo": demo, "exact": exact, "kpi": kpi, "firm": firm}
 
 
 @pytest.fixture(scope="session")

@@ -30,7 +30,7 @@ from app.models import (
 from app.security.access import AccessContext
 from app.security.auth import create_access_token
 from app.security.deps import deny_entity, get_context, require, require_subcontractor_feature, write_audit
-from app.security.features import feature_flags
+from app.security.features import feature_flags, kpi_hidden, public_entity_type
 from app.security.login import authenticate, revoke_all_tokens
 
 router = APIRouter()
@@ -106,7 +106,7 @@ def _visible_entities_q(ctx: AccessContext, perm: str):
 
 @router.get("/api/v1/org/legal-entities", tags=["organisation"])
 def legal_entities(ctx: AccessContext = Depends(require("org.read")), db: Session = Depends(get_db)):
-    return [{"id": e.id, "code": e.code, "name": e.name, "type": e.entity_type, "country": e.country}
+    return [{"id": e.id, "code": e.code, "name": e.name, "type": public_entity_type(e.entity_type), "country": e.country}
             for e in db.execute(_visible_entities_q(ctx, "org.read").order_by(LegalEntity.code)).scalars()]
 
 
@@ -311,7 +311,9 @@ def frameworks(ctx: AccessContext = Depends(require("sustainability.read")), db:
         reqs = list(db.execute(select(FrameworkRequirement).where(FrameworkRequirement.framework_id == fw.id)).scalars())
         items = []
         for r in reqs:
-            states = [{"code": c, "status": kpis[c].status if c in kpis else "missing"} for c in r.kpi_codes]
+            # D-16: KPIs of a disabled feature (KPI-050/051 - subcontractor) are not listed; the requirement stays
+            states = [{"code": c, "status": kpis[c].status if c in kpis else "missing"} for c in r.kpi_codes
+                      if not (c in kpis and kpi_hidden(kpis[c]))]
             covered = any(s["status"] == "active" for s in states)
             items.append({"ref": r.title, "kpis": states, "data_available": covered})
         cov = sum(i["data_available"] for i in items)

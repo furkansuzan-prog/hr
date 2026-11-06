@@ -12,6 +12,14 @@ const dict = {
   "nav.productivity": { tr: "Verimlilik", en: "Productivity", ru: "Производительность" },
   "nav.planning": { tr: "İş Gücü Planlama", en: "Workforce Planning", ru: "Планирование" },
   "nav.contractors": { tr: "Alt Yükleniciler", en: "Subcontractors", ru: "Субподрядчики" },
+  // D-16 / ADR-028: with the subcontractor feature off the firm comparison page is "Firms" (no contractor wording)
+  "nav.firms": { tr: "Firmalar", en: "Firms", ru: "Компании" },
+  "firms.subtitle": { tr: "Karşılaştırırken iş kapsamı, meslek dağılımı ve proje evresi farklılıklarını dikkate alın.", en: "Compare only with scope of work, occupation mix and project phase in mind.", ru: "Сравнивайте с учётом объёма работ, состава профессий и фазы проекта." },
+  "firms.company": { tr: "Firma", en: "Company", ru: "Компания" },
+  "etype.client": { tr: "Proje sahibi", en: "Project owner", ru: "Заказчик" },
+  "etype.employer": { tr: "Grup şirketi", en: "Group company", ru: "Компания группы" },
+  "etype.main_contractor": { tr: "Ana yüklenici", en: "Main contractor", ru: "Генподрядчик" },
+  "etype.subcontractor": { tr: "Alt yüklenici", en: "Subcontractor", ru: "Субподрядчик" },
   "nav.hse": { tr: "İş Sağlığı ve Güvenliği", en: "Health & Safety", ru: "Охрана труда" },
   "nav.training": { tr: "Eğitim ve Yetkinlik", en: "Training & Competency", ru: "Обучение" },
   "nav.cost": { tr: "Maliyet Yönetimi", en: "Cost Management", ru: "Затраты" },
@@ -419,6 +427,8 @@ const dict = {
 } as const;
 
 export type Key = keyof typeof dict;
+/** Legal entity type label key (D-16: the API reports own firms as "employer" while the subcontractor feature is off). */
+export const entityTypeKey = (type: string | undefined): Key | null => (type && `etype.${type}` in dict ? (`etype.${type}` as Key) : null);
 
 const Ctx = createContext<{ locale: Locale; setLocale: (l: Locale) => void; t: (k: Key) => string }>({
   locale: "tr",

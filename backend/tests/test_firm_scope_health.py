@@ -126,16 +126,15 @@ def _exact_director(db, ids, email, entity_code):
     return email
 
 
-def test_firm_scoped_period_close_holder_can_close(client, auth, ids, db, monkeypatch):
-    """ADR-025: flag off - an entity-scoped period.close holder of a non-client firm may close / reopen, whatever the
-    entity type (B is typed 'subcontractor' in the EXACT tenant); flag on - D-2 unchanged (403)."""
+def test_firm_scoped_period_close_holder_cannot_close(client, auth, ids, db, monkeypatch):
+    """D-16 / ADR-028 (supersedes ADR-025 item 4): flag off - an entity-scoped period.close holder may NOT close or
+    reopen, whatever the entity type (B is typed 'subcontractor' in the EXACT tenant); flag on - D-2 unchanged (403
+    for a subcontractor-scoped holder)."""
     from app.core.config import get_settings
 
     h = auth(_exact_director(db, ids, "ex.hrdir.firm@exact.local", "B"))
-    r = client.post("/api/v1/kpi/periods/2025-06-01/close", headers=h)
-    assert r.status_code == 200, r.text
-    assert client.post("/api/v1/kpi/periods/2025-06-01/reopen", json={"reason": "test cleanup"},
-                       headers=h).status_code == 200
+    assert client.post("/api/v1/kpi/periods/2025-06-01/close", headers=h).status_code == 403
+    assert client.post("/api/v1/kpi/periods/2025-06-01/reopen", json={"reason": "x"}, headers=h).status_code == 403
     monkeypatch.setattr(get_settings(), "feature_subcontractors", True)
     assert client.post("/api/v1/kpi/periods/2025-06-01/close", headers=h).status_code == 403
 
@@ -158,13 +157,14 @@ def test_freeze_skips_hidden_kpis(client, auth, ids, db):
 
 def test_role_templates_health_read():
     holders = {r for r, (_, perms) in ROLE_TEMPLATES.items() if "health.read" in perms}
-    assert holders == {"SYSTEM_ADMIN", "HR_DIRECTOR", "HSE_SPECIALIST"}
+    assert holders == {"SYSTEM_ADMIN", "HR_DIRECTOR", "HR_MANAGER", "HSE_SPECIALIST"}  # HR_MANAGER: D-15
     assert HEALTH_DERIVED_KPIS == {"KPI-028", "KPI-053", "KPI-054"}
 
 
 @pytest.mark.parametrize("code", HEALTH)
 def test_health_kpis_denied_without_health_read(client, auth, db, code):
-    for email in ("exec@demo.local", "mc.ops@demo.local"):
+    # D-12 / D-15: executives, finance, operations and project managers still do not see health-derived KPIs
+    for email in ("exec@demo.local", "mc.ops@demo.local", "finance@demo.local", "ex.pm@exact.local"):
         h = auth(email)
         before = _audits(db, "authz.scope_denied")
         for path in ("evaluate", "series", "by-entity"):
@@ -177,7 +177,8 @@ def test_health_kpis_denied_without_health_read(client, auth, db, code):
         assert client.get("/api/v1/analytics/anomalies/" + code, params=P, headers=h).status_code in (403, 404)
 
 
-@pytest.mark.parametrize("email", ["hr.director@demo.local", "hse@demo.local", "admin@demo.local"])
+@pytest.mark.parametrize("email", ["hr.director@demo.local", "hr.manager@demo.local", "hse@demo.local",
+                                   "admin@demo.local", "gc01.hr@firm.local"])  # hr.manager / gc01.hr: D-15
 def test_health_kpis_allowed_with_health_read(client, auth, email):
     h = auth(email)
     for code in HEALTH:
@@ -275,8 +276,8 @@ def test_run_results_hide_health_kpis(client, auth):
 
 
 def test_migration_0011_grants_system_roles(db):
-    """Data migration: downgrade removes health.read everywhere; upgrade grants it back to the system role templates
-    SYSTEM_ADMIN / HR_DIRECTOR / HSE_SPECIALIST only."""
+    """Data migrations: 0012 (D-15) adds HR_MANAGER, its downgrade removes only that grant; 0011 downgrade removes
+    health.read everywhere; upgrade grants it back to the system role templates."""
     import os
 
     from alembic.config import Config
@@ -291,9 +292,11 @@ def test_migration_0011_grants_system_roles(db):
         return set(db.execute(select(Role.code).join(RolePermission, RolePermission.role_id == Role.id)
                               .where(RolePermission.permission_code == "health.read")).scalars())
 
-    assert holders() == {"SYSTEM_ADMIN", "HR_DIRECTOR", "HSE_SPECIALIST"}
+    assert holders() == {"SYSTEM_ADMIN", "HR_DIRECTOR", "HR_MANAGER", "HSE_SPECIALIST"}
     db.commit()
+    command.downgrade(cfg, "0011")
+    assert holders() == {"SYSTEM_ADMIN", "HR_DIRECTOR", "HSE_SPECIALIST"}
     command.downgrade(cfg, "0010")
     assert holders() == set()
     command.upgrade(cfg, "head")
-    assert holders() == {"SYSTEM_ADMIN", "HR_DIRECTOR", "HSE_SPECIALIST"}
+    assert holders() == {"SYSTEM_ADMIN", "HR_DIRECTOR", "HR_MANAGER", "HSE_SPECIALIST"}

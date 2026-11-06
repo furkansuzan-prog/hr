@@ -2,7 +2,7 @@
 import { useParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { api, type KpiResult } from "@/lib/api";
-import { useI18n, type Key } from "@/lib/i18n";
+import { entityTypeKey, useI18n, type Key } from "@/lib/i18n";
 import { fmt } from "@/lib/utils";
 import { Chart } from "@/components/chart";
 import { FilterBar, filterQs, statusTone } from "@/components/kpi";
@@ -105,7 +105,7 @@ export default function KpiDetail() {
               {ents.data.map((e) => (
                 <tr key={e.legal_entity!.id} className="border-t border-border">
                   <td className="px-3 py-1.5">{e.legal_entity!.name}</td>
-                  <td className="px-3 py-1.5 text-muted">{e.legal_entity!.type}</td>
+                  <td className="px-3 py-1.5 text-muted">{(() => { const k = entityTypeKey(e.legal_entity!.type); return k ? t(k) : e.legal_entity!.type; })()}</td>
                   <td className="px-3 py-1.5 text-right tabular-nums">{e.status === "ok" ? fmt(e.value) : "—"}</td>
                   <td className="px-3 py-1.5"><Badge tone={statusTone(e)}>{t(`status.${e.status}` as Key)}</Badge></td>
                   <td className="px-3 py-1.5 text-right">{fmt(e.sample_size, 0)}</td>

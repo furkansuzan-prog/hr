@@ -242,7 +242,7 @@ def validate(db: Session, ctx: AccessContext, batch: ImportBatch, mapping: dict)
             wd = None
         end = wd + timedelta(days=period_days - 1) if wd else None
         if wd is not None and _months(wd, end) & closed:
-            err("period_closed", "work_date falls in a closed period (D-2: only the main contractor can reopen it)")
+            err("period_closed", "work_date falls in a closed period (only the main firm can reopen it; D-16)")
         prj = None
         if m.get("project_code"):
             prj = projects.get(m["project_code"])

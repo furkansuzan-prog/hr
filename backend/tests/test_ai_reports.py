@@ -132,4 +132,4 @@ def test_sustainability_coverage_disclaimer(client, auth):
 
 def test_health(client):
     assert client.get("/health/live").json()["status"] == "ok"
-    assert client.get("/health/ready").json()["migration"] == "0011"
+    assert client.get("/health/ready").json()["migration"] == "0012"

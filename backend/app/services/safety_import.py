@@ -275,8 +275,17 @@ def direction(old: str, new: str) -> str:
     return "reclassified_up" if SAFETY_SEVERITY[new] > SAFETY_SEVERITY[old] else "reclassified_down"
 
 
+def project_check_enabled() -> bool:
+    """D-16 / ADR-028 (closes ADR-025 open item d): the firm-project check (`entity_not_on_project` warning) reads
+    contractor_relationships, so it only runs with the subcontractor feature on. Flag off: no firm-project link exists
+    (firm-based product, no relationships), the project code is only resolved (`unknown_project` stays an error)."""
+    from app.security.features import subcontractors_enabled
+
+    return subcontractors_enabled()
+
+
 def _entity_on_project(db: Session, tenant_id: int, entity_id: int, project: Project) -> bool:
-    if project.owner_entity_id == entity_id:
+    if project.owner_entity_id == entity_id or not project_check_enabled():
         return True
     return db.execute(select(ContractorRelationship.id).where(
         ContractorRelationship.tenant_id == tenant_id, ContractorRelationship.child_entity_id == entity_id,

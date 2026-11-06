@@ -3,6 +3,13 @@ names are drawn from small generic lists combined with sequence numbers, identit
 
 Usage:  python -m app.seed.synthetic --employees 1200 --subcontractors 12 --months 28 [--reset]
 
+D-16 / ADR-028: the shape of the demo follows HRSWI_FEATURE_SUBCONTRACTORS (default off). Flag OFF -> a firm GROUP:
+one main firm (HQ) and `--subcontractors` group companies (GC01..), all of entity type 'employer', no contractor
+relationships, no subcontractor/main-contractor demo users (the entity-scoped demo user is gc01.hr). Flag ON -> the
+contractor demo (MC main contractor, SUB01.. subcontractors with tier-1/tier-2 contractor relationships, mc.ops and
+sub01/sub02 managers). The generated workforce, timesheets, leave, costs and safety data are identical in both shapes
+(same random sequence); only entity codes/names/types, relationships and the entity-scoped demo users differ.
+
 Simplification (documented): the generator writes WEEKLY aggregated timesheet rows (work_date = Monday);
 production feeds are daily. KPI formulas sum hours over dates and are granularity-independent.
 """
@@ -117,7 +124,14 @@ def reset(db: Session, tenant_code: str) -> None:
 
 
 def generate(db: Session, *, employees: int = 1200, subcontractors: int = 12, months: int = 28,
-             as_of: date | None = None, seed: int = 42, tenant_code: str = "DEMO") -> dict:
+             as_of: date | None = None, seed: int = 42, tenant_code: str = "DEMO",
+             contractor_demo: bool | None = None) -> dict:
+    """contractor_demo: None -> follow the subcontractor feature flag (D-16); True/False forces the shape (tests seed
+    the contractor shape so flag-off tests prove stored relationships are ignored, and a firm-group tenant)."""
+    if contractor_demo is None:
+        from app.security.features import subcontractors_enabled
+
+        contractor_demo = subcontractors_enabled()
     rnd = random.Random(seed)
     nrng = np.random.default_rng(seed)
     as_of = as_of or date.today()
@@ -130,14 +144,21 @@ def generate(db: Session, *, employees: int = 1200, subcontractors: int = 12, mo
 
     # ---------------- organisation
     client = LegalEntity(tenant_id=tid, code="OWNER", name="Proje Sahibi İdare (Demo)", entity_type="client")
-    mc = LegalEntity(tenant_id=tid, code="MC", name="Ana Yüklenici İnşaat A.Ş. (Demo)", entity_type="main_contractor")
+    if contractor_demo:
+        mc = LegalEntity(tenant_id=tid, code="MC", name="Ana Yüklenici İnşaat A.Ş. (Demo)", entity_type="main_contractor")
+    else:  # D-16: firm group - main firm + group companies, no main/sub contractor typing
+        mc = LegalEntity(tenant_id=tid, code="HQ", name="Demo İnşaat Holding A.Ş. (Demo)", entity_type="employer")
     db.add_all([client, mc])
     db.flush()
     subs = []
     for i in range(subcontractors):
         trade, occs = SUB_TRADES[i % len(SUB_TRADES)]
-        le = LegalEntity(tenant_id=tid, code=f"SUB{i + 1:02d}", name=f"{trade} Alt Yüklenici {i + 1:02d} Ltd. (Demo)",
-                         entity_type="subcontractor", country="TR" if i % 6 else "RU")
+        if contractor_demo:
+            le = LegalEntity(tenant_id=tid, code=f"SUB{i + 1:02d}", name=f"{trade} Alt Yüklenici {i + 1:02d} Ltd. (Demo)",
+                             entity_type="subcontractor", country="TR" if i % 6 else "RU")
+        else:
+            le = LegalEntity(tenant_id=tid, code=f"GC{i + 1:02d}", name=f"{trade} Grup Şirketi {i + 1:02d} A.Ş. (Demo)",
+                             entity_type="employer", country="TR" if i % 6 else "RU")
         subs.append((le, occs))
     db.add_all([s[0] for s in subs])
     db.flush()
@@ -154,7 +175,7 @@ def generate(db: Session, *, employees: int = 1200, subcontractors: int = 12, mo
     db.add_all([ProjectLocation(tenant_id=tid, project_id=p.id, name=f"{p.code} Şantiye", city=c)
                 for p, c in zip(projects, ["İstanbul", "Ankara", "Artvin"], strict=False)])
     rels = []
-    for i, (le, _) in enumerate(subs):
+    for i, (le, _) in enumerate(subs if contractor_demo else []):  # D-16: no contractor relationships when off
         parent = mc.id
         tier = 1
         if i >= subcontractors - 2 and subcontractors > 3:
@@ -470,10 +491,17 @@ def generate(db: Session, *, employees: int = 1200, subcontractors: int = 12, mo
         ("sustainability@demo.local", "Sürdürülebilirlik Müdürü", "SUSTAINABILITY_MANAGER", None),
         ("hse@demo.local", "İSG Uzmanı", "HSE_SPECIALIST", None),
         ("auditor@demo.local", "İç Denetçi", "INTERNAL_AUDITOR", None),
-        ("mc.ops@demo.local", "Ana Yüklenici Operasyon Direktörü", "OPERATIONS_DIRECTOR", mc.id),
-        ("sub01.manager@demo.local", "SUB01 Yüklenici Yöneticisi", "CONTRACTOR_MANAGER", subs[0][0].id),
-        ("sub02.manager@demo.local", "SUB02 Yüklenici Yöneticisi", "CONTRACTOR_MANAGER", subs[1][0].id),
     ]
+    if contractor_demo:
+        users_spec += [
+            ("mc.ops@demo.local", "Ana Yüklenici Operasyon Direktörü", "OPERATIONS_DIRECTOR", mc.id),
+            ("sub01.manager@demo.local", "SUB01 Yüklenici Yöneticisi", "CONTRACTOR_MANAGER", subs[0][0].id),
+            ("sub02.manager@demo.local", "SUB02 Yüklenici Yöneticisi", "CONTRACTOR_MANAGER", subs[1][0].id),
+        ]
+    else:  # D-16: firm group - an entity-scoped HR manager of one group company (sees only that firm)
+        users_spec += [
+            (f"{subs[0][0].code.lower()}.hr@demo.local", f"{subs[0][0].code} İK Müdürü", "HR_MANAGER", subs[0][0].id),
+        ]
     pw = hash_password(DEMO_PASSWORD)
     users = {}
     for email, name, role, le_id in users_spec:
@@ -485,7 +513,7 @@ def generate(db: Session, *, employees: int = 1200, subcontractors: int = 12, mo
         db.add(UserRoleAssignment(user_id=u.id, role_id=role_ids[role], scope_type="legal_entity" if le_id else "tenant",
                                   legal_entity_id=le_id))
     owner = users["HR_DIRECTOR"].id
-    r1 = RiskItem(tenant_id=tid, legal_entity_id=subs[0][0].id, category="turnover", title="SUB01 yüksek personel devri",
+    r1 = RiskItem(tenant_id=tid, legal_entity_id=subs[0][0].id, category="turnover", title=f"{subs[0][0].code} yüksek personel devri",
                   severity="high", owner_user_id=owner, target_date=_add_months(as_of, 2), source_kpi_code="KPI-001")
     r2 = RiskItem(tenant_id=tid, legal_entity_id=mc.id, category="competency", title="Vinç operatörü belge süreleri doluyor",
                   severity="critical", owner_user_id=owner, target_date=_add_months(as_of, 1), source_kpi_code="KPI-009")
@@ -537,6 +565,8 @@ def main() -> None:
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--tenant", default="DEMO")
     ap.add_argument("--reset", action="store_true")
+    ap.add_argument("--contractor-demo", dest="contractor_demo", action=argparse.BooleanOptionalAction, default=None,
+                    help="force the contractor demo shape on/off (default: follow HRSWI_FEATURE_SUBCONTRACTORS)")
     a = ap.parse_args()
     with SessionLocal() as db:
         if a.reset:
@@ -545,15 +575,16 @@ def main() -> None:
             print(f"Tenant {a.tenant} already exists; use --reset to regenerate")
             return
         stats = generate(db, employees=a.employees, subcontractors=a.subcontractors, months=a.months, seed=a.seed,
-                         tenant_code=a.tenant)
+                         tenant_code=a.tenant, contractor_demo=a.contractor_demo)
     print({k: v for k, v in stats.items() if k != "demo_password"})
     from app.security.features import subcontractors_enabled
 
-    # D-9 / ADR-025: sub01/sub02 exist either way; without the subcontractor feature they just see their own firm
-    subs = ("sub01.manager@demo.local (SUB01 + shared tier-2), " if subcontractors_enabled()
-            else "sub01.manager@demo.local (own firm only), ")
-    print("Demo users: admin@demo.local, hr.director@demo.local, hse@demo.local (health.read), mc.ops@demo.local, "
-          + subs + "... (password from HRSWI_DEMO_PASSWORD, default 'Demo!2345')")
+    contractor = subcontractors_enabled() if a.contractor_demo is None else a.contractor_demo
+    # D-16 / ADR-028: the flag-off demo is a firm group without subcontractor users
+    scoped = ("mc.ops@demo.local, sub01.manager@demo.local (SUB01 + shared tier-2), " if contractor
+              else "gc01.hr@demo.local (GC01 only), ")
+    print("Demo users: admin@demo.local, hr.director@demo.local, hr.manager@demo.local, hse@demo.local, "
+          + scoped + "... (password from HRSWI_DEMO_PASSWORD, default 'Demo!2345')")
 
 
 if __name__ == "__main__":

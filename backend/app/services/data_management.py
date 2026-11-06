@@ -38,10 +38,11 @@ from app.models import (
 )
 from app.security.access import AccessContext
 from app.security.auth import hash_password, national_id_hash, random_password
+from app.security.features import allowed_entity_types, public_entity_type
 from app.services import exit_codes
 
 CONTRACT_TYPES = ("permanent", "fixed_term", "project", "seasonal")
-ENTITY_TYPES = ("client", "main_contractor", "subcontractor", "employer")
+ENTITY_TYPES = ("client", "main_contractor", "subcontractor", "employer")  # flag off: allowed_entity_types()
 REVIEW_STATUSES = ("open", "merged", "created", "rejected")
 TRANSFER_REASON_CODE = "internal_transfer"
 
@@ -536,7 +537,8 @@ def transfer_employment(db: Session, ctx: AccessContext, employment_id: int, *, 
 
 
 def entity_json(e: LegalEntity) -> dict:
-    return {"id": e.id, "code": e.code, "name": e.name, "entity_type": e.entity_type, "type": e.entity_type,
+    t = public_entity_type(e.entity_type)  # D-16: no main/sub contractor typing with the feature off
+    return {"id": e.id, "code": e.code, "name": e.name, "entity_type": t, "type": t,
             "country": e.country, "is_active": e.is_active}
 
 
@@ -545,6 +547,8 @@ def create_legal_entity(db: Session, ctx: AccessContext, *, code: str, name: str
     if not _covers(ctx, "org.write", None):
         # a new entity is outside every entity-scoped grant; only tenant-wide org writers may create one
         raise Forbidden("Creating legal entities requires tenant-wide org.write", permission="org.write")
+    if entity_type not in allowed_entity_types():  # D-16: main_contractor / subcontractor only with the feature on
+        raise Invalid(f"entity_type must be one of: {', '.join(allowed_entity_types())}")
     if db.execute(select(LegalEntity.id).where(LegalEntity.tenant_id == ctx.tenant_id,
                                                func.lower(LegalEntity.code) == code.lower())).scalar() is not None:
         raise Conflict(f"Legal entity code '{code}' already exists")

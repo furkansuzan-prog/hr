@@ -46,8 +46,8 @@ ROLE_TEMPLATES: dict[str, tuple[str, set[str]]] = {
     "HR_MANAGER": (
         "HR Manager",
         _ANALYTICS
-        | {"people.read", "people.pii", "people.write", "timekeeping.read", "training.read", "kpi.calculate",
-           "report.export", "import.write", "risk.write"},
+        | {"people.read", "people.pii", "people.write", "timekeeping.read", "health.read", "training.read",
+           "kpi.calculate", "report.export", "import.write", "risk.write"},
     ),
     "HR_SPECIALIST": ("HR Specialist", {"org.read", "people.read", "people.pii", "people.write", "timekeeping.read",
                                          "training.read", "kpi.read", "import.write"}),
@@ -72,8 +72,9 @@ ROLE_TEMPLATES: dict[str, tuple[str, set[str]]] = {
 }
 
 # D-12 / ADR-025: health-derived KPIs need kpi.read AND health.read (scope intersection, like sensitive + cost.read).
-# health.read is granted by default to SYSTEM_ADMIN (all permissions), HR_DIRECTOR and HSE_SPECIALIST only; project /
-# department managers, operations, executives, finance, auditors and contractor managers do not get it (PO-5).
+# health.read is granted by default to SYSTEM_ADMIN (all permissions), HR_DIRECTOR, HR_MANAGER (D-15, migration 0012)
+# and HSE_SPECIALIST only; project / department managers, operations, executives, finance, auditors and contractor
+# managers do not get it (PO-5).
 HEALTH_DERIVED_KPIS: frozenset[str] = frozenset({"KPI-028", "KPI-053", "KPI-054"})
 # Leave types whose per-type hours are health data (KVKK md.6). In KPIs that stay visible without health.read (KPI-003
 # absenteeism) these per-type figures are hidden from users without health.read on the result's scope.

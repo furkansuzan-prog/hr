@@ -25,7 +25,7 @@ from app.models import (
 )
 from app.security.access import AccessContext
 from app.security.deps import deny_kpi_permission, require, write_audit
-from app.security.features import is_health_kpi, kpi_hidden, report_hidden
+from app.security.features import is_health_kpi, kpi_hidden, report_hidden, subcontractors_enabled
 from app.services import coverage as cov
 from app.services import imports as imp
 from app.services import reports as rep
@@ -181,9 +181,11 @@ class PeriodIn(BaseModel):
 
 def _require_main_contractor(db: Session, ctx: AccessContext, action: str) -> None:
     if not engine.can_close_periods(db, ctx):
+        # D-16 (flag off): tenant-wide period.close only; D-2 (flag on): main contractor
+        main = "main contractor" if subcontractors_enabled() else "main firm (tenant-wide period.close)"
         write_audit(tenant_id=ctx.tenant_id, user_id=ctx.user_id, action="authz.scope_denied", entity_type="period",
-                    outcome="denied", details={"action": action, "reason": "main contractor authority required"})
-        raise HTTPException(403, "Closing or reopening periods is reserved for the main contractor")
+                    outcome="denied", details={"action": action, "reason": f"{main} authority required"})
+        raise HTTPException(403, f"Closing or reopening periods is reserved for the {main}")
 
 
 @router.post("/kpi/periods/{period_month}/close", tags=["kpi"])

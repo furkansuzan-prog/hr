@@ -45,7 +45,7 @@ def _login(client, email: str, password: str) -> dict:
 def _entity(client, auth, code_prefix="DM") -> dict:
     code = f"{code_prefix}-{_uid()}"
     r = client.post(f"{M}/legal-entities", headers=auth(ADMIN),
-                    json={"code": code, "name": f"Data mgmt {code}", "entity_type": "subcontractor", "country": "tr"})
+                    json={"code": code, "name": f"Data mgmt {code}", "entity_type": "employer", "country": "tr"})
     assert r.status_code == 201, r.text
     body = r.json()
     assert body["code"] == code and body["country"] == "TR"

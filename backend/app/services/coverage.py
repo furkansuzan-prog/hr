@@ -33,6 +33,7 @@ from app.models import (
     Project,
 )
 from app.security.access import AccessContext
+from app.security.features import public_entity_type
 
 EVENT_FEEDS = {"leave", "training", "safety"}  # an empty month is a valid, confirmable state (header-only file)
 # import entity_type -> feed type (ADR-021: the HSE case import feeds 'safety')
@@ -322,7 +323,7 @@ def matrix(db: Session, ctx: AccessContext, ps: date, pe: date, feed_types: list
                       "declared_at": r.declared_at.isoformat() if r.declared_at else None, "note": r.note})
     return {"period_start": ps.isoformat(), "period_end": pe.isoformat(), "months": [m.isoformat() for m in months],
             "feed_types": feeds, "legal_entities": [{"id": e.id, "code": e.code, "name": e.name,
-                                                    "type": e.entity_type} for e in ents],
+                                                    "type": public_entity_type(e.entity_type)} for e in ents],
             "cells": cells, "states": ["complete", "partial", "none", "confirmed_empty", "undeclared"]}
 
 

@@ -5,7 +5,7 @@ import type { ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Lock } from "lucide-react";
 import { api, type KpiResult } from "@/lib/api";
-import { useI18n, type Key } from "@/lib/i18n";
+import { entityTypeKey, useI18n, type Key } from "@/lib/i18n";
 import { fmt } from "@/lib/utils";
 import { Chart } from "./chart";
 import { KpiTile, statusTone } from "./kpi";
@@ -168,7 +168,7 @@ export function ByEntityTable({ codes, q, title, notes = false }: { codes: strin
                 {[...rows.entries()].map(([id, row]) => (
                   <tr key={id} className="border-t border-border">
                     <td className="px-3 py-1.5">{row.name}</td>
-                    <td className="px-3 py-1.5 text-xs text-muted">{row.type}</td>
+                    <td className="px-3 py-1.5 text-xs text-muted">{(() => { const k = entityTypeKey(row.type); return k ? t(k) : row.type; })()}</td>
                     {row.cells.map((c, i) => (
                       <td key={i} className="px-3 py-1.5 text-right tabular-nums">
                         {!c ? "—" : c.status === "ok" ? (

@@ -29,7 +29,7 @@ from app.models import (
 )
 from app.security.access import AccessContext
 from app.security.catalog import HEALTH_LEAVE_TYPES
-from app.security.features import kpi_hidden, kpi_permissions, subcontractors_enabled
+from app.security.features import kpi_hidden, kpi_permissions, public_entity_type, subcontractors_enabled
 
 # bump whenever calculator output semantics or privacy post-processing change: old cache entries become unreachable
 # v3: CalcResult.status_reason (ADR-018); v4: data-feed coverage gate (ADR-020); v5: case-level safety rates,
@@ -433,7 +433,7 @@ def by_entity(db: Session, ctx: AccessContext, code: str, ps: date, pe: date, **
     for le in ents:
         pre = (lambda eid=le.id: from_batch(eid)) if batch_fn else None
         r = evaluate(db, ctx, code, ps, pe, entity_ids={le.id}, precomputed=pre, **kw)
-        r["legal_entity"] = {"id": le.id, "code": le.code, "name": le.name, "type": le.entity_type}
+        r["legal_entity"] = {"id": le.id, "code": le.code, "name": le.name, "type": public_entity_type(le.entity_type)}
         rows.append(r)
     return rows
 
@@ -488,27 +488,29 @@ def run_calculation(db: Session, ctx: AccessContext, codes: list[str], ps: date,
 
 
 def can_close_periods(db: Session, ctx: AccessContext) -> bool:
-    """Product decision D-2 (2026-11-05): closing/reopening reporting periods belongs to the MAIN CONTRACTOR.
-    Subcontractor feature on: allowed for tenant-wide period.close holders, or when the period.close scope contains a
-    main_contractor entity; users scoped only to subcontractors cannot close or reopen.
-    Subcontractor feature off (D-9, ADR-025 - firm-based): allowed for tenant-wide period.close holders and for
-    entity-scoped holders whose period.close covers at least one of the tenant's own (non-client) legal entities as a
-    whole; the main/sub entity type plays no role. Periods are tenant-level, so the close still freezes every scope."""
+    """Who may close / reopen a reporting period.
+    Subcontractor feature off (default; D-16, ADR-028 - supersedes ADR-025 item 4): ONLY tenant-wide period.close
+    holders (the main firm). Periods are tenant-level (period_closes = tenant x month), so a close freezes the whole
+    tenant period - every firm. Entity-scoped period.close holders are refused (403 + authz.scope_denied audit in the
+    API), whatever the entity type.
+    Subcontractor feature on (D-2, 2026-11-05 - unchanged): tenant-wide period.close holders, or holders whose
+    period.close scope contains a main_contractor entity as a whole; users scoped only to subcontractors cannot."""
     if not ctx.has("period.close"):
         return False
     scope = ctx.entity_filter("period.close")
     if scope is None:
         return True
+    if not subcontractors_enabled():
+        return False  # D-16: period close is not firm-based
     scope = {e for e in scope if ctx.covers_entity("period.close", e)}  # ADR-017: whole-entity grants only
-    q = select(LegalEntity.id).where(LegalEntity.tenant_id == ctx.tenant_id, LegalEntity.id.in_(scope or {-1}))
-    q = (q.where(LegalEntity.entity_type == "main_contractor") if subcontractors_enabled()
-         else q.where(LegalEntity.entity_type != "client"))
+    q = select(LegalEntity.id).where(LegalEntity.tenant_id == ctx.tenant_id, LegalEntity.id.in_(scope or {-1}),
+                                     LegalEntity.entity_type == "main_contractor")
     return db.execute(q).first() is not None
 
 
 def freeze_period(db: Session, ctx: AccessContext, period_month: date) -> int:
     """B-18: persist results for a month that is about to be closed, so a closed period always serves frozen values
-    (see `_frozen_result`). The closer is the main contractor (can_close_periods), so the month is frozen for EVERY
+    (see `_frozen_result`). The closer is the main firm / main contractor (can_close_periods), so the month is frozen for EVERY
     scope readers can use: tenant-wide and each legal entity, cost KPIs included. Freezing stores results; it never
     returns them - reading still goes through each reader's own scope (resolve_scope / kpi_run_get). The runs are
     recorded as system runs (triggered_by NULL), so the closer cannot read wider data through GET /kpi/runs/{id}.

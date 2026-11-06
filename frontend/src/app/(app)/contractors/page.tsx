@@ -1,7 +1,7 @@
 "use client";
 import { useQuery } from "@tanstack/react-query";
 import { api, type KpiResult } from "@/lib/api";
-import { useI18n, type Key } from "@/lib/i18n";
+import { entityTypeKey, useI18n, type Key } from "@/lib/i18n";
 import { fmt } from "@/lib/utils";
 import { FilterBar, filterQs, statusTone } from "@/components/kpi";
 import { useFeature, useFilters } from "@/components/providers";
@@ -26,20 +26,21 @@ export default function Contractors() {
   const names = Object.fromEntries((tree.data?.nodes ?? []).map((n) => [n.id, n]));
   return (
     <>
-      <PageHeader title={t(subs ? "nav.contractors" : "nav.organization")}
+      {/* D-16 / ADR-028: flag off -> "Firms" (firm group comparison), no contractor wording */}
+      <PageHeader title={t(subs ? "nav.contractors" : "nav.firms")}
         subtitle={subs ? "Compare only with scope of work, occupation mix and project phase in mind. Firms that did not grant data sharing are not visible to the main contractor."
-          : "Compare only with scope of work, occupation mix and project phase in mind."} />
+          : t("firms.subtitle")} />
       <FilterBar />
       <ErrorBox error={data.error} />
       <Card className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="bg-surface-2 text-left text-xs text-muted">
-            <tr><th className="px-3 py-2">Company</th>{CODES.map((c) => <th key={c} className="px-3 py-2 text-right">{data.data?.[c][0]?.name ?? c}<div className="font-mono text-[10px]">{c}</div></th>)}</tr>
+            <tr><th className="px-3 py-2">{t("firms.company")}</th>{CODES.map((c) => <th key={c} className="px-3 py-2 text-right">{data.data?.[c][0]?.name ?? c}<div className="font-mono text-[10px]">{c}</div></th>)}</tr>
           </thead>
           <tbody>
             {rows.map((r) => (
               <tr key={r.legal_entity!.id} className="border-t border-border">
-                <td className="px-3 py-1.5">{r.legal_entity!.name}<div className="text-xs text-muted">{r.legal_entity!.type}</div></td>
+                <td className="px-3 py-1.5">{r.legal_entity!.name}<div className="text-xs text-muted">{(() => { const k = entityTypeKey(r.legal_entity!.type); return k ? t(k) : r.legal_entity!.type; })()}</div></td>
                 {CODES.map((c) => {
                   const v = cell(c, r.legal_entity!.id);
                   return (
