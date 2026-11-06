@@ -46,6 +46,10 @@ Arayüz: http://localhost:3000 · API belgeleri: http://localhost:8000/docs
 
 Demo kullanıcılar (parola `Demo!2345`, `HRSWI_DEMO_PASSWORD` ile değiştirilebilir): `admin@demo.local`, `hr.director@demo.local`, `hr.manager@demo.local`, `finance@demo.local`, `exec@demo.local`, `sustainability@demo.local`, `hse@demo.local`, `auditor@demo.local`, `mc.ops@demo.local` (ana yükleniciye kapsamlı), `sub01.manager@demo.local` / `sub02.manager@demo.local` (kendi firmasına kapsamlı).
 
+> **Firma bazlı ürün (D-9, ADR-025):** alt yüklenici özelliği varsayılan olarak kapalıdır (`HRSWI_FEATURE_SUBCONTRACTORS=false`). Kapalıyken her kullanıcı yalnızca rol atamasındaki firmayı görür: `mc.ops` yalnızca ana yüklenici firmasını, `sub01`/`sub02` yalnızca kendi firmalarını görür (sözleşme ilişkisi üzerinden genişleme, alt yüklenici ekranı/raporu, KPI-050/051 ve sözleşme ilişkisi uçları gizlidir). Eski davranış (paylaşım izni verilen alt yükleniciler ve kademeleri) için `HRSWI_FEATURE_SUBCONTRACTORS=true`.
+>
+> **Sağlık verisi (D-12):** KPI-028 / KPI-053 / KPI-054 ve KPI-003 kırılımındaki raporlu / iş kazası / korunan izin saatleri `health.read` ister. Demo kullanıcılardan `admin`, `hr.director` ve `hse` bu yetkiye sahiptir; `mc.ops`, `exec`, `hr.manager` gibi roller sahip değildir.
+
 ## Docker
 ```bash
 docker compose up -d db redis api web

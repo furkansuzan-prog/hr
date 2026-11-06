@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from app.core.db import get_db
 from app.models.people import TERMINATION_CATEGORIES
 from app.security.access import AccessContext
-from app.security.deps import require, write_audit
+from app.security.deps import require, require_subcontractor_feature, write_audit
 from app.services import data_management as svc
 
 router = APIRouter(prefix="/api/v1/manage", tags=["data-management"])
@@ -261,7 +261,8 @@ def legal_entity_create(body: LegalEntityIn, request: Request, ctx: AccessContex
     return res
 
 
-@router.post("/contractor-relationships", status_code=201)
+# D-9 / ADR-025: contractor-relationship management exists only with HRSWI_FEATURE_SUBCONTRACTORS on (404 otherwise)
+@router.post("/contractor-relationships", status_code=201, dependencies=[Depends(require_subcontractor_feature)])
 def relationship_create(body: RelationshipIn, request: Request, ctx: AccessContext = Depends(require("org.write")),
                         db: Session = Depends(get_db)):
     res = _call(request, ctx, svc.create_contractor_relationship, db, ctx, **body.model_dump())
@@ -271,7 +272,7 @@ def relationship_create(body: RelationshipIn, request: Request, ctx: AccessConte
     return res
 
 
-@router.post("/contractor-relationships/{relationship_id}/end")
+@router.post("/contractor-relationships/{relationship_id}/end", dependencies=[Depends(require_subcontractor_feature)])
 def relationship_end(relationship_id: int, body: RelationshipEndIn, request: Request,
                      ctx: AccessContext = Depends(require("org.write")), db: Session = Depends(get_db)):
     res = _call(request, ctx, svc.end_contractor_relationship, db, ctx, relationship_id, valid_to=body.valid_to)

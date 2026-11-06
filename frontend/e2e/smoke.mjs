@@ -18,6 +18,14 @@ async function login(page, email) {
   await page.getByRole("button", { name: /Giriş yap|Sign in/ }).click();
   await page.waitForURL(`${WEB}/`);
 }
+// D-9 / ADR-025: feature flags of the running backend (subcontractor checks depend on HRSWI_FEATURE_SUBCONTRACTORS)
+async function features(page) {
+  return page.evaluate(async (api) => {
+    const r = await fetch(`${api}/api/v1/auth/me`, { headers: { Authorization: `Bearer ${localStorage.getItem("hrswi.token")}` } });
+    return (await r.json()).features ?? {};
+  }, process.env.API_URL ?? "http://localhost:8000");
+}
+let subsOn = false;
 try {
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 1000 }, deviceScaleFactor: 1 });
   const page = await ctx.newPage();
@@ -62,8 +70,11 @@ try {
   check("assistant answers and labels forecast", true);
   await page.screenshot({ path: `${out}/03-assistant.png`, fullPage: true });
 
+  subsOn = !!(await features(page)).subcontractors;
   await page.goto(`${WEB}/contractors`);
-  await page.getByText("data sharing granted").first().waitFor({ timeout: 20000 });
+  if (subsOn) await page.getByText("data sharing granted").first().waitFor({ timeout: 20000 });
+  else await page.locator("tbody tr").first().waitFor({ timeout: 20000 });
+  check(`contractor hierarchy shown only with the subcontractor feature (on=${subsOn})`, (await page.getByText("contractor hierarchy").count() > 0) === subsOn);
   await page.screenshot({ path: `${out}/04-contractors.png`, fullPage: true });
 
   await page.goto(`${WEB}/sustainability`);
@@ -217,14 +228,15 @@ try {
   await page.waitForTimeout(800);
   await page.screenshot({ path: `${out}/05-dashboard-dark-en.png`, fullPage: true });
 
-  // scope: subcontractor manager only sees own + shared tier-2
+  // scope: subcontractor manager only sees own + shared tier-2 (feature on) / only its own firm (feature off, D-9)
   const ctx2 = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
   const p2 = await ctx2.newPage();
   await login(p2, "sub01.manager@demo.local");
   await p2.goto(`${WEB}/contractors`);
   await p2.locator("tbody tr").first().waitFor({ timeout: 20000 });
   const names = await p2.locator("tbody tr td:first-child").allInnerTexts();
-  check("sub01 sees only SUB01 + its tier-2 firms", names.length === 3 && names.every((n) => /01|11|12/.test(n)), `rows=${names.length}`);
+  if (subsOn) check("sub01 sees only SUB01 + its tier-2 firms", names.length === 3 && names.every((n) => /01|11|12/.test(n)), `rows=${names.length}`);
+  else check("sub01 sees only its own firm (subcontractor feature off)", names.length === 1 && /01/.test(names[0]), `rows=${names.length}`);
   check("restricted user has no cost menu / report export", !(await p2.getByText("Export").count()));
 
   // mobile

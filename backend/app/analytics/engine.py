@@ -1,4 +1,5 @@
 """KPI engine service: the ONLY entry point through which numbers reach the API, reports and the assistant."""
+import copy
 from collections.abc import Callable
 from datetime import UTC, date, datetime
 
@@ -27,6 +28,8 @@ from app.models import (
     Tenant,
 )
 from app.security.access import AccessContext
+from app.security.catalog import HEALTH_LEAVE_TYPES
+from app.security.features import kpi_hidden, kpi_permissions, subcontractors_enabled
 
 # bump whenever calculator output semantics or privacy post-processing change: old cache entries become unreachable
 # v3: CalcResult.status_reason (ADR-018); v4: data-feed coverage gate (ADR-020); v5: case-level safety rates,
@@ -73,6 +76,14 @@ def get_definition(db: Session, code: str) -> KpiDefinition:
     return d
 
 
+def get_visible_definition(db: Session, code: str) -> KpiDefinition:
+    """get_definition for reader-facing paths: a KPI of a disabled feature (D-9, ADR-025) does not exist (404)."""
+    d = get_definition(db, code)
+    if kpi_hidden(d):
+        raise KpiNotFound(f"Unknown KPI {code}")
+    return d
+
+
 def get_formula(db: Session, kpi: KpiDefinition, version: int | None = None) -> KpiFormulaVersion:
     q = select(KpiFormulaVersion).where(KpiFormulaVersion.kpi_id == kpi.id)
     q = q.where(KpiFormulaVersion.version == version) if version else q.where(KpiFormulaVersion.is_current.is_(True))
@@ -107,7 +118,46 @@ def resolve_scope(
 
 
 def _kpi_perms(kpi: KpiDefinition) -> list[str]:
-    return ["kpi.read"] + (["cost.read"] if kpi.sensitive else [])
+    # cost.read for sensitive KPIs, health.read for health-derived KPIs (D-12, ADR-025)
+    return kpi_permissions(kpi)
+
+
+def health_visible(ctx: AccessContext, scope: Scope) -> bool:
+    """D-12 / ADR-025: does the caller hold health.read over the WHOLE scope of a result (entities and, for
+    project-limited entities, their projects)? Used to hide health-derived per-type figures inside KPIs that do not
+    themselves require health.read (KPI-003 breakdown, KPI-056 long-absence count)."""
+    if not ctx.has("health.read"):
+        return False
+    hs = ctx.entity_filter("health.read")
+    if hs is None:
+        return True
+    if scope.entity_ids is None or not set(scope.entity_ids) <= hs:
+        return False
+    hl, sl = ctx.limits("health.read"), dict(scope.project_limits)
+    return all(e not in hl or (e in sl and set(sl[e]) <= hl[e]) for e in scope.entity_ids)
+
+
+def _redact_health(out: dict) -> None:
+    """Hide health-derived leave-type figures from a payload (copies first: cached objects are never mutated)."""
+    bd = copy.deepcopy(out.get("breakdown") or {})
+    hidden: set[str] = set()
+    for key in ("included_hours_by_type", "excluded_hours_by_type"):
+        m = bd.get(key)
+        if isinstance(m, dict):
+            for t in HEALTH_LEAVE_TYPES:
+                if t in m:
+                    m[t] = None
+                    hidden.add(t)
+    if hidden:
+        bd["masked_types"] = sorted(set(bd.get("masked_types") or ()) | hidden)
+        bd["masked_by_permission"] = "health.read"
+    out["breakdown"] = bd
+    lin = copy.deepcopy(out.get("lineage") or {})
+    if "leave_types_found" in lin:
+        lin["leave_types_found"] = [t for t in lin["leave_types_found"] if t not in HEALTH_LEAVE_TYPES]
+    if "excluded_long_absence" in lin:
+        lin["excluded_long_absence"] = None
+    out["lineage"] = lin
 
 
 def _threshold_status(kpi: KpiDefinition, v: float | None) -> str | None:
@@ -184,7 +234,7 @@ def evaluate(
 ) -> dict:
     """`precomputed` (internal, B-13): supplies the raw calculator result from a batched series pass; it is only
     consulted where the calculator would run (not frozen, cache miss), so frozen/cache/privacy rules are unchanged."""
-    kpi = get_definition(db, code)
+    kpi = get_visible_definition(db, code)
     if kpi.status != "active" or not kpi.validated:
         raise KpiNotActive(f"{code} is '{kpi.status}' and not validated for production calculation")
     if pe < ps:
@@ -220,6 +270,8 @@ def evaluate(
     out = _payload(kpi, f, scope, ps, pe, res, ctx.locale, alerts)
     if meta:
         out.update(meta)
+    if not health_visible(ctx, scope):  # per caller, after the shared cache (D-12)
+        _redact_health(out)
     return out
 
 
@@ -354,8 +406,14 @@ def visible_entities(db: Session, ctx: AccessContext, perm: str = "kpi.read") ->
 
 
 def by_entity(db: Session, ctx: AccessContext, code: str, ps: date, pe: date, **kw) -> list[dict]:
-    kpi = get_definition(db, code)
-    ents = visible_entities(db, ctx, "cost.read" if kpi.sensitive else "kpi.read")
+    kpi = get_visible_definition(db, code)
+    perms = _kpi_perms(kpi)
+    missing = [p for p in perms if not ctx.has(p)]
+    if missing:
+        raise ScopeDenied(f"Missing permission {', '.join(missing)} for {kpi.code}")
+    # entities visible under EVERY required permission (kpi.read + cost.read / health.read: intersection)
+    allowed = ctx.scope_for(perms)[0]
+    ents = [le for le in visible_entities(db, ctx, "kpi.read") if allowed is None or le.id in allowed]
     batch_fn = None
     if kpi.status == "active" and not kw.get("version"):
         batch_fn = BY_ENTITY_BATCH.get(get_formula(db, kpi).calculator_key)
@@ -403,7 +461,7 @@ def run_calculation(db: Session, ctx: AccessContext, codes: list[str], ps: date,
     db.flush()
     try:
         for code in codes:
-            kpi = get_definition(db, code)
+            kpi = get_visible_definition(db, code)
             f = get_formula(db, kpi)
             r = evaluate(db, ctx, code, ps, pe, entity_ids=entity_ids, project_id=project_id)
             scope = resolve_scope(ctx, kpi, entity_ids, project_id, None)
@@ -430,18 +488,22 @@ def run_calculation(db: Session, ctx: AccessContext, codes: list[str], ps: date,
 
 
 def can_close_periods(db: Session, ctx: AccessContext) -> bool:
-    """Product decision (2026-11-05): closing/reopening reporting periods belongs to the MAIN CONTRACTOR.
-    Allowed for tenant-wide period.close holders, or when the period.close scope contains a main_contractor entity;
-    users scoped only to subcontractors cannot close or reopen."""
+    """Product decision D-2 (2026-11-05): closing/reopening reporting periods belongs to the MAIN CONTRACTOR.
+    Subcontractor feature on: allowed for tenant-wide period.close holders, or when the period.close scope contains a
+    main_contractor entity; users scoped only to subcontractors cannot close or reopen.
+    Subcontractor feature off (D-9, ADR-025 - firm-based): allowed for tenant-wide period.close holders and for
+    entity-scoped holders whose period.close covers at least one of the tenant's own (non-client) legal entities as a
+    whole; the main/sub entity type plays no role. Periods are tenant-level, so the close still freezes every scope."""
     if not ctx.has("period.close"):
         return False
     scope = ctx.entity_filter("period.close")
     if scope is None:
         return True
     scope = {e for e in scope if ctx.covers_entity("period.close", e)}  # ADR-017: whole-entity grants only
-    return db.execute(select(LegalEntity.id).where(
-        LegalEntity.tenant_id == ctx.tenant_id, LegalEntity.id.in_(scope or {-1}),
-        LegalEntity.entity_type == "main_contractor")).first() is not None
+    q = select(LegalEntity.id).where(LegalEntity.tenant_id == ctx.tenant_id, LegalEntity.id.in_(scope or {-1}))
+    q = (q.where(LegalEntity.entity_type == "main_contractor") if subcontractors_enabled()
+         else q.where(LegalEntity.entity_type != "client"))
+    return db.execute(q).first() is not None
 
 
 def freeze_period(db: Session, ctx: AccessContext, period_month: date) -> int:
@@ -455,11 +517,11 @@ def freeze_period(db: Session, ctx: AccessContext, period_month: date) -> int:
     pe = month_end(ps)
     defs = db.execute(select(KpiDefinition).where(KpiDefinition.status == "active", KpiDefinition.validated.is_(True))
                       .order_by(KpiDefinition.code)).scalars().all()
-    codes = [d.code for d in defs if get_formula(db, d).calculator_key in CALCULATORS]
+    codes = [d.code for d in defs if get_formula(db, d).calculator_key in CALCULATORS and not kpi_hidden(d)]
     if not codes:
         return 0
     system = AccessContext(user_id=None, tenant_id=ctx.tenant_id, email="system:period_close", locale=ctx.locale,
-                           grants={"kpi.read": None, "cost.read": None})
+                           grants={"kpi.read": None, "cost.read": None, "health.read": None})
     scopes: list[set[int] | None] = [None]
     scopes += [{le.id} for le in visible_entities(db, system, "kpi.read") if le.entity_type != "client"]
     for ents in scopes:

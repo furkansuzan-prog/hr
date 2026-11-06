@@ -154,6 +154,8 @@ export type Me = {
   locale: string;
   permissions: string[];
   scopes: Record<string, number[] | "tenant">;
+  /** D-9 / ADR-025: product feature flags (screens of disabled features are hidden) */
+  features?: { subcontractors?: boolean };
 };
 export type LegalEntity = { id: number; code: string; name: string; type: string };
 export type Project = { id: number; code: string; name: string; phase: string | null };

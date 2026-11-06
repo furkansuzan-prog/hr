@@ -24,7 +24,8 @@ from app.models import (
     PeriodClose,
 )
 from app.security.access import AccessContext
-from app.security.deps import require, write_audit
+from app.security.deps import deny_kpi_permission, require, write_audit
+from app.security.features import is_health_kpi, kpi_hidden, report_hidden
 from app.services import coverage as cov
 from app.services import imports as imp
 from app.services import reports as rep
@@ -71,12 +72,17 @@ def kpi_definitions(status: str | None = None, ctx: AccessContext = Depends(requ
     q = select(KpiDefinition).order_by(KpiDefinition.code)
     if status:
         q = q.where(KpiDefinition.status == status)
-    return [_def_out(d, ctx.locale) for d in db.execute(q).scalars()]
+    # D-9: KPIs of a disabled feature are not listed; D-12: health-derived KPIs only with health.read
+    return [_def_out(d, ctx.locale) for d in db.execute(q).scalars()
+            if not kpi_hidden(d) and (ctx.has("health.read") or not is_health_kpi(d))]
 
 
 @router.get("/kpi/definitions/{code}", tags=["kpi"])
-def kpi_definition(code: str, ctx: AccessContext = Depends(require("kpi.read")), db: Session = Depends(get_db)):
-    d = _kpi_call(engine.get_definition, db, code)
+def kpi_definition(code: str, request: Request, ctx: AccessContext = Depends(require("kpi.read")),
+                   db: Session = Depends(get_db)):
+    d = _kpi_call(engine.get_visible_definition, db, code)
+    if is_health_kpi(d) and not ctx.has("health.read"):  # D-12, audited
+        deny_kpi_permission(ctx, request, d.code, ["health.read"])
     versions = list(db.execute(select(KpiFormulaVersion).where(KpiFormulaVersion.kpi_id == d.id)
                                .order_by(KpiFormulaVersion.version)).scalars())
     return _def_out(d, ctx.locale, versions)
@@ -156,8 +162,11 @@ def kpi_run_get(run_id: int, ctx: AccessContext = Depends(require("kpi.read")), 
                       .join(KpiDefinition, KpiDefinition.id == KpiResult.kpi_id)
                       .join(KpiFormulaVersion, KpiFormulaVersion.id == KpiResult.formula_version_id)
                       .where(KpiResult.run_id == run.id)).all()
-    sensitive = {d.code for d in db.execute(select(KpiDefinition).where(KpiDefinition.sensitive.is_(True))).scalars()}
-    rows = [(r, c, v) for r, c, v in rows if cost_ok or c not in sensitive]
+    # D-12: health-derived KPIs follow the same rule with health.read; D-9: KPIs of a disabled feature are left out
+    health_ok = ctx.has("health.read") and (ctx.entity_filter("health.read") is None or run.triggered_by == ctx.user_id)
+    defs = {d.code: d for d in db.execute(select(KpiDefinition)).scalars()}
+    rows = [(r, c, v) for r, c, v in rows if (cost_ok or not defs[c].sensitive)
+            and (health_ok or not is_health_kpi(defs[c])) and not kpi_hidden(defs[c])]
     return {"run_id": run.id, "status": run.status, "period_start": run.period_start, "period_end": run.period_end,
             "started_at": run.started_at, "finished_at": run.finished_at, "error": run.error, "results": [
                 {"code": c, "formula_version": v, "value": float(r.value) if r.value is not None else None,
@@ -285,7 +294,7 @@ def report(code: str, request: Request, format: str = Query("json", pattern="^(j
         write_audit(tenant_id=ctx.tenant_id, user_id=ctx.user_id, action="report.export", entity_type="report",
                     entity_id=code, outcome="denied", details={"format": format})
         raise HTTPException(403, "Missing permission: report.export")
-    if code not in rep.REPORTS:
+    if code not in rep.REPORTS or report_hidden(code):  # D-9: subcontractor report hidden with the feature
         raise HTTPException(404, "Unknown or not yet available report")
     data = _kpi_call(rep.build, db, ctx, code, f.ps, f.pe, entity_ids=f.entity_ids, project_id=f.project_id)
     write_audit(tenant_id=ctx.tenant_id, user_id=ctx.user_id, action="report.export" if format != "json" else "report.view",

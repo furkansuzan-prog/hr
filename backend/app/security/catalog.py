@@ -9,6 +9,7 @@ PERMISSIONS: dict[str, str] = {
     "people.write": "Create / update workforce records",
     "timekeeping.read": "View timesheet and absence data",
     "cost.read": "View payroll and labour cost data (field-level protected)",
+    "health.read": "View health-derived indicators (sickness, unplanned absence, protected leave; D-12)",
     "hse.read": "View aggregated HSE indicators",
     "training.read": "View training and competency data",
     "kpi.read": "View KPI results and catalog",
@@ -39,8 +40,8 @@ ROLE_TEMPLATES: dict[str, tuple[str, set[str]]] = {
     "HR_DIRECTOR": (
         "HR Director",
         _ANALYTICS
-        | {"people.read", "people.pii", "timekeeping.read", "cost.read", "training.read", "hse.read", "kpi.calculate",
-           "period.close", "report.export", "risk.write", "sustainability.read"},
+        | {"people.read", "people.pii", "timekeeping.read", "cost.read", "health.read", "training.read", "hse.read",
+           "kpi.calculate", "period.close", "report.export", "risk.write", "sustainability.read"},
     ),
     "HR_MANAGER": (
         "HR Manager",
@@ -63,9 +64,18 @@ ROLE_TEMPLATES: dict[str, tuple[str, set[str]]] = {
          "report.read", "report.export", "import.write", "assistant.use"},
     ),
     "FINANCE_ANALYST": ("Finance Analyst", _ANALYTICS | {"cost.read", "report.export"}),
-    "HSE_SPECIALIST": ("HSE Specialist", {"org.read", "hse.read", "training.read", "kpi.read", "report.read", "risk.read",
-                                           "risk.write"}),
+    "HSE_SPECIALIST": ("HSE Specialist", {"org.read", "hse.read", "health.read", "training.read", "kpi.read",
+                                           "report.read", "risk.read", "risk.write"}),
     "INTERNAL_AUDITOR": ("Internal Auditor", _ANALYTICS | {"audit.read", "people.read", "sustainability.read"}),
     "READONLY_EXECUTIVE": ("Read-Only Executive", {"org.read", "kpi.read", "forecast.read", "report.read",
                                                    "sustainability.read", "assistant.use"}),
 }
+
+# D-12 / ADR-025: health-derived KPIs need kpi.read AND health.read (scope intersection, like sensitive + cost.read).
+# health.read is granted by default to SYSTEM_ADMIN (all permissions), HR_DIRECTOR and HSE_SPECIALIST only; project /
+# department managers, operations, executives, finance, auditors and contractor managers do not get it (PO-5).
+HEALTH_DERIVED_KPIS: frozenset[str] = frozenset({"KPI-028", "KPI-053", "KPI-054"})
+# Leave types whose per-type hours are health data (KVKK md.6). In KPIs that stay visible without health.read (KPI-003
+# absenteeism) these per-type figures are hidden from users without health.read on the result's scope.
+HEALTH_LEAVE_TYPES: tuple[str, ...] = ("sick", "work_injury", "parental")
+HEALTH_ROLES: frozenset[str] = frozenset(r for r, (_, perms) in ROLE_TEMPLATES.items() if "health.read" in perms)

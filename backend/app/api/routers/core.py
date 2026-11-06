@@ -29,7 +29,8 @@ from app.models import (
 )
 from app.security.access import AccessContext
 from app.security.auth import create_access_token
-from app.security.deps import deny_entity, get_context, require, write_audit
+from app.security.deps import deny_entity, get_context, require, require_subcontractor_feature, write_audit
+from app.security.features import feature_flags
 from app.security.login import authenticate, revoke_all_tokens
 
 router = APIRouter()
@@ -87,6 +88,8 @@ def me(ctx: AccessContext = Depends(get_context), db: Session = Depends(get_db))
         "project_limits": {p: {str(e): sorted(ps) for e, ps in sorted(ctx.limits(p).items())}
                            for p in sorted(ctx.grants) if ctx.limits(p)},
         "mfa_enabled": user.mfa_enabled,
+        # D-9 / ADR-025: the frontend hides screens of disabled features
+        "features": feature_flags(),
     }
 
 
@@ -121,7 +124,7 @@ def occupations(ctx: AccessContext = Depends(require("org.read")), db: Session =
             for o in rows]
 
 
-@router.get("/api/v1/org/contractor-tree", tags=["organisation"])
+@router.get("/api/v1/org/contractor-tree", tags=["organisation"], dependencies=[Depends(require_subcontractor_feature)])
 def contractor_tree(on: date | None = None, ctx: AccessContext = Depends(require("org.read")),
                     db: Session = Depends(get_db)):
     on = on or date.today()

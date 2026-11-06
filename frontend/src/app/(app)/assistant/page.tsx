@@ -3,6 +3,7 @@ import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
+import { useFeature } from "@/components/providers";
 import { Badge, Button, Card, CardBody, ErrorBox, Input, PageHeader } from "@/components/ui/primitives";
 
 type Answer = { intent: string; language: string; answer: string; kind: string; caveats: string[]; sources: { kpi: string; formula_version: number }[]; tools_used: string[]; data: unknown; refused?: boolean };
@@ -16,9 +17,13 @@ const EXAMPLES = [
   "Geçen ay alınan aksiyonların sonuçları nasıl değişti?",
   "Which subcontractors show operational risks?",
 ];
+// D-9 / ADR-025: subcontractor questions only while the subcontractor feature is on
+const SUBCONTRACTOR_EXAMPLES = new Set([EXAMPLES[5], EXAMPLES[7]]);
 
 export default function Assistant() {
   const { t } = useI18n();
+  const subs = useFeature("subcontractors");
+  const examples = EXAMPLES.filter((e) => subs || !SUBCONTRACTOR_EXAMPLES.has(e));
   const [q, setQ] = useState("");
   const [log, setLog] = useState<{ q: string; a: Answer }[]>([]);
   const m = useMutation({
@@ -35,7 +40,7 @@ export default function Assistant() {
           <Button type="submit" disabled={m.isPending}>{t("ai.ask")}</Button>
         </form>
         <div className="mt-3 flex flex-wrap gap-2">
-          {EXAMPLES.map((e) => <button key={e} onClick={() => ask(e)} className="rounded-full border border-border px-3 py-1 text-xs hover:bg-surface-2">{e}</button>)}
+          {examples.map((e) => <button key={e} onClick={() => ask(e)} className="rounded-full border border-border px-3 py-1 text-xs hover:bg-surface-2">{e}</button>)}
         </div>
       </Card>
       <ErrorBox error={m.error} />

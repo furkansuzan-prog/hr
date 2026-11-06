@@ -19,7 +19,7 @@ def _user(db, ids, email, entity_code):
     return email
 
 
-def test_subcontractor_scoped_director_cannot_close_or_reopen(client, auth, ids, db):
+def test_subcontractor_scoped_director_cannot_close_or_reopen(client, auth, ids, db, subcontractors_on):
     email = _user(db, ids, "ex.hrdir.sub@exact.local", "B")
     h = auth(email)
     assert client.post("/api/v1/kpi/periods/2025-05-01/close", headers=h).status_code == 403

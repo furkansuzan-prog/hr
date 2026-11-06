@@ -547,8 +547,13 @@ def main() -> None:
         stats = generate(db, employees=a.employees, subcontractors=a.subcontractors, months=a.months, seed=a.seed,
                          tenant_code=a.tenant)
     print({k: v for k, v in stats.items() if k != "demo_password"})
-    print("Demo users: admin@demo.local, hr.director@demo.local, mc.ops@demo.local, sub01.manager@demo.local, ... "
-          "(password from HRSWI_DEMO_PASSWORD, default 'Demo!2345')")
+    from app.security.features import subcontractors_enabled
+
+    # D-9 / ADR-025: sub01/sub02 exist either way; without the subcontractor feature they just see their own firm
+    subs = ("sub01.manager@demo.local (SUB01 + shared tier-2), " if subcontractors_enabled()
+            else "sub01.manager@demo.local (own firm only), ")
+    print("Demo users: admin@demo.local, hr.director@demo.local, hse@demo.local (health.read), mc.ops@demo.local, "
+          + subs + "... (password from HRSWI_DEMO_PASSWORD, default 'Demo!2345')")
 
 
 if __name__ == "__main__":

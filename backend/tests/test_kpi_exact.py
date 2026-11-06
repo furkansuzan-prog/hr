@@ -158,7 +158,7 @@ def test_period_close_blocks_recalculation(client, auth):
     assert client.post("/api/v1/kpi/runs", json=body, headers=auth(ADMIN)).status_code == 201
 
 
-def test_hierarchy_change_over_time(db, ids):
+def test_hierarchy_change_over_time(db, ids, subcontractors_on):
     """Scenario 3: D's relationship to A ended on 2025-01-01; A users saw D before, not after."""
     u = db.get(User, ids["exact"]["users"]["ex.aops@exact.local"])
     d = ids["exact"]["entities"]["D"]

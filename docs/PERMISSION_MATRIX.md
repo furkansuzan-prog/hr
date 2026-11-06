@@ -4,6 +4,9 @@
 
 Roller veri olarak saklanır ve tenant bazında yapılandırılabilir; aşağıdaki başlangıç şablonlarıdır. Her rol ataması `tenant` veya `legal_entity` kapsamında yapılır (ADR-005).
 
+- **Firma bazlı (D-9, ADR-025):** `HRSWI_FEATURE_SUBCONTRACTORS=false` (varsayılan) iken `legal_entity` kapsamı yalnızca o firmadır; sözleşme ilişkisi (alt yüklenici) üzerinden genişleme yalnızca bayrak açıkken.
+- **`health.read` (D-12, ADR-025):** sağlık kaynaklı KPI'lar (KPI-028, KPI-053, KPI-054) `kpi.read` ∩ `health.read` kapsamıyla görünür; `health.read` olmayan okuyucu KPI-003 kırılımında raporlu / iş kazası / korunan izin saatlerini göremez. Proje / departman yöneticileri, operasyon, üst yönetim, finans, denetçi ve yüklenici yöneticisi şablonlarında **yoktur** (PO-5).
+
 | İzin | System Admin | Platform Admin | Company Admin | Hr Director | Hr Manager | Hr Specialist | Sustainability Manager | Operations Director | Project Manager | Department Manager | Contractor Manager | Finance Analyst | Hse Specialist | Internal Auditor | Readonly Executive |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | `org.read` — View company / project / contractor hierarchy | ● | ● | ● | ● | ● | ● | ● | ● | ● | ● | ● | ● | ● | ● | ● |
@@ -13,6 +16,7 @@ Roller veri olarak saklanır ve tenant bazında yapılandırılabilir; aşağıd
 | `people.write` — Create / update workforce records | ● |  |  |  | ● | ● |  |  |  |  |  |  |  |  |  |
 | `timekeeping.read` — View timesheet and absence data | ● |  |  | ● | ● | ● |  | ● | ● | ● | ● |  |  |  |  |
 | `cost.read` — View payroll and labour cost data (field-level protected) | ● |  |  | ● |  |  |  |  |  |  |  | ● |  |  |  |
+| `health.read` — View health-derived indicators (sickness, unplanned absence, protected leave; D-12) | ● |  |  | ● |  |  |  |  |  |  |  |  | ● |  |  |
 | `hse.read` — View aggregated HSE indicators | ● |  |  | ● |  |  | ● | ● | ● |  | ● |  | ● |  |  |
 | `training.read` — View training and competency data | ● |  |  | ● | ● | ● | ● |  |  |  | ● |  | ● |  |  |
 | `kpi.read` — View KPI results and catalog | ● |  |  | ● | ● | ● | ● | ● | ● | ● | ● | ● | ● | ● | ● |

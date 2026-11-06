@@ -27,7 +27,7 @@ def ent(ids, code):
     return str(ids["kpi"]["entities"][code])
 
 
-def test_new_kpis_active_validated_and_params_valid(client, auth):
+def test_new_kpis_active_validated_and_params_valid(client, auth, subcontractors_on):
     defs = {d["code"]: d for d in client.get("/api/v1/kpi/definitions", headers=auth(ADMIN)).json()}
     for code in NEW:
         assert defs[code]["status"] == "active" and defs[code]["validated"] is True, code
@@ -143,7 +143,7 @@ def test_kpi048_female_share(client, auth, ids):
     assert r["breakdown"] == {} and not (LEAKY & set(r["lineage"]))
 
 
-def test_kpi050_subcontractor_share(client, auth, ids):
+def test_kpi050_subcontractor_share(client, auth, ids, subcontractors_on):
     r = ev(client, auth, "KPI-050", **MAR)
     assert (r["numerator"], r["denominator"]) == (10, 20) and r["value"] == pytest.approx(50.0)
     r = ev(client, auth, "KPI-050", entity_ids=ent(ids, "MC"), **MAR)
@@ -151,7 +151,7 @@ def test_kpi050_subcontractor_share(client, auth, ids):
 
 
 @pytest.mark.parametrize("code", NEW)
-def test_new_kpis_leak_nothing_for_small_group(client, auth, ids, code):
+def test_new_kpis_leak_nothing_for_small_group(client, auth, ids, code, subcontractors_on):
     """S2 has 3 people: every new KPI is suppressed or insufficient and exposes no counts (enforce_privacy)."""
     # S2's 3 hires started 2024-06-01 -> a cohort below the minimum size
     period = {"period_start": "2024-06-01", "period_end": "2024-06-30"} if code in ("KPI-021", "KPI-022") else MAR
@@ -172,7 +172,7 @@ def _results(db, tenant_id, ps):
         KpiResult.tenant_id == tenant_id, KpiResult.period_start == ps)).scalar()
 
 
-def test_period_close_freezes_all_active_kpis_first(client, auth, ids, db):
+def test_period_close_freezes_all_active_kpis_first(client, auth, ids, db, subcontractors_on):
     """B-18: close persists results for every active KPI at tenant scope and per legal entity, then closes."""
     from datetime import date
 
@@ -205,7 +205,7 @@ def test_period_close_freezes_all_active_kpis_first(client, auth, ids, db):
     assert "frozen" not in ev(client, auth, "KPI-020", **MAR)
 
 
-def test_main_contractor_close_freezes_every_scope_including_cost(client, auth, ids, db):
+def test_main_contractor_close_freezes_every_scope_including_cost(client, auth, ids, db, subcontractors_on):
     """Decision 2026-11-05 (supersedes the original B-18 rule): the main contractor owns period closing, so an
     MC-scoped closer freezes ALL active KPIs (cost included) for the tenant scope and every non-client entity.
     Results are stored as system runs; the closer only receives the count."""

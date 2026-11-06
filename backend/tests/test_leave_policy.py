@@ -103,7 +103,7 @@ def leavex():
 
 
 def ev(db, tid, code, ps, pe):
-    ctx = AccessContext(user_id=None, tenant_id=tid, email="t", locale="en", grants={"kpi.read": None})
+    ctx = AccessContext(user_id=None, tenant_id=tid, email="t", locale="en", grants={"kpi.read": None, "health.read": None})
     return engine.evaluate(db, ctx, code, ps, pe)
 
 

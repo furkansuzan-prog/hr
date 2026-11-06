@@ -131,7 +131,7 @@ def cx(database):
 
 def _ctx(cx) -> AccessContext:
     return AccessContext(user_id=None, tenant_id=cx["tenant_id"], email="t", locale="en",
-                         grants={"kpi.read": None, "cost.read": None})
+                         grants={"kpi.read": None, "cost.read": None, "health.read": None})
 
 
 def _declare(db, cx, rows: list[tuple]) -> None:

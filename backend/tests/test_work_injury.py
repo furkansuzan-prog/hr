@@ -122,7 +122,8 @@ def winj(database):
 
 def _ctx(w):
     return AccessContext(user_id=None, tenant_id=w["tenant_id"], email="t", locale="en",
-                         grants={"kpi.read": None, "import.write": None, "timekeeping.read": None})
+                         grants={"kpi.read": None, "health.read": None, "import.write": None,
+                                 "timekeeping.read": None})
 
 
 def ev(db, w, code, m, entity="A", **kw):
