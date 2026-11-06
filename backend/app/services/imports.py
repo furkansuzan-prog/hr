@@ -48,10 +48,12 @@ from app.models.people import (
 )
 from app.security.access import AccessContext
 from app.security.auth import national_id_hash
+from app.services import cost_import as cst
 from app.services import coverage as cov
 from app.services import exit_codes as xc
 from app.services import safety_import as sfi
 from app.services import timesheet_import as tsi
+from app.services import training_import as tri
 from app.services import work_patterns as wps
 from app.services.timekeeping import classify_leave
 
@@ -124,8 +126,13 @@ LEAVE_FIELDS = {
 # ADR-021: HSE cases (one row = one affected person's outcome, no identity) - app.services.safety_import
 # ADR-022: timesheets (one row = one employee x day x project) - app.services.timesheet_import
 # ADR-024: work patterns (one row = a pattern definition and/or one assignment) - app.services.work_patterns
+# ADR-027: training (one row = one completed training) - app.services.training_import; payroll cost (one row = one
+# employee x month x cost item) - app.services.cost_import (import.write + cost.write, amounts masked without cost.read)
 FIELD_SETS = {"employment": FIELDS, "leave": LEAVE_FIELDS, "safety_event": sfi.SAFETY_FIELDS,
-              "timesheet": tsi.TIMESHEET_FIELDS, "work_pattern": wps.WORK_PATTERN_FIELDS}
+              "timesheet": tsi.TIMESHEET_FIELDS, "work_pattern": wps.WORK_PATTERN_FIELDS,
+              "training": tri.TRAINING_FIELDS, "cost": cst.COST_FIELDS}
+# upload option normalisers per entity type (ADR-022 timesheet, ADR-027 training / cost)
+_OPTIONS = {"timesheet": tsi.normalize_options, "training": tri.normalize_options, "cost": cst.normalize_options}
 LEAVE_HOURS_PER_DAY = DEFAULT_HOURS_PER_DAY  # fallback only: no known work pattern (ADR-024 converts by pattern)
 HOURS_DAYS_TOLERANCE = 0.10  # WP-4 section 8: |hours - days x daily hours| > 10 % -> hours_days_inconsistent
 _NO_AGREEMENT = {"-", "yok", "none", "no", "n/a", "kapsam dışı", "нет"}
@@ -232,15 +239,20 @@ def upload(db: Session, ctx: AccessContext, *, entity_type: str, filename: str, 
         err = ImportError_("HSE case imports require hse.read in addition to import.write")
         err.status_code = 403
         raise err
+    if entity_type == "cost" and not (ctx.has("cost.write") and cst.write_scope(ctx) != set()):
+        err = ImportError_("Payroll cost imports require cost.write (whole employer) in addition to import.write")
+        err.status_code = 403
+        raise err
     decl = _coverage_decl(db, ctx, entity_type, coverage)
     opts = None
-    if entity_type == "timesheet":
+    if entity_type in _OPTIONS:
         try:
-            opts = tsi.normalize_options(options)
+            opts = _OPTIONS[entity_type](options)
         except ValueError as e:
             raise ImportError_(f"Invalid upload option: {e}") from None
     elif options and any(v is not None for v in options.values()):
-        raise ImportError_("Upload options mode / approved_source are only for entity_type 'timesheet'")
+        raise ImportError_("Upload options mode / approved_source / all_completed are only for entity_type "
+                           "'timesheet', 'training' or 'cost'")
     if len(content) > get_settings().max_upload_mb * 1024 * 1024:
         raise ImportError_("File too large")
     sha = hashlib.sha256(content).hexdigest()
@@ -257,7 +269,8 @@ def upload(db: Session, ctx: AccessContext, *, entity_type: str, filename: str, 
                          and decl["completeness"] == "complete"):
         # WP-6 3.5 step 2: an empty month is confirmable only for event feeds and only as an explicit 'complete'
         raise ImportError_("The file has no data rows. A header-only file is accepted only for event feeds (leave, "
-                           "safety_event) with a coverage declaration 'complete' (confirms that there are no records)")
+                           "training, safety_event) with a coverage declaration 'complete' (confirms that there are no "
+                           "records)")
     dropped: list[str] = []
     if entity_type == "leave":
         dropped = [h for h in headers if any(k in _norm(h) for k in _HEALTH_COLUMN_HINTS)]
@@ -275,6 +288,10 @@ def upload(db: Session, ctx: AccessContext, *, entity_type: str, filename: str, 
         if conflicts:
             raise ImportError_("Column(s) " + ", ".join(conflicts) + " match the prohibited-column list (name, "
                                "identity or health) but are named like an import field; rename the column")
+    elif entity_type == "training":  # KVKK md.4 (ADR-027): employee number only; field aliases are never dropped
+        dropped = tri.prohibited_columns(headers)
+    elif entity_type == "cost":
+        dropped = cst.prohibited_columns(headers)
     if dropped:
         headers = [h for h in headers if h not in dropped]
         rows = [{k: v for k, v in r.items() if k not in dropped} for r in rows]
@@ -294,9 +311,15 @@ def upload(db: Session, ctx: AccessContext, *, entity_type: str, filename: str, 
         db.bulk_insert_mappings(ImportStagingRow, [
             {"batch_id": batch.id, "row_number": i + j + 2, "raw": r} for j, r in enumerate(rows[i:i + chunk])])
     db.commit()
+    preview = rows[:20]
+    masked = False
+    if entity_type == "cost":  # ADR-027 / review condition 5: no amount (nor unmapped column) without cost.read
+        masked = not cst.amounts_visible(ctx)
+        preview = cst.mask_preview(preview, suggested, not masked)
     return {"batch_id": batch.id, "headers": headers, "total_rows": len(rows), "suggested_mapping": batch.mapping,
-            "required_fields": [f for f, m in fields.items() if m["required"]], "preview": rows[:20],
-            "entity_type": entity_type, "dropped_columns": dropped, "coverage": decl, "options": opts}
+            "required_fields": [f for f, m in fields.items() if m["required"]], "preview": preview,
+            "preview_masked": masked, "entity_type": entity_type, "dropped_columns": dropped, "coverage": decl,
+            "options": opts}
 
 
 _HMAC_PREFIX = "hmac:"
@@ -353,6 +376,10 @@ def validate(db: Session, ctx: AccessContext, batch_id: int, mapping: dict[str, 
         return tsi.validate(db, ctx, batch, mapping)
     if batch.entity_type == "work_pattern":
         return wps.validate(db, ctx, batch, mapping)
+    if batch.entity_type == "training":
+        return tri.validate(db, ctx, batch, mapping)
+    if batch.entity_type == "cost":
+        return cst.validate(db, ctx, batch, mapping)
 
     import_scope = _import_scope(ctx)
     ents = {le.code: le for le in db.execute(select(LegalEntity).where(LegalEntity.tenant_id == ctx.tenant_id)).scalars()}
@@ -641,6 +668,8 @@ def commit(db: Session, ctx: AccessContext, batch_id: int, *, fail_after_rows: i
                      else sfi.commit_row(db, ctx, r) if batch.entity_type == "safety_event"
                      else tsi.commit_row(db, ctx, r) if batch.entity_type == "timesheet"
                      else wps.commit_row(db, ctx, r) if batch.entity_type == "work_pattern"
+                     else tri.commit_row(db, ctx, r) if batch.entity_type == "training"
+                     else cst.commit_row(db, ctx, r) if batch.entity_type == "cost"
                      else _commit_row(db, ctx, batch, r, ents, projects, occs))
                 if d == "review":  # sent to manual identity review: not committed, not retried automatically
                     r.has_error = True
@@ -660,8 +689,10 @@ def commit(db: Session, ctx: AccessContext, batch_id: int, *, fail_after_rows: i
         batch.error_message = None
         _invalidate_from_committed(db, ctx, batch.id)
         cov.record_import(db, ctx, batch)  # B-20: coverage rows in the same transaction as the status change
-        if batch.entity_type in ("safety_event", "timesheet"):
+        if batch.entity_type in ("safety_event", "timesheet", "training"):
             sfi.minimise_raw(db, batch)
+        elif batch.entity_type == "cost":  # ADR-027 / L-13: no amount stays in staging after commit
+            cst.minimise_staging(db, batch)
         elif batch.entity_type == "employment":
             _minimise_exit_codes(db, batch)
         db.commit()
@@ -1025,7 +1056,7 @@ def _invalidate_from_committed(db: Session, ctx: AccessContext, batch_id: int) -
     dates = []
     for (m,) in db.execute(select(ImportStagingRow.mapped).where(ImportStagingRow.batch_id == batch_id,
                                                                  ImportStagingRow.committed.is_(True))):
-        for k in ("start_date", "end_date", "event_date", "work_date", "valid_from"):
+        for k in ("start_date", "end_date", "event_date", "work_date", "valid_from", "completed_on", "period_month"):
             if m and m.get(k):
                 dates.append(date.fromisoformat(m[k]))
     if dates:
@@ -1166,7 +1197,8 @@ def _batch(db: Session, ctx: AccessContext, batch_id: int) -> ImportBatch:
     # entity-scoped importers may only touch batches they created (audit finding #9)
     if b is None or b.tenant_id != ctx.tenant_id or (
             ctx.entity_filter("import.write") is not None and b.created_by != ctx.user_id) or (
-            b.entity_type == "safety_event" and not ctx.has("hse.read")):  # ADR-021: HSE batches need hse.read
+            b.entity_type == "safety_event" and not ctx.has("hse.read")) or (  # ADR-021: HSE batches need hse.read
+            b.entity_type == "cost" and not ctx.has("cost.write")):  # ADR-027: cost batches need cost.write
         raise ImportError_("Batch not found")
     return b
 

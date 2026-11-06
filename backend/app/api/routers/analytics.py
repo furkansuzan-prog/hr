@@ -330,11 +330,15 @@ async def import_upload(file: UploadFile = File(...), entity_type: str = Form("e
                         coverage: str | None = Form(None, description="Optional JSON coverage declaration (B-20): "
                                                     "period_start, period_end, legal_entity_codes, project_codes, "
                                                     "completeness, coverage_ratio, note"),
-                        mode: str | None = Form(None, description="timesheet only (ADR-022): 'skip' (default) keeps "
-                                                "stored rows; 'replace' corrects stored rows of open periods in place"),
+                        mode: str | None = Form(None, description="timesheet / training / cost (ADR-022, ADR-027): "
+                                                "'skip' (default) keeps stored rows; 'replace' corrects stored rows of "
+                                                "open periods in place (audited)"),
                         approved_source: bool | None = Form(None, description="timesheet only (ADR-022): the file "
                                                             "contains approved rows only (needed when no status "
                                                             "column is mapped; otherwise rows are stored as draft)"),
+                        all_completed: bool | None = Form(None, description="training only (ADR-027): every row of the "
+                                                          "file is a completed training (needed when no status column "
+                                                          "is mapped; no default status is assigned)"),
                         ctx: AccessContext = Depends(require("import.write")), db: Session = Depends(get_db)):
     limit = get_settings().max_upload_mb * 1024 * 1024
     buf = bytearray()
@@ -350,7 +354,8 @@ async def import_upload(file: UploadFile = File(...), entity_type: str = Form("e
         except ValueError:
             raise HTTPException(422, "coverage must be a JSON object") from None
     res = _imp(imp.upload, db, ctx, entity_type=entity_type, filename=file.filename or "upload", content=content,
-               coverage=decl, options={"mode": mode, "approved_source": approved_source})
+               coverage=decl, options={"mode": mode, "approved_source": approved_source,
+                                       "all_completed": all_completed})
     write_audit(tenant_id=ctx.tenant_id, user_id=ctx.user_id, action="import.upload", entity_type="import_batch",
                 entity_id=str(res["batch_id"]), details={"rows": res["total_rows"]})
     return res
@@ -381,6 +386,8 @@ def import_list(ctx: AccessContext = Depends(require("import.write")), db: Sessi
         q = q.where(ImportBatch.created_by == ctx.user_id)
     if not ctx.has("hse.read"):  # ADR-021: HSE case batches are visible only with hse.read
         q = q.where(ImportBatch.entity_type != "safety_event")
+    if not ctx.has("cost.write"):  # ADR-027: payroll cost batches are visible only with cost.write
+        q = q.where(ImportBatch.entity_type != "cost")
     rows = db.execute(q.order_by(ImportBatch.id.desc()).limit(50)).scalars()
     return [imp.summary(db, ctx, b.id) for b in rows]
 

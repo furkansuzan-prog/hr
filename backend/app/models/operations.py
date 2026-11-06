@@ -241,9 +241,23 @@ class LeaveRecord(Base, TenantMixin, TimestampMixin, SourceMixin):
 # ---------------------------------------------------------------- Cost (Module F)
 
 
+# ADR-027 / WP-6 data 3.7.1: cost item codes (validated in code, no DB CHECK - LEAVE_TYPES pattern). unused_leave_pay
+# (4857 md. 59 leave pay on termination) and severance (kidem / ihbar) are the two items the spec adds (E.3 #9 check).
+COST_TYPES = ("gross_wage", "employer_ss", "overtime", "meal", "transport", "accommodation", "benefit",
+              "unused_leave_pay", "severance")
+# audit_logs.action of an in-place cost correction by a re-import with mode = replace (ADR-027). The audit row names
+# the changed fields only - never an amount (audit.read does not imply cost.read).
+COST_CORRECT_ACTION = "cost.correct"
+
+
 class PayrollCost(Base, TenantMixin, TimestampMixin, SourceMixin):
+    """One employee x month x cost item (x project). Imported rows (ADR-027): natural key (employment, period_month,
+    cost_type, project) for normal rows; is_correction rows are separate (negative amounts allowed) and never replace
+    a key row."""
+
     __tablename__ = "payroll_costs"
-    __table_args__ = (Index("ix_cost_tenant_period", "tenant_id", "period_month"),)
+    __table_args__ = (Index("ix_cost_tenant_period", "tenant_id", "period_month"),
+                      Index("ix_cost_employment_period", "employment_id", "period_month"))
     id: Mapped[int] = mapped_column(primary_key=True)
     employment_id: Mapped[int] = mapped_column(ForeignKey("employment_relationships.id"), index=True)
     project_id: Mapped[int | None] = mapped_column(ForeignKey("projects.id"))
@@ -252,6 +266,7 @@ class PayrollCost(Base, TenantMixin, TimestampMixin, SourceMixin):
     cost_type: Mapped[str] = mapped_column(String(30))  # gross_wage|employer_ss|overtime|meal|transport|accommodation|benefit
     amount: Mapped[float] = mapped_column(Numeric(18, 2))
     currency: Mapped[str] = mapped_column(String(3))
+    is_correction: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
 
 
 class FxRate(Base, TimestampMixin):
@@ -342,9 +357,22 @@ class EmployeeCompetency(Base, TenantMixin, TimestampMixin, EffectiveDatedMixin)
     level: Mapped[int] = mapped_column(Integer, default=1)
 
 
+# ADR-027 / WP-6 data 3.3.1 (validated in code, no DB CHECK). legal_basis values are informative until Agent 18 /
+# Agent 20 confirm durations (L-14); is_statutory_hse = category 'hse' AND legal_basis 'ISG_%' (derived, not stored).
+TRAINING_CATEGORIES = ("hse", "technical", "compliance", "soft")
+TRAINING_LEGAL_BASES = ("ISG_TEMEL", "ISG_ISE_BASLAMA", "ISG_YENILEME", "ISG_GOREV_DEGISIKLIGI", "ISG_KAZA_SONRASI",
+                        "ISG_UZUN_AYRILIK", "MYK_BELGE", "OPERATOR_BELGE", "YUKSEKTE_CALISMA", "DIGER_YASAL")
+TRAINING_DELIVERY = ("classroom", "online", "on_the_job")
+TRAINING_CORRECT_ACTION = "training.correct"
+
+
 class TrainingRecord(Base, TenantMixin, TimestampMixin, SourceMixin):
+    """A completed training of one employment. Imported rows (ADR-027): natural key (employment, course_code,
+    completed_on); only status 'completed' is stored."""
+
     __tablename__ = "training_records"
-    __table_args__ = (Index("ix_training_tenant_date", "tenant_id", "completed_on"),)
+    __table_args__ = (Index("ix_training_tenant_date", "tenant_id", "completed_on"),
+                      Index("ix_training_employment_course", "employment_id", "course_code", "completed_on"))
     id: Mapped[int] = mapped_column(primary_key=True)
     employment_id: Mapped[int] = mapped_column(ForeignKey("employment_relationships.id"), index=True)
     course_code: Mapped[str] = mapped_column(String(40))
@@ -353,6 +381,9 @@ class TrainingRecord(Base, TenantMixin, TimestampMixin, SourceMixin):
     hours: Mapped[float] = mapped_column(Numeric(6, 2))
     completed_on: Mapped[date] = mapped_column(Date)
     mandatory: Mapped[bool] = mapped_column(Boolean, default=False)
+    legal_basis: Mapped[str | None] = mapped_column(String(30))
+    start_date: Mapped[date | None] = mapped_column(Date)
+    delivery: Mapped[str | None] = mapped_column(String(20))
 
 
 # ---------------------------------------------------------------- HSE (Module G)

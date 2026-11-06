@@ -239,6 +239,8 @@ def dq_issues(limit: int = Query(100, le=500), ctx: AccessContext = Depends(requ
             select(ImportBatch.id).where(ImportBatch.created_by == ctx.user_id)))
     if not ctx.has("hse.read"):  # ADR-021: the HSE case queue is visible only with hse.read
         q = q.where(DataQualityIssue.entity_type != "safety_event")
+    if not ctx.has("cost.write"):  # ADR-027: the payroll cost queue is visible only with cost.write (never amounts)
+        q = q.where(DataQualityIssue.entity_type != "cost")
     rows = db.execute(q.order_by(DataQualityIssue.id.desc()).limit(limit)).scalars()
     return [{"id": i.id, "batch_id": i.import_batch_id, "rule": i.rule_code, "severity": i.severity,
              "message": i.message, "row": i.row_number, "status": i.status} for i in rows]

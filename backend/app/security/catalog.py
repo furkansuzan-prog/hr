@@ -9,6 +9,7 @@ PERMISSIONS: dict[str, str] = {
     "people.write": "Create / update workforce records",
     "timekeeping.read": "View timesheet and absence data",
     "cost.read": "View payroll and labour cost data (field-level protected)",
+    "cost.write": "Import / correct payroll cost data (with import.write; amounts shown only with cost.read - ADR-027)",
     "health.read": "View health-derived indicators (sickness, unplanned absence, protected leave; D-12)",
     "hse.read": "View aggregated HSE indicators",
     "training.read": "View training and competency data",
@@ -78,4 +79,8 @@ HEALTH_DERIVED_KPIS: frozenset[str] = frozenset({"KPI-028", "KPI-053", "KPI-054"
 # Leave types whose per-type hours are health data (KVKK md.6). In KPIs that stay visible without health.read (KPI-003
 # absenteeism) these per-type figures are hidden from users without health.read on the result's scope.
 HEALTH_LEAVE_TYPES: tuple[str, ...] = ("sick", "work_injury", "parental")
+# ADR-027: the payroll cost import needs import.write AND cost.write on the whole employer. Default holder: SYSTEM_ADMIN
+# only (least privilege) - a tenant administrator grants it to the payroll / HR operations role explicitly. Seeing the
+# amounts in the import preview additionally needs cost.read (WP-6 data review condition 5, L-13).
+COST_WRITE_ROLES: frozenset[str] = frozenset(r for r, (_, perms) in ROLE_TEMPLATES.items() if "cost.write" in perms)
 HEALTH_ROLES: frozenset[str] = frozenset(r for r, (_, perms) in ROLE_TEMPLATES.items() if "health.read" in perms)

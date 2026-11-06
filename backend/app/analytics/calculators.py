@@ -965,7 +965,36 @@ def training_hours_per_employee(db: Session, scope: Scope, ps: date, pe: date, p
     res = ratio(float(r[1]), avg, scale=1.0, sample_size=round(avg), min_sample=_min_group(), has_source_data=avg > 0)
     res.quality_score = 100.0
     res.lineage = {"tables": ["training_records", "employment_relationships"], "training_rows": int(r[0])}
+    if res.status == OK:
+        res.breakdown = _training_breakdown(db, scope, ps, pe, avg)
     return res
+
+
+def _training_breakdown(db: Session, scope: Scope, ps: date, pe: date, avg: float) -> dict:
+    """ADR-027 / WP-6 data 3.3.2: group-level split of KPI-008 (the KPI value is unchanged). Hours per category and
+    statutory HSE hours (is_statutory_hse = category 'hse' AND legal_basis 'ISG_*') per employee, annualised. A figure
+    is shown only when at least min_group_size distinct persons stand behind it (suppress_small_counts rule; 0 shown).
+    No "statutory minimum not met" note until the workplace hazard class exists (HR Director review condition 4)."""
+    where, p = _emp_where(scope, date_from=":ps", date_to=":pe")
+    base = (" FROM training_records tr JOIN employment_relationships e ON e.id = tr.employment_id "
+            f"WHERE tr.completed_on BETWEEN :ps AND :pe {where}")
+    args = {**p, "ps": ps, "pe": pe}
+    mg = _min_group()
+    by_cat = {c: (float(h), int(n)) for c, h, n in db.execute(text(
+        "SELECT tr.category, coalesce(sum(tr.hours), 0), count(DISTINCT e.person_id)" + base + " GROUP BY 1"), args)}
+    stat_h, stat_p = db.execute(text(
+        "SELECT coalesce(sum(tr.hours), 0), count(DISTINCT e.person_id)" + base
+        + " AND tr.category = 'hse' AND tr.legal_basis LIKE 'ISG\\_%'"), args).one()
+    stat_h, stat_p = float(stat_h), int(stat_p)
+
+    def shown(v: float, n: int):
+        return round(v, 2) if n == 0 or n >= mg else None
+
+    days = (pe - ps).days + 1
+    stat_pe = round(stat_h / avg * 365 / days, 2) if avg > 0 else None
+    return {"hours_by_category": {c: shown(*by_cat.get(c, (0.0, 0))) for c in ("hse", "technical", "compliance", "soft")},
+            "statutory_hse_hours": shown(stat_h, stat_p),
+            "statutory_hse_hours_per_employee_annualized": stat_pe if stat_p == 0 or stat_p >= mg else None}
 
 
 def competency_coverage(db: Session, scope: Scope, ps: date, pe: date, params: dict) -> CalcResult:

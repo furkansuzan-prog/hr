@@ -7,10 +7,12 @@ Ways a declaration is written:
 1. Import (primary): the upload may carry a `coverage` object; on a successful commit every declared employer x month
    gets a row (`basis = import_batch`). Without a declaration every employer x month that received rows gets
    `partial` (ratio unknown) - row presence is not proof of completeness - and an existing declaration is kept.
-   A header-only file of an event feed (leave, safety_event) is accepted only with `completeness = complete` -> `confirmed_empty`.
+   A header-only file of an event feed (leave, training, safety_event) is accepted only with
+   `completeness = complete` -> `confirmed_empty`.
 2. Manual (`POST /api/v1/coverage`): import.write on the WHOLE employer (ADR-017 - project-limited grants cannot
    write); `none` and `confirmed_empty` require a note; the safety feed additionally needs hse.read for that employer
-   (interim rule until A11 defines an HSE declaration permission).
+   (interim rule until A11 defines an HSE declaration permission); the cost feed needs cost.write for that employer
+   (ADR-027).
 Every change writes an audit_logs row (action coverage.declare) in the same transaction and calls mark_stale_from
 (INTEGRATION_CONTRACTS section 5). A later declaration replaces the earlier one; the audit row keeps the history.
 """
@@ -36,7 +38,8 @@ from app.security.access import AccessContext
 
 EVENT_FEEDS = {"leave", "training", "safety"}  # an empty month is a valid, confirmable state (header-only file)
 # import entity_type -> feed type (ADR-021: the HSE case import feeds 'safety')
-IMPORT_FEEDS = {"employment": "employment", "leave": "leave", "safety_event": "safety", "timesheet": "timesheet"}
+IMPORT_FEEDS = {"employment": "employment", "leave": "leave", "safety_event": "safety", "timesheet": "timesheet",
+                "training": "training", "cost": "cost"}  # ADR-027: training / cost imports
 SAFETY_ATTRIBUTES = set(SAFETY_COVERAGE_ATTRIBUTES)
 PLANNED_ON_LEAVE = {"included", "excluded", "unknown"}
 MAX_MONTHS = 60
@@ -68,6 +71,8 @@ def _date(v, name: str) -> date:
 def can_declare(ctx: AccessContext, feed_type: str, entity_id: int) -> bool:
     if not (ctx.has("import.write") and ctx.covers_entity("import.write", entity_id)):
         return False
+    if feed_type == "cost":  # ADR-027: cost coverage is declared by whoever may import costs for the employer
+        return ctx.has("cost.write") and ctx.covers_entity("cost.write", entity_id)
     return feed_type != "safety" or (ctx.has("hse.read") and ctx.covers_entity("hse.read", entity_id))
 
 
@@ -220,6 +225,13 @@ def _row_cells(m: dict, ents: dict[str, int], today: date) -> set[tuple[int, dat
     if m.get("event_date"):  # HSE case (ADR-021): a single day
         sd = ed = date.fromisoformat(m["event_date"])
         return {(e, date(sd.year, sd.month, 1))} if e is not None else set()
+    if m.get("completed_on"):  # training (ADR-027): the completion day; a not-completed row stores nothing
+        if m.get("store") is False:
+            return set()
+        d = date.fromisoformat(m["completed_on"])
+        return {(e, date(d.year, d.month, 1))} if e is not None else set()
+    if m.get("period_month"):  # payroll cost (ADR-027): the payroll month
+        return {(e, date.fromisoformat(m["period_month"]))} if e is not None else set()
     if m.get("work_date"):  # timesheet (ADR-022): the day, or the span of a period row
         if e is None:
             return set()
