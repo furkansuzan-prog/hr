@@ -12,6 +12,7 @@ Tam kolon listesi: [`DATA_DICTIONARY.md`](DATA_DICTIONARY.md) (koddan üretilir)
 | Kişi | `people` (+ `person_identifiers`) | İşverenden bağımsız; çok sistemli kimlik eşleme |
 | İş ilişkisi | `employment_relationships` | Kişi × işveren × dönem; işveren değişince **yeni satır** |
 | Çıkış kodu eşlemesi | `termination_code_map`, `termination_counters` | SGK çıkış kodu → ayrılış kategorisi (tenant verisi, doğrulanmadan etkin değil); saklanmayan kodlar (sağlık, kod 11) yalnızca tüzel kişilik × ay sayacı (ADR-023) |
+| Çalışma düzeni ve izin hakkı | `work_patterns`, `work_pattern_assignments` (kişi / proje / işveren, etkin tarihli), `public_holidays` (ülke × tarih × kesir), `leave_entitlement_rules`; `leave_records.days` / `day_basis` / `work_pattern_id`; `employment_relationships.collective_agreement_code` / `leave_seniority_date` | İzin günü ↔ saat düzene göre; düzen çözümleme kişi → birincil görevlendirme projesi → işveren; hak kuralı kaynak belge + onay olmadan etkin değil (ADR-024, migration `0010`) |
 | Görevlendirme | `assignments` | İstihdam × proje/departman/pozisyon/meslek × dönem; çoklu ve eşzamanlı |
 | Pozisyon / meslek / yetkinlik | `positions`, `occupations` (`occupation_group`), `competencies`, `occupation_competencies`, `employee_competencies` | |
 | Planlanan ↔ gerçekleşen iş gücü | `workforce_plans` ↔ `employment_relationships` | KPI-006 |
