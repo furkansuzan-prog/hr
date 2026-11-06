@@ -476,7 +476,7 @@ Kısıtlar:
 
 ## `leave_records`
 
-Absence/leave. counts_as_absence follows the tenant's absenteeism definition (KPI-003).
+Absence/leave. counts_as_absence follows the tenant's absenteeism definition (KPI-003). source_record_id: the source's leave/report number when the feed has one (re-import identity key, ADR-019), otherwise the employee's external id (legacy rows).
 
 | Kolon | Tip | Null | Anahtar / FK |
 |---|---|---|---|
@@ -949,7 +949,7 @@ Approved daily time record per employment and project. worked_hours = paid worki
 | record_version | INTEGER |  |  |
 | updated_by | BIGINT | ✓ |  |
 
-Kısıtlar: ck_ts_nonneg, uq_timesheet_day
+Kısıtlar: uq_timesheet_day, ck_ts_nonneg
 
 ## `training_records`
 

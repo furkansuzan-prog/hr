@@ -21,7 +21,10 @@ from sqlalchemy.orm import Session
 from app.analytics.engine import mark_stale_from
 from app.core.config import get_settings
 from app.models import (
+    LEAVE_RECLASSIFY_ACTION,
+    SICK_NOTE_FAMILY,
     Assignment,
+    AuditLog,
     DataQualityIssue,
     EmploymentRelationship,
     IdentityReviewItem,
@@ -37,7 +40,7 @@ from app.models import (
 from app.models.people import TERMINATION_CATEGORIES
 from app.security.access import AccessContext
 from app.security.auth import national_id_hash
-from app.services.timekeeping import normalize_leave_type
+from app.services.timekeeping import classify_leave
 
 log = logging.getLogger("hrswi.imports")
 
@@ -88,6 +91,10 @@ LEAVE_FIELDS = {
     "end_date": {"required": True, "aliases": ["bitiş", "bitiş tarihi", "izin bitiş", "end", "to", "окончание"]},
     "hours": {"required": False, "aliases": ["saat", "toplam saat", "hours", "часы"]},
     "days": {"required": False, "aliases": ["gün", "gün sayısı", "days", "дни"]},
+    # ADR-019: the source's own leave / report number - identity key for re-imports (reclassification in place)
+    "record_id": {"required": False, "aliases": ["rapor no", "rapor numarası", "izin no", "belge no", "kayıt no",
+                                                 "record id", "report number", "leave id", "document number",
+                                                 "номер документа", "номер больничного"]},
 }
 FIELD_SETS = {"employment": FIELDS, "leave": LEAVE_FIELDS}
 LEAVE_HOURS_PER_DAY = 9  # 45 h / 5 days; work-pattern specific conversion is backlog B-28
@@ -418,6 +425,7 @@ def _validate_leave(db: Session, ctx: AccessContext, batch: ImportBatch, mapping
     import_scope = _import_scope(ctx)
     ents = {le.code: le for le in db.execute(select(LegalEntity).where(LegalEntity.tenant_id == ctx.tenant_id)).scalars()}
     seen: set[tuple] = set()
+    fam_spans: dict[tuple, list[tuple[date, date]]] = {}
     valid = errors = 0
     issues = []
     for row in db.execute(select(ImportStagingRow).where(ImportStagingRow.batch_id == batch.id)
@@ -445,7 +453,9 @@ def _validate_leave(db: Session, ctx: AccessContext, batch: ImportBatch, mapping
         except ValueError as e:
             err("date_format", str(e))
         label = m.get("leave_type", "")
-        lt = normalize_leave_type(label, m.get("sgk_report_code") or None)
+        lt, label_warnings = classify_leave(label, m.get("sgk_report_code") or None)
+        for w in label_warnings:  # KVKK md.6 (WP-1 3.6): the health-related label is not echoed into the queue
+            err(w, _LABEL_WARNING_MESSAGES[w], "warning")
         if lt == "other" and _norm(label) != "other":
             err("unmapped_leave_label", f"leave label '{label}' not recognised -> counted as 'other' (review mapping)",
                 "warning")
@@ -475,23 +485,29 @@ def _validate_leave(db: Session, ctx: AccessContext, batch: ImportBatch, mapping
                 if ed and emp.end_date and ed > emp.end_date:
                     err("past_employment_end", "leave ends after the employment end date -> clipped", "warning")
                     ed = emp.end_date
+        src, rid = m.get("source_system") or "import", m.get("record_id") or None
+        reclass: LeaveRecord | None = None
         if emp is not None and sd and ed:
-            if db.execute(select(LeaveRecord.id).where(
-                    LeaveRecord.employment_id == emp.id, LeaveRecord.leave_type == lt,
-                    LeaveRecord.start_date == sd, LeaveRecord.end_date == ed)).first():
-                err("already_imported", "identical leave record already exists -> will be skipped", "warning")
-            elif db.execute(select(LeaveRecord.id).where(
-                    LeaveRecord.employment_id == emp.id, LeaveRecord.start_date <= ed,
-                    LeaveRecord.end_date >= sd)).first():
-                err("overlapping_leave", "overlaps an existing leave record of this employee", "warning")
-        key = (m.get("source_system") or "import", m.get("external_id"), m.get("legal_entity_code"), lt, sd)
-        if key in seen:
+            reclass = _match_existing_leave(db, emp.id, src, rid, lt, sd, ed, err)
+        # in-file checks: one certified-rest record per employee and dates, whatever its type (WP-1 3.4)
+        person = (src, m.get("external_id"), m.get("legal_entity_code"))
+        key = (*person, "sick_note" if lt in SICK_NOTE_FAMILY else lt, sd)
+        if key in seen or (rid and (*person, "record_id", rid) in seen):
             err("duplicate_in_file", "duplicate row (same employee, employer, leave type and start date)")
+        elif lt in SICK_NOTE_FAMILY and sd and ed and any(a <= ed and b >= sd for a, b in fam_spans.get(person, ())):
+            err(SICK_NOTE_OVERLAP, "certified rest (sick / work injury) overlaps another row of this employee in the "
+                                   "file -> not committed (manual review)")
         seen.add(key)
+        if rid:
+            seen.add((*person, "record_id", rid))
+        if lt in SICK_NOTE_FAMILY and sd and ed:
+            fam_spans.setdefault(person, []).append((sd, ed))
         row.mapped = {"external_id": m.get("external_id"), "legal_entity_code": m.get("legal_entity_code"),
                       "employment_id": emp.id if emp else None, "leave_type": lt,
                       "start_date": sd.isoformat() if sd else None, "end_date": ed.isoformat() if ed else None,
-                      "hours": hours, "source_system": m.get("source_system") or "import", "matched_by": how}
+                      "hours": hours, "source_system": src, "matched_by": how, "record_id": rid,
+                      "reclassify_id": reclass.id if reclass is not None else None,
+                      "reclassify_from": reclass.leave_type if reclass is not None else None}
         row.errors = errs
         hard = [e for e in errs if e["severity"] == "error"]
         row.has_error = bool(hard)
@@ -516,14 +532,137 @@ def _commit_leave_row(db: Session, ctx: AccessContext, row: ImportStagingRow) ->
     emp = db.get(EmploymentRelationship, m["employment_id"])
     if emp is None or emp.tenant_id != ctx.tenant_id:
         raise ImportError_("employment disappeared between validation and commit")
+    if m.get("reclassify_id"):
+        return _reclassify_leave(db, ctx, row, emp, sd)
     if db.execute(select(LeaveRecord.id).where(
             LeaveRecord.employment_id == emp.id, LeaveRecord.leave_type == m["leave_type"],
             LeaveRecord.start_date == sd, LeaveRecord.end_date == ed)).first():
         return None  # idempotent: identical record already present (re-import / resumed commit)
     db.add(LeaveRecord(tenant_id=ctx.tenant_id, employment_id=emp.id, leave_type=m["leave_type"], start_date=sd,
                        end_date=ed, hours=m["hours"], source_system=m["source_system"],
-                       source_record_id=m["external_id"], updated_by=ctx.user_id))
+                       source_record_id=m.get("record_id") or m["external_id"], updated_by=ctx.user_id))
     return sd
+
+
+# ---------------------------------------------------------------- leave reclassification (WP-1 3.4, ADR-019)
+SICK_NOTE_OVERLAP = "sick_note_overlap"
+_LABEL_WARNING_MESSAGES = {
+    "leave_label_code_conflict": "leave label and SGK report type code disagree -> the report code is used "
+                                 "(health-related leave label; HSE review)",
+    "leave_label_ambiguous": "leave label names both protected leave and a work injury -> kept as protected leave "
+                             "(decision D-6; HR review)",
+    "unmapped_sgk_report_code": "SGK report type code not recognised -> mapped from the label (review the code list)",
+}
+
+
+def _direction(old: str, new: str) -> str:
+    """Rule codes shared with the HSE import (WP-1 review condition 5)."""
+    if "parental" in (old, new):
+        return "leave_reclassified_protected"
+    if (old, new) == ("sick", "work_injury"):
+        return "reclassified_up"
+    if (old, new) == ("work_injury", "sick"):
+        return "reclassified_down"
+    return "leave_reclassified"
+
+
+def _match_existing_leave(db: Session, employment_id: int, src: str, rid: str | None, lt: str, sd: date, ed: date,
+                          err) -> LeaveRecord | None:
+    """Identity of an incoming leave row against stored records (WP-1 3.4); returns the record to reclassify in place.
+    Key: the source's record number when the feed has one; otherwise (employment, start, end) within the certified
+    rest family {sick, work_injury}. A changed type on the same key is a reclassification, never a second record.
+    Overlaps inside the family are errors; other overlaps stay warnings (unchanged behaviour)."""
+    existing = None
+    if rid:
+        existing = db.execute(select(LeaveRecord).where(
+            LeaveRecord.employment_id == employment_id, LeaveRecord.source_system == src,
+            LeaveRecord.source_record_id == rid).order_by(LeaveRecord.id).limit(1)).scalar()
+        if existing is not None and (existing.start_date, existing.end_date) != (sd, ed):
+            err("record_id_dates_changed", "a leave record with this record number exists with other dates -> not "
+                                           "committed (manual review)")
+            return None
+    if existing is None:
+        same = list(db.execute(select(LeaveRecord).where(
+            LeaveRecord.employment_id == employment_id, LeaveRecord.start_date == sd,
+            LeaveRecord.end_date == ed).order_by(LeaveRecord.id)).scalars())
+        if any(r.leave_type == lt for r in same):
+            err("already_imported", "identical leave record already exists -> will be skipped", "warning")
+            return None
+        if lt in SICK_NOTE_FAMILY:
+            existing = next((r for r in same if r.leave_type in SICK_NOTE_FAMILY), None)
+    if existing is not None:
+        if existing.leave_type == lt:
+            err("already_imported", "identical leave record already exists -> will be skipped", "warning")
+            return None
+        err(_direction(existing.leave_type, lt), "same leave record arrives with another type -> reclassified in "
+                                                 "place on commit (no second record)", "warning")
+        return existing
+    overlaps = list(db.execute(select(LeaveRecord.leave_type).where(
+        LeaveRecord.employment_id == employment_id, LeaveRecord.start_date <= ed,
+        LeaveRecord.end_date >= sd)).scalars())
+    if lt in SICK_NOTE_FAMILY and any(t in SICK_NOTE_FAMILY for t in overlaps):
+        err(SICK_NOTE_OVERLAP, "certified rest (sick / work injury) overlaps an existing one with other dates -> "
+                               "not committed (manual review; counting both would double the days)")
+    elif overlaps:
+        err("overlapping_leave", "overlaps an existing leave record of this employee", "warning")
+    return None
+
+
+def _reclassify_leave(db: Session, ctx: AccessContext, row: ImportStagingRow, emp: EmploymentRelationship,
+                      sd: date) -> date | None:
+    """In-place type change + record_version + audit row in the same transaction (WP-1 3.4 step 2)."""
+    m = row.mapped
+    rec = db.get(LeaveRecord, m["reclassify_id"])
+    if rec is None or rec.tenant_id != ctx.tenant_id or rec.employment_id != emp.id:
+        raise ImportError_("leave record disappeared between validation and commit")
+    if rec.leave_type == m["leave_type"]:
+        return None  # resumed commit: already applied
+    old = rec.leave_type
+    rec.leave_type = m["leave_type"]
+    rec.record_version = (rec.record_version or 1) + 1
+    rec.updated_by = ctx.user_id
+    if m.get("record_id"):
+        rec.source_record_id = m["record_id"]
+    db.add(AuditLog(tenant_id=ctx.tenant_id, user_id=ctx.user_id, action=LEAVE_RECLASSIFY_ACTION,
+                    entity_type="leave_record", entity_id=str(rec.id),
+                    details={"from": old, "to": rec.leave_type, "direction": _direction(old, rec.leave_type),
+                             "import_batch_id": row.batch_id, "legal_entity_id": emp.legal_entity_id,
+                             "start_date": rec.start_date.isoformat(), "end_date": rec.end_date.isoformat(),
+                             "record_version": rec.record_version}))
+    return sd
+
+
+def leave_reclassification_counts(db: Session, ctx: AccessContext, ps: date, pe: date) -> list[dict]:
+    """Group-level direction counters per quarter of the reclassification (WP-1 3.4 step 6): reclassified_up
+    (sick -> work_injury) and reclassified_down (work_injury -> sick). Counts only - no person, record or date list.
+    A legal entity is listed only when its quarter total is >= HRSWI_MIN_GROUP_SIZE; smaller ones appear only in the
+    'other_entities' remainder and in the total. Visible scope: whole legal entities readable with timekeeping.read
+    (audit rows carry no project, so project-limited grants contribute nothing - ADR-017)."""
+    allowed = ctx.entity_filter("timekeeping.read")
+    min_n = get_settings().min_group_size
+    q = select(AuditLog.at, AuditLog.details).where(
+        AuditLog.tenant_id == ctx.tenant_id, AuditLog.action == LEAVE_RECLASSIFY_ACTION,
+        func.date(AuditLog.at) >= ps, func.date(AuditLog.at) <= pe)
+    buckets: dict[str, dict[int, dict[str, int]]] = {}
+    for at, d in db.execute(q):
+        d = d or {}
+        direction, eid = d.get("direction"), d.get("legal_entity_id")
+        if direction not in ("reclassified_up", "reclassified_down") or eid is None:
+            continue
+        if allowed is not None and not ctx.covers_entity("timekeeping.read", eid):
+            continue
+        quarter = f"{at.year}-Q{(at.month - 1) // 3 + 1}"
+        c = buckets.setdefault(quarter, {}).setdefault(eid, {"reclassified_up": 0, "reclassified_down": 0})
+        c[direction] += 1
+    out = []
+    for quarter in sorted(buckets):
+        per = buckets[quarter]
+        total = {k: sum(c[k] for c in per.values()) for k in ("reclassified_up", "reclassified_down")}
+        shown = [{"legal_entity_id": e, **c} for e, c in sorted(per.items()) if sum(c.values()) >= min_n]
+        hidden = [c for c in per.values() if sum(c.values()) < min_n]
+        out.append({"quarter": quarter, "total": total, "by_legal_entity": shown,
+                    "other_entities": {k: sum(c[k] for c in hidden) for k in total} if hidden else None})
+    return out
 
 
 def _invalidate_from_committed(db: Session, ctx: AccessContext, batch_id: int) -> None:

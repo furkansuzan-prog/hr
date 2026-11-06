@@ -151,9 +151,12 @@ def test_approved_thresholds_applied(db, leavex):
     ("İstirahat raporu", "3", "sick"), ("Hastalık raporu", None, "sick"), ("Yıllık izin", None, "annual"),
     ("Ücretsiz izin", None, "unpaid"), ("Habersiz devamsızlık", None, "unexcused"),
     ("Resmi tatil", None, "public_holiday"), ("Evlilik izni", None, "other"), (None, None, "other"),
-    # Turkish-safe folding (Agent 18 finding): upper case and dotted/dotless i must not change the mapping
-    ("İŞ KAZASI", None, "sick"), ("İş kazası istirahati", None, "sick"), ("Meslek hastalığı", None, "sick"),
-    ("Work injury", None, "sick"), ("Производственная травма", None, "sick"), ("ANALIK RAPORU", None, "parental"),
+    # Turkish-safe folding (Agent 18 finding): upper case and dotted/dotless i must not change the mapping.
+    # The next 5 rows deliberately changed from 'sick' to 'work_injury' with WP-1 / ADR-019 (HR Director review
+    # condition 2): they were a temporary expectation until the separate work-injury leave type existed.
+    ("İŞ KAZASI", None, "work_injury"), ("İş kazası istirahati", None, "work_injury"),
+    ("Meslek hastalığı", None, "work_injury"), ("Work injury", None, "work_injury"),
+    ("Производственная травма", None, "work_injury"), ("ANALIK RAPORU", None, "parental"),
     ("DOĞUM İZNİ", None, "parental"), ("YILLIK İZİN", None, "annual"), ("SÜT İZNİ", None, "parental"),
     ("ÜCRETSİZ İZİN", None, "unpaid"), ("HABERSİZ DEVAMSIZLIK", None, "unexcused"),
 ])

@@ -117,14 +117,29 @@ class TimesheetSummaryDirty(Base):
     from_month: Mapped[date] = mapped_column(Date)
 
 
+# Leave type value set - a shared contract (ADR-019): import mapping (timekeeping.classify_leave), KPI formula
+# parameters (engine.PARAM_RULES), calculators and reports. No DB CHECK: String(20) column, validated in code.
+LEAVE_TYPES = frozenset({"annual", "sick", "work_injury", "unpaid", "unexcused", "public_holiday", "parental", "other"})
+# "Certified rest" family (WP-1 3.4): the same doctor's report can be re-issued as either type (SGK review), so a
+# re-import that changes between them is a reclassification of the SAME record; overlaps inside it are errors.
+SICK_NOTE_FAMILY = frozenset({"sick", "work_injury"})
+# Long-absence types of KPI-056 (WP-1 review E / WP-4 condition 3: one constant, later versions inherit it).
+LONG_ABSENCE_TYPES = ("sick", "parental", "unpaid", "work_injury")
+# audit_logs.action of an in-place leave reclassification (ADR-019); the group-level direction counters and the
+# closed-period note are read from these rows (details: from, to, direction, legal_entity_id, start/end date, batch).
+LEAVE_RECLASSIFY_ACTION = "leave.reclassify"
+
+
 class LeaveRecord(Base, TenantMixin, TimestampMixin, SourceMixin):
-    """Absence/leave. counts_as_absence follows the tenant's absenteeism definition (KPI-003)."""
+    """Absence/leave. counts_as_absence follows the tenant's absenteeism definition (KPI-003).
+    source_record_id: the source's leave/report number when the feed has one (re-import identity key, ADR-019),
+    otherwise the employee's external id (legacy rows)."""
 
     __tablename__ = "leave_records"
     __table_args__ = (Index("ix_leave_tenant_dates", "tenant_id", "start_date", "end_date"),)
     id: Mapped[int] = mapped_column(primary_key=True)
     employment_id: Mapped[int] = mapped_column(ForeignKey("employment_relationships.id"), index=True)
-    leave_type: Mapped[str] = mapped_column(String(20))  # annual|sick|unpaid|unexcused|public_holiday|parental|other
+    leave_type: Mapped[str] = mapped_column(String(20))  # one of LEAVE_TYPES
     start_date: Mapped[date] = mapped_column(Date)
     end_date: Mapped[date] = mapped_column(Date)
     hours: Mapped[float] = mapped_column(Numeric(6, 2))

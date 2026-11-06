@@ -136,10 +136,12 @@ def test_formula_change_preserves_old_results(client, auth, ids, db):
         stored = client.get(f"/api/v1/kpi/runs/{run_id}", headers=auth(ADMIN)).json()["results"][0]
         assert stored["formula_version"] == 1 and stored["value"] == pytest.approx(6.0)
     finally:
-        # restore the company definition as a NEW version (history is append-only)
+        # restore the company definition as a NEW version (history is append-only) - exactly the catalog's
+        # parameters, so later tests (and the catalog sync check) see the current definition (ADR-019 work_injury)
+        from app.analytics.catalog import KPI_CATALOG
+        params = next(k for k in KPI_CATALOG if k["code"] == "KPI-003")["formula"]["parameters"]
         client.post("/api/v1/kpi/definitions/KPI-003/versions", headers=auth(ADMIN), json={
-            "parameters": {"absence_types": ["unexcused", "sick", "annual", "unpaid", "other"]},
-            "change_note": "Restore company definition"})
+            "parameters": params, "change_note": "Restore company definition"})
     versions = db.execute(select(KpiFormulaVersion.version).join_from(KpiFormulaVersion, KpiResult, isouter=True)).all()
     assert len(versions) >= 3
 

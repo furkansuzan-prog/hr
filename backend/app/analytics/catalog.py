@@ -6,6 +6,7 @@ Rules:
 - Standard references are *indicative mappings for disclosure preparation*, not compliance claims.
   Framework versions must be verified by the Sustainability specialist before reporting (version_verified=false).
 """
+from app.models.operations import LONG_ABSENCE_TYPES
 
 ACTIVE_COMMON = {
     "frequency": "monthly",
@@ -74,11 +75,16 @@ KPI_CATALOG: list[dict] = [
        num="Leave hours prorated to period for types in parameter absence_types",
        den="Planned hours on approved timesheets", sources=["leave_records", "timesheets"], owner="HR_MANAGER",
        standards=["ISO 30414 (absenteeism)"],
-       # Company definition (decision 2026-11-05): unexcused absence, sick-note days, annual leave, unpaid leave and
-       # other leave count as absence. Thresholds are left to the HR manager (docs/KPI_TARGETS_REQUEST.md).
-       incl="Unexcused absence, sick-note days (raporlu), annual leave, unpaid leave, other leave",
-       excl="Public holidays (not working days); parental/maternity leave (legally protected - pending HR confirmation)",
-       params={"absence_types": ["unexcused", "sick", "annual", "unpaid", "other"]}),
+       # Company definition (decision D-3): unexcused absence, sick-note days, annual leave, unpaid leave and other
+       # leave count as absence. work_injury (ADR-019) is listed EXPLICITLY as included until the product owner decides
+       # PO-1 (docs/hr/SPRINT1_REVIEW.md section 4; HR Director recommends option C = exclude). Deciding PO-1 = C is a
+       # catalog edit only: move "work_injury" from absence_types to excluded_types (and adjust incl/excl), then run
+       # the catalog sync - it becomes a new formula version, older results keep theirs.
+       incl="Unexcused absence, sick-note days (raporlu), work-injury / occupational-disease rest (work_injury - "
+       "included explicitly pending product-owner decision PO-1), annual leave, unpaid leave, other leave",
+       excl="Public holidays (not working days); parental/maternity and related protected leave (decision D-6)",
+       params={"absence_types": ["unexcused", "sick", "work_injury", "annual", "unpaid", "other"],
+               "excluded_types": ["public_holiday", "parental"]}),
     _k("KPI-004", "productivity", "C", "İş Gücü Kapasite Kullanımı", "Workforce Capacity Utilisation",
        "Использование мощности персонала", "%", "higher_better", "capacity_utilization",
        formula="Productive (work-package booked) hours / planned available hours x 100",
@@ -203,11 +209,16 @@ KPI_CATALOG: list[dict] = [
        owner="HR_MANAGER", standards=["ISO 30414"],
        incl="Current spell only; concurrent spells -> the longest-running one",
        excl="Earlier (ended) spells of re-hired persons are not added"),
-    _k("KPI-028", "attendance", "D", "Hastalık Devamsızlık Oranı", "Sickness Absence Rate", "Уровень болезней", "%",
+    _k("KPI-028", "attendance", "D", "Hastalık Devamsızlık Oranı (iş kazası hariç)",
+       "Sickness Absence Rate (excl. work injury)", "Уровень болезней (без производственных травм)", "%",
        "lower_better", "absenteeism_rate", formula="Sick leave hours / planned hours x 100 (aggregate only)",
        num="Sick leave hours prorated to period", den="Planned hours on approved timesheets",
        sources=["leave_records", "timesheets"], owner="HR_MANAGER", standards=["ISO 30414"],
-       incl="Leave type 'sick' only", excl="All other leave types", params={"absence_types": ["sick"]}),
+       incl="Leave type 'sick' only", excl="Work-injury / occupational-disease rest (work_injury, SGK report codes "
+       "1/2 - WP-1, ADR-019) and all other leave types. Before ADR-019 work-injury rest was imported as 'sick'",
+       params={"absence_types": ["sick"],
+               "excluded_types": ["unexcused", "work_injury", "annual", "unpaid", "other", "public_holiday",
+                                  "parental"]}),
     _k("KPI-032", "working_time", "D", "Gece Çalışması Oranı", "Night Work Share", "Доля ночной работы", "%",
        "lower_better", "night_work_share", formula="Night hours / worked hours x 100",
        num="Night hours on approved timesheets", den="Worked hours (incl. overtime) on approved timesheets",
@@ -284,8 +295,11 @@ KPI_CATALOG += [
        num="Unexcused and sick leave hours prorated to period", den="Planned hours on approved timesheets",
        sources=["leave_records", "timesheets"], owner="HR_MANAGER", standards=["ISO 30414 (absenteeism)"],
        purpose="Standard (unplanned) absenteeism, comparable with sector practice; complements the company KPI-003",
-       incl="Unexcused absence, sick-note days", excl="Annual leave, unpaid leave, other leave, public holidays, "
-       "maternity/parental and other protected leave", params={"absence_types": ["unexcused", "sick"]}),
+       incl="Unexcused absence, sick-note days", excl="Work-injury / occupational-disease rest (work_injury, SGK "
+       "report codes 1/2 - WP-1, ADR-019; before ADR-019 imported as 'sick'), annual leave, unpaid leave, other leave, "
+       "public holidays, maternity/parental and other protected leave",
+       params={"absence_types": ["unexcused", "sick"],
+               "excluded_types": ["work_injury", "annual", "unpaid", "other", "public_holiday", "parental"]}),
     _k("KPI-054", "attendance", "D", "Korunan İzin Payı", "Protected Leave Share", "Доля охраняемых отпусков", "%",
        "neutral", "protected_leave_share",
        formula="Maternity / parental and related protected leave hours / planned working hours x 100",
@@ -313,8 +327,9 @@ KPI_CATALOG += [
        standards=["4857 md. 53-59"],
        purpose="Early warning for workload / burnout at team level (decision D-7); never used to rank individuals",
        incl="Persons whose one-year date is on/before the period start", excl="Persons with < 1 year of service at "
-       "period start; persons on long sick/parental/unpaid absence (> half of the window; reported as a count)",
-       params={"hours_per_day": 9, "threshold_min_days": 360}),
+       "period start; persons on long sick / parental / unpaid / work-injury absence (> half of the window; reported "
+       "as a count - an injured person is not 'not taking leave', WP-1 example 3, ADR-019)",
+       params={"hours_per_day": 9, "threshold_min_days": 360, "long_absence_types": list(LONG_ABSENCE_TYPES)}),
 ]
 
 # ---------------------------------------------------------------- Approved thresholds (decision D-5)

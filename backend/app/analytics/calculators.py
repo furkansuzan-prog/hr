@@ -298,30 +298,47 @@ def retention_rate(db: Session, scope: Scope, ps: date, pe: date, params: dict) 
     return res
 
 
+# Health-derived leave types whose per-type hours are masked in breakdowns when fewer than HRSWI_MIN_GROUP_SIZE distinct
+# people have such a record in scope x period (WP-1 3.6 / acceptance 9, KVKK md.6). parental is not masked here: KPI-054
+# applies its own taker rule and the D-6 tests read excluded parental hours.
+_MASKED_LEAVE_TYPES = ("work_injury",)
+
+
 def absenteeism_rate(db: Session, scope: Scope, ps: date, pe: date, params: dict) -> CalcResult:
-    """KPI-003: absence hours (types in params.absence_types) / planned hours * 100."""
+    """KPI-003/028/053: absence hours (types in params.absence_types) / planned hours * 100.
+    params.excluded_types (ADR-019) declares the types deliberately left out (validated: absence_types +
+    excluded_types = every leave type), so no type is excluded just because it is missing from a list; the declared
+    list is echoed in the breakdown. work_injury hours are masked (null) when 1..min_group-1 people have such a record."""
     absence_types = params.get("absence_types", ["unexcused", "sick", "annual", "unpaid", "other"])
+    declared_excluded = params.get("excluded_types")
     hours = _hours(db, scope, ps, pe)
     where, p = _emp_where(scope, date_from=":ps", date_to=":pe")
     rows = db.execute(
         text(
             "SELECT l.leave_type, sum(l.hours * (LEAST(l.end_date, :pe) - GREATEST(l.start_date, :ps) + 1)::numeric "
-            "/ (l.end_date - l.start_date + 1)) FROM leave_records l JOIN employment_relationships e "
-            "ON e.id = l.employment_id WHERE l.tenant_id = :tenant AND l.start_date <= :pe AND l.end_date >= :ps "
-            f"{where} GROUP BY 1"
+            "/ (l.end_date - l.start_date + 1)), count(DISTINCT e.person_id) FROM leave_records l "
+            "JOIN employment_relationships e ON e.id = l.employment_id WHERE l.tenant_id = :tenant "
+            f"AND l.start_date <= :pe AND l.end_date >= :ps {where} GROUP BY 1"
         ),
         {**p, "ps": ps, "pe": pe},
     ).all()
     by_type = {r[0]: round(float(r[1]), 2) for r in rows}
+    people = {r[0]: int(r[2]) for r in rows}
     absent = sum(v for k, v in by_type.items() if k in absence_types)
     res = ratio(absent, hours["planned"], sample_size=hours["persons"], min_sample=_min_group(),
                 has_source_data=hours["rows"] > 0)
     if res.status == OK:
+        masked = sorted(t for t in _MASKED_LEAVE_TYPES if 0 < people.get(t, 0) < _min_group())
+        shown = {k: (None if k in masked else v) for k, v in by_type.items()}
         res.breakdown = {
-            "included_hours_by_type": {k: v for k, v in by_type.items() if k in absence_types},
-            "excluded_hours_by_type": {k: v for k, v in by_type.items() if k not in absence_types},
+            "included_hours_by_type": {k: v for k, v in shown.items() if k in absence_types},
+            "excluded_hours_by_type": {k: v for k, v in shown.items() if k not in absence_types},
             "included_types": absence_types,
         }
+        if declared_excluded is not None:
+            res.breakdown["excluded_types"] = declared_excluded
+        if masked:
+            res.breakdown["masked_types"] = masked
     res.quality_score = 100.0 if hours["rows"] else 0.0
     res.lineage = {"tables": ["leave_records", "timesheets"], "timesheet_rows": hours["rows"],
                    "leave_types_found": sorted(by_type), "proration": "calendar-day overlap"}
@@ -355,13 +372,14 @@ def protected_leave_share(db: Session, scope: Scope, ps: date, pe: date, params:
     return res
 
 
-def _annual_leave_population(db: Session, scope: Scope, ps: date, pe: date, params: dict) -> list[dict]:
+def _annual_leave_population(db: Session, scope: Scope, ps: date, pe: date, params: dict,
+                             long_types: tuple[str, ...] = ()) -> list[dict]:
     """Population for KPI-055/056 (decision D-7, corrected per HR Director review):
     - person active in scope at period end; current employer = legal entity of the latest active employment;
     - service = ALL spells with that same employer up to period end (4857 md.54), not just the current contract;
     - one-year date approximated as period_end - (service_days - 365);
     - statutory entitlement (md.53) by service years and age, prorated from max(period start, one-year date);
-    - long_absent: sick / parental / unpaid days in the window > half of the window's working days.
+    - long_absent: days of `long_types` (KPI-056 only) in the window > half of the window's working days.
     Returns dicts with entitlement, taken, one_year_date, long_absent, birth_known."""
     hpd = float(params.get("hours_per_day", 9))
     w_end, p = _emp_where(scope, date_from=":pe", date_to=":pe")
@@ -378,13 +396,13 @@ def _annual_leave_population(db: Session, scope: Scope, ps: date, pe: date, para
              " + 1)::numeric / (l.end_date - l.start_date + 1)) h FROM leave_records l "
              "JOIN employment_relationships x ON x.id = l.employment_id JOIN svc ON svc.person_id = x.person_id "
              "AND svc.legal_entity_id = x.legal_entity_id WHERE l.tenant_id = :tenant AND l.start_date <= :pe "
-             "AND l.end_date >= :ps AND l.leave_type IN ('annual', 'sick', 'parental', 'unpaid') GROUP BY 1, 2) "
+             "AND l.end_date >= :ps AND l.leave_type = ANY(:types) GROUP BY 1, 2) "
              "SELECT svc.service_days, svc.birth, "
              "coalesce(sum(lv.h) FILTER (WHERE lv.leave_type = 'annual'), 0), "
              "coalesce(sum(lv.h) FILTER (WHERE lv.leave_type <> 'annual'), 0) "
              "FROM svc LEFT JOIN lv ON lv.person_id = svc.person_id WHERE svc.service_days >= 365 "
              "GROUP BY svc.person_id, svc.service_days, svc.birth"),
-        {**p, "ps": ps, "pe": pe},
+        {**p, "ps": ps, "pe": pe, "types": ["annual", *[t for t in long_types if t != "annual"]]},
     ).all()
     window_days = (pe - ps).days + 1
     half_working_days = window_days * 5 / 7 / 2
@@ -421,17 +439,25 @@ def annual_leave_usage(db: Session, scope: Scope, ps: date, pe: date, params: di
     return res
 
 
+# KPI-056 versions without the long_absence_types parameter keep their original list (historical semantics); the
+# catalog's current version carries app.models.LONG_ABSENCE_TYPES explicitly (adds work_injury, ADR-019).
+_LEGACY_LONG_ABSENCE = ("sick", "parental", "unpaid")
+
+
 def annual_leave_nonuse(db: Session, scope: Scope, ps: date, pe: date, params: dict) -> CalcResult:
     """KPI-056 (decision D-7): eligible persons with no annual leave taken in the period / eligible persons x 100.
-    Population: one-year date on/before period start, excluding persons on long sick/parental/unpaid absence
-    (reported only as a count). Early-warning indicator at team level - never used to rank individuals."""
-    full = _annual_leave_population(db, scope, ps, pe, params)
+    Population: one-year date on/before period start, excluding persons on long absence of params.long_absence_types
+    (sick/parental/unpaid/work_injury; reported only as a count) - an injured person is not "not taking leave"
+    (WP-1 example 3). Early-warning indicator at team level - never used to rank individuals."""
+    long_types = tuple(params.get("long_absence_types", _LEGACY_LONG_ABSENCE))
+    full = _annual_leave_population(db, scope, ps, pe, params, long_types)
     long_absent = sum(1 for x in full if x["one_year_date"] <= ps and x["long_absent"])
     pop = [x for x in full if x["one_year_date"] <= ps and not x["long_absent"]]
     res = ratio(sum(1 for x in pop if x["taken"] <= 0), len(pop), sample_size=len(pop), min_sample=_min_group(),
                 has_source_data=bool(pop))
     res.quality_score = 100.0 if pop else 0.0
-    res.lineage = _annual_leave_lineage(pop, params, excluded_long_absence=long_absent)
+    res.lineage = _annual_leave_lineage(pop, params, excluded_long_absence=long_absent,
+                                        long_absence_types=list(long_types))
     if ((pe - ps).days + 1) < 360:
         res.note = "Meaningful on 12-month windows; shorter periods overstate non-use"
     return res

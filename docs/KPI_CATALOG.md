@@ -36,7 +36,7 @@ Ortak kurallar: payda 0 → `not_computable` (asla 0); kaynak veri yok → `insu
 | KPI-025 | Halefiyet Kapsama Oranı | Succession Coverage | % | neutral | draft | `—` | ISO 30414 |
 | KPI-026 | Kritik Pozisyon Doluluk Oranı | Critical Position Fill Rate | % | neutral | draft | `—` | — |
 | KPI-027 | Yedekleme Kapasitesi | Backup Capacity Ratio | ratio | neutral | draft | `—` | — |
-| KPI-028 | Hastalık Devamsızlık Oranı | Sickness Absence Rate | % | lower_better | active | `absenteeism_rate` | ISO 30414 |
+| KPI-028 | Hastalık Devamsızlık Oranı (iş kazası hariç) | Sickness Absence Rate (excl. work injury) | % | lower_better | active | `absenteeism_rate` | ISO 30414 |
 | KPI-029 | Geç Kalma Oranı | Late Arrival Rate | % | neutral | draft | `—` | — |
 | KPI-030 | Puantaj-Kart Uyumsuzluk Oranı | Timesheet-Badge Mismatch Rate | % | neutral | draft | `—` | — |
 | KPI-031 | Yıllık Fazla Mesai Limit Aşımı | Annual Overtime Cap Breaches | persons | neutral | draft | `—` | 4857 md. 41 |
@@ -102,12 +102,12 @@ Ortak kurallar: payda 0 → `not_computable` (asla 0); kaynak veri yok → `insu
 - **Pay:** Leave hours prorated to period for types in parameter absence_types
 - **Payda:** Planned hours on approved timesheets
 - **Amaç:** Track absenteeism rate
-- **Dahil:** Unexcused absence, sick-note days (raporlu), annual leave, unpaid leave, other leave
-- **Hariç:** Public holidays (not working days); parental/maternity leave (legally protected - pending HR confirmation)
+- **Dahil:** Unexcused absence, sick-note days (raporlu), work-injury / occupational-disease rest (work_injury - included explicitly pending product-owner decision PO-1), annual leave, unpaid leave, other leave
+- **Hariç:** Public holidays (not working days); parental/maternity and related protected leave (decision D-6)
 - **Veri kaynakları:** leave_records, timesheets · **Veri sahibi:** HR_MANAGER
 - **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
 - **Eşikler (hedef/uyarı/kritik):** 7 / 9 / 11
-- **Parametreler (v1):** `{'absence_types': ['unexcused', 'sick', 'annual', 'unpaid', 'other']}`
+- **Parametreler (v1):** `{'absence_types': ['unexcused', 'sick', 'work_injury', 'annual', 'unpaid', 'other'], 'excluded_types': ['public_holiday', 'parental']}`
 - **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE
 
 ### KPI-004 — İş Gücü Kapasite Kullanımı / Workforce Capacity Utilisation / Использование мощности персонала
@@ -376,18 +376,18 @@ Ortak kurallar: payda 0 → `not_computable` (asla 0); kaynak veri yok → `insu
 - **Parametreler (v1):** `{}`
 - **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE
 
-### KPI-028 — Hastalık Devamsızlık Oranı / Sickness Absence Rate / Уровень болезней
+### KPI-028 — Hastalık Devamsızlık Oranı (iş kazası hariç) / Sickness Absence Rate (excl. work injury) / Уровень болезней (без производственных травм)
 
 - **Formül:** Sick leave hours / planned hours x 100 (aggregate only)
 - **Pay:** Sick leave hours prorated to period
 - **Payda:** Planned hours on approved timesheets
-- **Amaç:** Track sickness absence rate
+- **Amaç:** Track sickness absence rate (excl. work injury)
 - **Dahil:** Leave type 'sick' only
-- **Hariç:** All other leave types
+- **Hariç:** Work-injury / occupational-disease rest (work_injury, SGK report codes 1/2 - WP-1, ADR-019) and all other leave types. Before ADR-019 work-injury rest was imported as 'sick'
 - **Veri kaynakları:** leave_records, timesheets · **Veri sahibi:** HR_MANAGER
 - **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
 - **Eşikler (hedef/uyarı/kritik):** 2.0 / 3.0 / 4.5
-- **Parametreler (v1):** `{'absence_types': ['sick']}`
+- **Parametreler (v1):** `{'absence_types': ['sick'], 'excluded_types': ['unexcused', 'work_injury', 'annual', 'unpaid', 'other', 'public_holiday', 'parental']}`
 - **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE
 
 ### KPI-032 — Gece Çalışması Oranı / Night Work Share / Доля ночной работы
@@ -467,11 +467,11 @@ Ortak kurallar: payda 0 → `not_computable` (asla 0); kaynak veri yok → `insu
 - **Payda:** Planned hours on approved timesheets
 - **Amaç:** Standard (unplanned) absenteeism, comparable with sector practice; complements the company KPI-003
 - **Dahil:** Unexcused absence, sick-note days
-- **Hariç:** Annual leave, unpaid leave, other leave, public holidays, maternity/parental and other protected leave
+- **Hariç:** Work-injury / occupational-disease rest (work_injury, SGK report codes 1/2 - WP-1, ADR-019; before ADR-019 imported as 'sick'), annual leave, unpaid leave, other leave, public holidays, maternity/parental and other protected leave
 - **Veri kaynakları:** leave_records, timesheets · **Veri sahibi:** HR_MANAGER
 - **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
 - **Eşikler (hedef/uyarı/kritik):** 2.5 / 3.5 / 5.0
-- **Parametreler (v1):** `{'absence_types': ['unexcused', 'sick']}`
+- **Parametreler (v1):** `{'absence_types': ['unexcused', 'sick'], 'excluded_types': ['work_injury', 'annual', 'unpaid', 'other', 'public_holiday', 'parental']}`
 - **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE
 
 ### KPI-054 — Korunan İzin Payı / Protected Leave Share / Доля охраняемых отпусков
@@ -509,9 +509,9 @@ Ortak kurallar: payda 0 → `not_computable` (asla 0); kaynak veri yok → `insu
 - **Payda:** Persons active at period end with >= 1 year tenure
 - **Amaç:** Early warning for workload / burnout at team level (decision D-7); never used to rank individuals
 - **Dahil:** Persons whose one-year date is on/before the period start
-- **Hariç:** Persons with < 1 year of service at period start; persons on long sick/parental/unpaid absence (> half of the window; reported as a count)
+- **Hariç:** Persons with < 1 year of service at period start; persons on long sick / parental / unpaid / work-injury absence (> half of the window; reported as a count - an injured person is not 'not taking leave', WP-1 example 3, ADR-019)
 - **Veri kaynakları:** leave_records, employment_relationships · **Veri sahibi:** HR_DIRECTOR
 - **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
 - **Eşikler (hedef/uyarı/kritik):** 5 / 10 / 15
-- **Parametreler (v1):** `{'hours_per_day': 9, 'threshold_min_days': 360}`
+- **Parametreler (v1):** `{'hours_per_day': 9, 'threshold_min_days': 360, 'long_absence_types': ['sick', 'parental', 'unpaid', 'work_injury']}`
 - **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE

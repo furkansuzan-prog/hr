@@ -10,6 +10,9 @@ from app.analytics.domain import OK, SHORT_WINDOW, SUPPRESSED, CalcResult, month
 from app.core.cache import cache
 from app.core.config import get_settings
 from app.models import (
+    LEAVE_RECLASSIFY_ACTION,
+    LEAVE_TYPES,
+    AuditLog,
     KpiCalculationRun,
     KpiDefinition,
     KpiFormulaVersion,
@@ -255,12 +258,39 @@ def _frozen_result(db, tenant_id, kpi, f, scope, ps, pe):
     num = lambda v: float(v) if v is not None else None  # noqa: E731
     lineage = dict(r.lineage or {})
     reason = lineage.pop(_PERSISTED_REASON, None)
+    note = "Closed period: frozen result" + (" (newer source data exists - reopen to recalculate)" if r.is_stale else "")
+    if r.is_stale and f.calculator_key in _LEAVE_CALCULATORS:
+        n = _reclassified_after_close(db, tenant_id, scope, ps, pe)
+        if n:
+            note += f"; {n} leave record(s) reclassified after closing"
     res = enforce_privacy(CalcResult(r.status, num(r.value), num(r.numerator), num(r.denominator), r.sample_size,
-                                     num(r.quality_score), r.breakdown or {}, lineage,
-                                     "Closed period: frozen result" + (" (newer source data exists - reopen to "
-                                                                      "recalculate)" if r.is_stale else ""),
-                                     reason))
+                                     num(r.quality_score), r.breakdown or {}, lineage, note, reason))
     return res, {"frozen": True, "is_stale": r.is_stale, "run_id": r.run_id}
+
+
+_LEAVE_CALCULATORS = {"absenteeism_rate", "protected_leave_share", "annual_leave_usage", "annual_leave_nonuse"}
+
+
+def _reclassified_after_close(db: Session, tenant_id: int, scope, ps: date, pe: date) -> int:
+    """WP-1 3.4 step 5 / ADR-019: a closed period keeps its frozen value; the view only says how many leave records
+    overlapping the period were reclassified after it was closed (a count - no person, type or date). Whole entities
+    of the scope only (audit rows carry no project; project-limited entities contribute nothing, ADR-017)."""
+    closed_at = db.execute(select(func.max(PeriodClose.closed_at)).where(
+        PeriodClose.tenant_id == tenant_id, PeriodClose.period_month.in_(month_starts(ps, pe)),
+        PeriodClose.status == "closed")).scalar()
+    if closed_at is None:
+        return 0
+    ents = None
+    if scope.entity_ids is not None:
+        ents = set(scope.entity_ids) - {e for e, _ in scope.project_limits}
+    n = 0
+    for (d,) in db.execute(select(AuditLog.details).where(
+            AuditLog.tenant_id == tenant_id, AuditLog.action == LEAVE_RECLASSIFY_ACTION, AuditLog.at > closed_at)):
+        d = d or {}
+        if (d.get("start_date", "9999") <= pe.isoformat() and d.get("end_date", "0000") >= ps.isoformat()
+                and (ents is None or d.get("legal_entity_id") in ents)):
+            n += 1
+    return n
 
 
 def _series_batch(db: Session, ctx: AccessContext, code: str, windows: list[tuple[date, date]], kw: dict):
@@ -417,11 +447,15 @@ def freeze_period(db: Session, ctx: AccessContext, period_month: date) -> int:
 
 
 # Allowed formula parameters per calculator (audit finding #7): unknown keys / wrong types are rejected.
-_LEAVE_TYPES = {"annual", "sick", "unpaid", "unexcused", "public_holiday", "parental", "other"}
+_LEAVE_TYPES = LEAVE_TYPES  # ADR-019: includes work_injury
 _EVENT_TYPES = {"fatality", "lost_time_injury", "restricted_work", "medical_treatment", "first_aid", "near_miss"}
 _TERM = {"voluntary", "employer_initiated", "contract_end", "project_end", "retirement", "death", "other", "unknown"}
 PARAM_RULES = {
     "absence_types": lambda v: isinstance(v, list) and v and set(v) <= _LEAVE_TYPES,
+    # ADR-019: every leave type is classified explicitly - absence_types + excluded_types must cover LEAVE_TYPES,
+    # so a new type can never drop out of an absence KPI silently (WP-1 2.2)
+    "excluded_types": lambda v: isinstance(v, list) and set(v) <= _LEAVE_TYPES and len(set(v)) == len(v),
+    "long_absence_types": lambda v: isinstance(v, list) and v and set(v) <= _LEAVE_TYPES - {"annual"},
     "annualize": lambda v: isinstance(v, bool),
     "min_coverage": lambda v: isinstance(v, int | float) and 0 < v <= 1,
     "multiplier": lambda v: v in (200_000, 1_000_000),
@@ -442,10 +476,10 @@ PARAM_RULES = {
 _ENGINE_PARAMS = {"annualize", "threshold_min_days"}
 CALCULATOR_PARAMS: dict[str, set[str]] = {
     "turnover_rate": {"exclude_categories", "include_categories"},
-    "absenteeism_rate": {"absence_types"},
+    "absenteeism_rate": {"absence_types", "excluded_types"},
     "protected_leave_share": {"absence_types"},
     "annual_leave_usage": {"hours_per_day"},
-    "annual_leave_nonuse": {"hours_per_day"},
+    "annual_leave_nonuse": {"hours_per_day", "long_absence_types"},
     "capacity_utilization": {"min_coverage"},
     "unit_labor_cost": {"reporting_currency"},
     "ltifr": {"event_types", "multiplier", "threshold_min_exposure_hours"},
@@ -466,6 +500,11 @@ def validate_parameters(params: dict, calculator_key: str | None = None) -> None
             raise KpiError(f"Formula parameter '{k}' is not used by calculator '{calculator_key}'")
         if not rule(v):
             raise KpiError(f"Invalid value for formula parameter '{k}'")
+    if "excluded_types" in params:
+        inc, exc = set(params.get("absence_types") or ()), set(params["excluded_types"])
+        if not inc or inc & exc or inc | exc != _LEAVE_TYPES:
+            raise KpiError("absence_types and excluded_types must be disjoint and together list every leave type ("
+                           + ", ".join(sorted(_LEAVE_TYPES)) + ")")
 
 
 def create_formula_version(db: Session, ctx: AccessContext, code: str, *, parameters: dict,
