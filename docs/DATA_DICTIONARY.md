@@ -357,6 +357,7 @@ Manual review queue for ambiguous identity matches during import (ADR-012).
 | created_by | BIGINT | ✓ |  |
 | coverage | JSON | ✓ |  |
 | dropped_columns | JSON | ✓ |  |
+| options | JSON | ✓ |  |
 | tenant_id | INTEGER |  | → tenants.id idx |
 | created_at | DATETIME |  |  |
 | updated_at | DATETIME |  |  |
@@ -979,6 +980,8 @@ Approved daily time record per employment and project. worked_hours = paid worki
 | night_hours | NUMERIC(5, 2) |  |  |
 | productive_hours | NUMERIC(5, 2) | ✓ |  |
 | status | VARCHAR(15) |  |  |
+| day_type | VARCHAR(20) | ✓ |  |
+| period_days | INTEGER |  |  |
 | tenant_id | INTEGER |  | → tenants.id idx |
 | created_at | DATETIME |  |  |
 | updated_at | DATETIME |  |  |
@@ -987,7 +990,7 @@ Approved daily time record per employment and project. worked_hours = paid worki
 | record_version | INTEGER |  |  |
 | updated_by | BIGINT | ✓ |  |
 
-Kısıtlar: ck_ts_nonneg, uq_timesheet_day
+Kısıtlar: uq_timesheet_day, ck_ts_period_days, ck_ts_nonneg
 
 ## `training_records`
 
