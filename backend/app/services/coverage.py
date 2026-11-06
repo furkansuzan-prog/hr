@@ -14,7 +14,7 @@ Ways a declaration is written:
 Every change writes an audit_logs row (action coverage.declare) in the same transaction and calls mark_stale_from
 (INTEGRATION_CONTRACTS section 5). A later declaration replaces the earlier one; the audit row keeps the history.
 """
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -36,7 +36,7 @@ from app.security.access import AccessContext
 
 EVENT_FEEDS = {"leave", "training", "safety"}  # an empty month is a valid, confirmable state (header-only file)
 # import entity_type -> feed type (ADR-021: the HSE case import feeds 'safety')
-IMPORT_FEEDS = {"employment": "employment", "leave": "leave", "safety_event": "safety"}
+IMPORT_FEEDS = {"employment": "employment", "leave": "leave", "safety_event": "safety", "timesheet": "timesheet"}
 SAFETY_ATTRIBUTES = set(SAFETY_COVERAGE_ATTRIBUTES)
 PLANNED_ON_LEAVE = {"included", "excluded", "unknown"}
 MAX_MONTHS = 60
@@ -217,6 +217,12 @@ def _row_cells(m: dict, ents: dict[str, int], today: date) -> set[tuple[int, dat
     if m.get("event_date"):  # HSE case (ADR-021): a single day
         sd = ed = date.fromisoformat(m["event_date"])
         return {(e, date(sd.year, sd.month, 1))} if e is not None else set()
+    if m.get("work_date"):  # timesheet (ADR-022): the day, or the span of a period row
+        if e is None:
+            return set()
+        sd = date.fromisoformat(m["work_date"])
+        ed = min(sd + timedelta(days=(m.get("period_days") or 1) - 1), today)
+        return {(e, mo) for mo in month_starts(sd, ed)}
     if e is None or not m.get("start_date"):
         return set()
     sd = date.fromisoformat(m["start_date"])

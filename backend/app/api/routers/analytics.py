@@ -321,6 +321,11 @@ async def import_upload(file: UploadFile = File(...), entity_type: str = Form("e
                         coverage: str | None = Form(None, description="Optional JSON coverage declaration (B-20): "
                                                     "period_start, period_end, legal_entity_codes, project_codes, "
                                                     "completeness, coverage_ratio, note"),
+                        mode: str | None = Form(None, description="timesheet only (ADR-022): 'skip' (default) keeps "
+                                                "stored rows; 'replace' corrects stored rows of open periods in place"),
+                        approved_source: bool | None = Form(None, description="timesheet only (ADR-022): the file "
+                                                            "contains approved rows only (needed when no status "
+                                                            "column is mapped; otherwise rows are stored as draft)"),
                         ctx: AccessContext = Depends(require("import.write")), db: Session = Depends(get_db)):
     limit = get_settings().max_upload_mb * 1024 * 1024
     buf = bytearray()
@@ -336,7 +341,7 @@ async def import_upload(file: UploadFile = File(...), entity_type: str = Form("e
         except ValueError:
             raise HTTPException(422, "coverage must be a JSON object") from None
     res = _imp(imp.upload, db, ctx, entity_type=entity_type, filename=file.filename or "upload", content=content,
-               coverage=decl)
+               coverage=decl, options={"mode": mode, "approved_source": approved_source})
     write_audit(tenant_id=ctx.tenant_id, user_id=ctx.user_id, action="import.upload", entity_type="import_batch",
                 entity_id=str(res["batch_id"]), details={"rows": res["total_rows"]})
     return res

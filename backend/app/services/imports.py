@@ -42,6 +42,7 @@ from app.security.access import AccessContext
 from app.security.auth import national_id_hash
 from app.services import coverage as cov
 from app.services import safety_import as sfi
+from app.services import timesheet_import as tsi
 from app.services.timekeeping import classify_leave
 
 log = logging.getLogger("hrswi.imports")
@@ -99,7 +100,9 @@ LEAVE_FIELDS = {
                                                  "номер документа", "номер больничного"]},
 }
 # ADR-021: HSE cases (one row = one affected person's outcome, no identity) - app.services.safety_import
-FIELD_SETS = {"employment": FIELDS, "leave": LEAVE_FIELDS, "safety_event": sfi.SAFETY_FIELDS}
+# ADR-022: timesheets (one row = one employee x day x project) - app.services.timesheet_import
+FIELD_SETS = {"employment": FIELDS, "leave": LEAVE_FIELDS, "safety_event": sfi.SAFETY_FIELDS,
+              "timesheet": tsi.TIMESHEET_FIELDS}
 LEAVE_HOURS_PER_DAY = 9  # 45 h / 5 days; work-pattern specific conversion is backlog B-28
 # KVKK md.6 (data minimisation): diagnosis / medical detail is never needed for workforce analytics. Columns that
 # look like it are dropped BEFORE anything is stored or echoed back.
@@ -194,7 +197,7 @@ def _coverage_decl(db: Session, ctx: AccessContext, entity_type: str, coverage: 
 
 
 def upload(db: Session, ctx: AccessContext, *, entity_type: str, filename: str, content: bytes,
-           coverage: dict | None = None) -> dict:
+           coverage: dict | None = None, options: dict | None = None) -> dict:
     if entity_type not in FIELD_SETS:
         raise ImportError_(f"Unsupported entity_type '{entity_type}' (use one of: {', '.join(FIELD_SETS)})")
     fields = FIELD_SETS[entity_type]
@@ -203,6 +206,14 @@ def upload(db: Session, ctx: AccessContext, *, entity_type: str, filename: str, 
         err.status_code = 403
         raise err
     decl = _coverage_decl(db, ctx, entity_type, coverage)
+    opts = None
+    if entity_type == "timesheet":
+        try:
+            opts = tsi.normalize_options(options)
+        except ValueError as e:
+            raise ImportError_(f"Invalid upload option: {e}") from None
+    elif options and any(v is not None for v in options.values()):
+        raise ImportError_("Upload options mode / approved_source are only for entity_type 'timesheet'")
     if len(content) > get_settings().max_upload_mb * 1024 * 1024:
         raise ImportError_("File too large")
     sha = hashlib.sha256(content).hexdigest()
@@ -230,6 +241,13 @@ def upload(db: Session, ctx: AccessContext, *, entity_type: str, filename: str, 
         if conflicts:
             raise ImportError_("Column(s) " + ", ".join(conflicts) + " match the prohibited-column list (identity, "
                                "health or free text) but are named like an import field; rename the column")
+    elif entity_type == "timesheet":
+        # KVKK md.4 (ADR-022): a timesheet needs the employee number only - name / national id / health dropped
+        dropped = tsi.prohibited_columns(headers)
+        conflicts = tsi.field_alias_conflicts(dropped)
+        if conflicts:
+            raise ImportError_("Column(s) " + ", ".join(conflicts) + " match the prohibited-column list (name, "
+                               "identity or health) but are named like an import field; rename the column")
     if dropped:
         headers = [h for h in headers if h not in dropped]
         rows = [{k: v for k, v in r.items() if k not in dropped} for r in rows]
@@ -238,7 +256,7 @@ def upload(db: Session, ctx: AccessContext, *, entity_type: str, filename: str, 
     _pseudonymise(rows, suggested.get("national_id"))
     batch = ImportBatch(tenant_id=ctx.tenant_id, entity_type=entity_type, file_name=filename[:255], file_sha256=sha,
                         status="uploaded", total_rows=len(rows), created_by=ctx.user_id,
-                        mapping=suggested, coverage=decl, dropped_columns=dropped or None)
+                        mapping=suggested, coverage=decl, dropped_columns=dropped or None, options=opts)
     db.add(batch)
     db.flush()
     chunk = get_settings().import_chunk_size
@@ -248,7 +266,7 @@ def upload(db: Session, ctx: AccessContext, *, entity_type: str, filename: str, 
     db.commit()
     return {"batch_id": batch.id, "headers": headers, "total_rows": len(rows), "suggested_mapping": batch.mapping,
             "required_fields": [f for f, m in fields.items() if m["required"]], "preview": rows[:20],
-            "entity_type": entity_type, "dropped_columns": dropped, "coverage": decl}
+            "entity_type": entity_type, "dropped_columns": dropped, "coverage": decl, "options": opts}
 
 
 _HMAC_PREFIX = "hmac:"
@@ -283,6 +301,8 @@ def validate(db: Session, ctx: AccessContext, batch_id: int, mapping: dict[str, 
         return _validate_leave(db, ctx, batch, mapping)
     if batch.entity_type == "safety_event":
         return sfi.validate(db, ctx, batch, mapping)
+    if batch.entity_type == "timesheet":
+        return tsi.validate(db, ctx, batch, mapping)
 
     import_scope = _import_scope(ctx)
     ents = {le.code: le for le in db.execute(select(LegalEntity).where(LegalEntity.tenant_id == ctx.tenant_id)).scalars()}
@@ -405,6 +425,7 @@ def commit(db: Session, ctx: AccessContext, batch_id: int, *, fail_after_rows: i
                     raise RuntimeError("simulated failure during commit")
                 d = (_commit_leave_row(db, ctx, r) if batch.entity_type == "leave"
                      else sfi.commit_row(db, ctx, r) if batch.entity_type == "safety_event"
+                     else tsi.commit_row(db, ctx, r) if batch.entity_type == "timesheet"
                      else _commit_row(db, ctx, batch, r, ents, projects, occs))
                 if d == "review":  # sent to manual identity review: not committed, not retried automatically
                     r.has_error = True
@@ -424,7 +445,7 @@ def commit(db: Session, ctx: AccessContext, batch_id: int, *, fail_after_rows: i
         batch.error_message = None
         _invalidate_from_committed(db, ctx, batch.id)
         cov.record_import(db, ctx, batch)  # B-20: coverage rows in the same transaction as the status change
-        if batch.entity_type == "safety_event":
+        if batch.entity_type in ("safety_event", "timesheet"):
             sfi.minimise_raw(db, batch)
         db.commit()
     except Exception as exc:
@@ -723,7 +744,7 @@ def _invalidate_from_committed(db: Session, ctx: AccessContext, batch_id: int) -
     dates = []
     for (m,) in db.execute(select(ImportStagingRow.mapped).where(ImportStagingRow.batch_id == batch_id,
                                                                  ImportStagingRow.committed.is_(True))):
-        for k in ("start_date", "end_date", "event_date"):
+        for k in ("start_date", "end_date", "event_date", "work_date"):
             if m and m.get(k):
                 dates.append(date.fromisoformat(m[k]))
     if dates:
@@ -816,7 +837,8 @@ def summary(db: Session, ctx: AccessContext, batch_id: int) -> dict:
             "total_rows": b.total_rows,
             "valid_rows": b.valid_rows, "error_rows": b.error_rows, "committed_rows": b.committed_rows,
             "identity_reviews": reviews, "attempt_count": b.attempt_count, "error_message": b.error_message,
-            "mapping": b.mapping, "coverage": b.coverage, "dropped_columns": b.dropped_columns or []}
+            "mapping": b.mapping, "coverage": b.coverage, "dropped_columns": b.dropped_columns or [],
+            "options": b.options}
 
 
 def error_report_csv(db: Session, ctx: AccessContext, batch_id: int) -> str:

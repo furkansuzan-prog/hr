@@ -66,8 +66,12 @@ class Timesheet(Base, TenantMixin, TimestampMixin, SourceMixin):
 
     __tablename__ = "timesheets"
     __table_args__ = (
-        UniqueConstraint("employment_id", "work_date", "project_id", name="uq_timesheet_day"),
+        # natural key of the timesheet import (WP-6 data 3.2.1); NULLS NOT DISTINCT (ADR-022): a row without a project
+        # is still one row per employment x day, so a re-import can never duplicate it
+        UniqueConstraint("employment_id", "work_date", "project_id", name="uq_timesheet_day",
+                         postgresql_nulls_not_distinct=True),
         CheckConstraint("worked_hours >= 0 AND overtime_hours >= 0 AND planned_hours >= 0", name="ck_ts_nonneg"),
+        CheckConstraint("period_days >= 1", name="ck_ts_period_days"),
         Index("ix_ts_tenant_date", "tenant_id", "work_date"),
     )
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -81,6 +85,18 @@ class Timesheet(Base, TenantMixin, TimestampMixin, SourceMixin):
     night_hours: Mapped[float] = mapped_column(Numeric(5, 2), default=0)
     productive_hours: Mapped[float | None] = mapped_column(Numeric(5, 2))
     status: Mapped[str] = mapped_column(String(15), default="approved")
+    # ADR-022 (WP-6 data 3.2.1): day type as given by the source (NULL = not supplied; TIMESHEET_DAY_TYPES) and the
+    # number of calendar days the row covers (1 = daily row; > 1 = period total starting at work_date)
+    day_type: Mapped[str | None] = mapped_column(String(20))
+    period_days: Mapped[int] = mapped_column(Integer, default=1, server_default=text("1"))
+
+
+# ADR-022: timesheet day types (validated in code, no DB CHECK - LEAVE_TYPES pattern). A 'leave' day never creates a
+# leave record (D-6 / WP-6 data 3.2.4); leave comes only from the leave feed.
+TIMESHEET_DAY_TYPES = ("work", "weekly_rest", "public_holiday", "leave", "unknown")
+TIMESHEET_STATUSES = ("approved", "draft")
+# audit_logs.action of an in-place timesheet correction by a re-import with mode = replace (ADR-022)
+TIMESHEET_CORRECT_ACTION = "timesheet.correct"
 
 
 class TimesheetMonthly(Base):

@@ -240,6 +240,9 @@ class ImportBatch(Base, TenantMixin, TimestampMixin):
     # ADR-021 / WP-6 HSE V17: NAMES of the columns dropped on upload as prohibited (identity, health, free text).
     # Values are never stored; a mapping that points at a dropped column is rejected (rename the column).
     dropped_columns: Mapped[list | None] = mapped_column(JSON)
+    # ADR-022: upload options of the batch (timesheet: mode skip|replace, approved_source) and validation findings
+    # that belong to the whole file (observed planned_on_leave_days profile). No row data.
+    options: Mapped[dict | None] = mapped_column(JSON)
 
 
 # B-20 / ADR-020 (docs/hr/data/WP-6 section 3.4): which feed is complete for which employer x month.
