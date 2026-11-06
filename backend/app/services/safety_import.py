@@ -180,6 +180,15 @@ def _has(toks: list[str], needle: str) -> bool:
     return False
 
 
+def _ascii_only_olum(label: str) -> bool:
+    """True when the only fatality evidence is an 'olum...' word written without 'ö' (e.g. OLUMLU, Olumlu)."""
+    raw = [w for w in (label or "").replace("İ", "i").replace("I", "ı").lower().split()]
+    words = [w.strip(".,;:()[]/-") for w in raw]
+    turkish = any(w.startswith("ölüm") or w in ("vefat",) for w in words)
+    other = any(_has(_tokens(label), n) for n in _CLASS_NEEDLES["fatality"] if n.endswith("*"))
+    return not turkish and not other and any(w.startswith("olum") for w in words)
+
+
 def classify(label: str, lost_days: int | None) -> tuple[str | None, str | None, list[str]]:
     """(event_type | None, error rule code | None, warning rule codes). No default class (3.4 rule 4)."""
     toks = _tokens(label)
@@ -193,6 +202,10 @@ def classify(label: str, lost_days: int | None) -> tuple[str | None, str | None,
         found.discard("medical_treatment")
     if len(found) > 1:
         return None, "classification_ambiguous", []
+    if found == {"fatality"} and _ascii_only_olum(label):
+        # 'olumlu' / 'olum' typed without Turkish letters folds onto 'ölümlü' / 'ölüm' but 'olumlu' means POSITIVE:
+        # never raise a fatality from an ASCII spelling - a person confirms it (error row, fix label or use code FAT)
+        return None, "fatality_label_ascii_ambiguous", []
     if found:
         return found.pop(), None, []
     if any(_has(toks, n) for n in _GENERIC_NEEDLES):
@@ -223,6 +236,8 @@ _CLASS_ERROR_MESSAGES = {
                                 "queue for the HSE specialist / workplace physician",
     "commuting_policy_required": "commuting / traffic accident: inclusion in the rates needs a policy decision (Q3, "
                                  "WP-3 OHS-10) -> kept in the queue",
+    "fatality_label_ascii_ambiguous": "'olum...' written without Turkish letters can mean 'olumlu' (positive) -> not "
+                                      "committed; write 'ölümlü' or use the code FAT to record a fatality",
     "out_of_scope_event": "not an injury or near miss (property damage, environmental, fire without injury) -> kept "
                           "in the queue for the HSE specialist",
 }

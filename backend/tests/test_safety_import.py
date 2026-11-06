@@ -686,3 +686,13 @@ def test_formula_parameter_whitelist_for_new_keys():
             validate_parameters({"required_feed_attributes": bad}, "near_miss_rate")
     with pytest.raises(KpiError):
         validate_parameters({"exclude_out_of_rate_cases": 1}, "ltifr")
+
+
+def test_ascii_olumlu_is_never_a_fatality():
+    """'olumlu' (= positive) typed without Turkish letters folds onto 'ölümlü'; it must not raise a fatality."""
+    from app.services.safety_import import classify
+
+    assert classify("OLUMLU", None) == (None, "fatality_label_ascii_ambiguous", [])
+    assert classify("Olumlu", None)[0] is None
+    assert classify("ÖLÜMLÜ", None)[0] == "fatality"
+    assert classify("FAT", None)[0] == "fatality"
