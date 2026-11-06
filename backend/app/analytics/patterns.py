@@ -16,7 +16,6 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import (
-    DEFAULT_HOURS_PER_DAY,
     Assignment,
     PublicHoliday,
     WorkPattern,
@@ -88,10 +87,6 @@ def day_weights(pattern: Pattern | None, holidays: Holidays | None, sd: date, ed
 
 def working_days(pattern: Pattern | None, holidays: Holidays | None, sd: date, ed: date) -> float:
     return round(sum(day_weights(pattern, holidays, sd, ed).values()), 2)
-
-
-def hours_per_day(pattern: Pattern | None) -> float:
-    return pattern.daily_hours if pattern else float(DEFAULT_HOURS_PER_DAY)
 
 
 class PatternResolver:

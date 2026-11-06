@@ -22,6 +22,7 @@ from app.analytics.engine import mark_stale_from
 from app.analytics.patterns import Holidays, PatternResolver, working_days
 from app.core.config import get_settings
 from app.models import (
+    DEFAULT_HOURS_PER_DAY,
     LEAVE_RECLASSIFY_ACTION,
     SICK_NOTE_FAMILY,
     Assignment,
@@ -125,7 +126,7 @@ LEAVE_FIELDS = {
 # ADR-024: work patterns (one row = a pattern definition and/or one assignment) - app.services.work_patterns
 FIELD_SETS = {"employment": FIELDS, "leave": LEAVE_FIELDS, "safety_event": sfi.SAFETY_FIELDS,
               "timesheet": tsi.TIMESHEET_FIELDS, "work_pattern": wps.WORK_PATTERN_FIELDS}
-LEAVE_HOURS_PER_DAY = 9  # fallback only: no known work pattern (45 h / 5 days; ADR-024 converts by pattern)
+LEAVE_HOURS_PER_DAY = DEFAULT_HOURS_PER_DAY  # fallback only: no known work pattern (ADR-024 converts by pattern)
 HOURS_DAYS_TOLERANCE = 0.10  # WP-4 section 8: |hours - days x daily hours| > 10 % -> hours_days_inconsistent
 _NO_AGREEMENT = {"-", "yok", "none", "no", "n/a", "kapsam dışı", "нет"}
 # KVKK md.6 (data minimisation): diagnosis / medical detail is never needed for workforce analytics. Columns that
