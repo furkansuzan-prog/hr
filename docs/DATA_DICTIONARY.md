@@ -356,6 +356,7 @@ Manual review queue for ambiguous identity matches during import (ADR-012).
 | error_message | TEXT | ✓ |  |
 | created_by | BIGINT | ✓ |  |
 | coverage | JSON | ✓ |  |
+| dropped_columns | JSON | ✓ |  |
 | tenant_id | INTEGER |  | → tenants.id idx |
 | created_at | DATETIME |  |  |
 | updated_at | DATETIME |  |  |
@@ -800,7 +801,7 @@ Kısıtlar:
 
 ## `safety_events`
 
-Event-level HSE record WITHOUT diagnosis or person identity (special-category data stays in the HSE system of record; only classification + lost days flow here).
+Case-level HSE record (ADR-021: one row = the outcome of ONE affected person, without identity) WITHOUT diagnosis, injury detail, free text or person identity - special-category data stays in the HSE system of record. Imported rows carry source_record_id = "<event_ref>#<case_no>" (re-import key, unique per source system).
 
 | Kolon | Tip | Null | Anahtar / FK |
 |---|---|---|---|
@@ -809,7 +810,17 @@ Event-level HSE record WITHOUT diagnosis or person identity (special-category da
 | project_id | INTEGER | ✓ | → projects.id |
 | event_date | DATE |  |  |
 | event_type | VARCHAR(30) |  |  |
-| lost_days | INTEGER |  |  |
+| lost_days | INTEGER | ✓ |  |
+| event_ref | VARCHAR(100) | ✓ |  |
+| case_no | INTEGER | ✓ |  |
+| worker_category | VARCHAR(30) | ✓ |  |
+| reported_date | DATE | ✓ |  |
+| restricted_days | INTEGER | ✓ |  |
+| case_status | VARCHAR(10) | ✓ |  |
+| sgk_notification | VARCHAR(20) | ✓ |  |
+| sgk_notification_date | DATE | ✓ |  |
+| high_consequence | BOOLEAN | ✓ |  |
+| reclassified_from_fatality | BOOLEAN |  |  |
 | tenant_id | INTEGER |  | → tenants.id idx |
 | created_at | DATETIME |  |  |
 | updated_at | DATETIME |  |  |

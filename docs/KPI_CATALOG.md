@@ -2,7 +2,7 @@
 
 # KPI Kataloğu / KPI Catalogue
 
-57 tanım; 32 aktif ve doğrulanmış. `draft` tanımlar üretimde hesaplanamaz (ADR-008). Standart referansları **gösterge niteliğinde eşleştirmedir, uyum iddiası değildir.**
+57 tanım; 33 aktif ve doğrulanmış. `draft` tanımlar üretimde hesaplanamaz (ADR-008). Standart referansları **gösterge niteliğinde eşleştirmedir, uyum iddiası değildir.**
 
 Ortak kurallar: payda 0 → `not_computable` (asla 0); kaynak veri yok → `insufficient_data`; kişi sayısı < `HRSWI_MIN_GROUP_SIZE` (5) → `suppressed`; her sonuç formül versiyonu, pay/payda, örneklem, veri kalite puanı ve veri kökeni (lineage) taşır.
 
@@ -51,7 +51,7 @@ Ortak kurallar: payda 0 → `not_computable` (asla 0); kaynak veri yok → `insu
 | KPI-040 | Zorunlu Eğitim Tamamlama Oranı | Mandatory Training Completion | % | neutral | draft | `—` | — |
 | KPI-041 | Süresi Dolan Sertifika Oranı | Expiring Certificates Share | % | neutral | draft | `—` | — |
 | KPI-042 | Eğitim Yatırımı / Çalışan | Training Spend per Employee | currency | neutral | draft | `—` | ISO 30414 |
-| KPI-043 | Ramak Kala Bildirim Oranı | Near-Miss Reporting Rate | per 200k h | neutral | draft | `—` | — |
+| KPI-043 | Ramak Kala Bildirim Oranı | Near-Miss Reporting Rate | per 200k h | neutral | active | `near_miss_rate` | ISO 45001 10.2 (context), 6331 md. 14 (to be confirmed) |
 | KPI-044 | Kayıp Gün Oranı | Lost Day Rate | per 200k h | neutral | draft | `—` | GRI 403-9 (2016 legacy) |
 | KPI-045 | İSG Eğitim Saati / Çalışan | HSE Training Hours per Employee | hours | neutral | draft | `—` | 6331 s. Kanun |
 | KPI-046 | Çalışan Bağlılık Skoru | Employee Engagement Score | score | neutral | draft | `—` | ISO 30414 |
@@ -241,13 +241,13 @@ Ortak kurallar: payda 0 → `not_computable` (asla 0); kaynak veri yok → `insu
 - **Formül:** (Lost-time injuries + fatalities) / hours worked x 1,000,000
 - **Pay:** LTI + fatality events
 - **Payda:** Hours worked (timesheets)
-- **Amaç:** Lost-time injury frequency. Colour only when hours worked in the window reach the minimum exposure (formula parameter threshold_min_exposure_hours); below it the value and event counts are shown without colour (status_reason low_exposure) - small scopes are never coloured, judge them at company/tenant level. Any fatality in scope surfaces an alert independent of the rate. The thresholds count as active only once KPI-043 (near-miss reporting rate) is active (HR Director section 3.3 rule 2; docs/hr/hse/WP-2). Minimum exposure: 1,000,000 h.
+- **Amaç:** Lost-time injury frequency. Colour only when hours worked in the window reach the minimum exposure (formula parameter threshold_min_exposure_hours); below it the value and event counts are shown without colour (status_reason low_exposure) - small scopes are never coloured, judge them at company/tenant level. Any fatality in scope surfaces an alert independent of the rate. The thresholds count as active only once KPI-043 (near-miss reporting rate) is active (HR Director section 3.3 rule 2; docs/hr/hse/WP-2). One safety_events row = one case (ADR-021); third-party cases and subcontractor / agency cases whose employer has no hours worked in the denominator that month are shown as out-of-rate cases, not counted in the rate (WP-6 HSE 3.7). Minimum exposure: 1,000,000 h.
 - **Dahil:** All records in scope and period
 - **Hariç:** None
 - **Veri kaynakları:** safety_events, timesheets · **Veri sahibi:** HSE_SPECIALIST
 - **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
 - **Eşikler (hedef/uyarı/kritik):** 1.5 / 3.0 / 5.0
-- **Parametreler (v1):** `{'multiplier': 1000000, 'threshold_min_exposure_hours': 1000000, 'required_feeds': ['timesheet', 'safety'], 'min_feed_coverage': 0.9}`
+- **Parametreler (v1):** `{'multiplier': 1000000, 'threshold_min_exposure_hours': 1000000, 'exclude_out_of_rate_cases': True, 'required_feeds': ['timesheet', 'safety'], 'min_feed_coverage': 0.9}`
 - **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE; coverage gate on feeds timesheet, safety (ADR-020): coverage below min_feed_coverage -> value without colour, status_reason low_coverage (warn) or insufficient_data (enforce, per HRSWI_COVERAGE_MODES)
 
 ### KPI-014B — Toplam Kaydedilebilir Olay Oranı (TRIR) / Total Recordable Incident Rate / TRIR
@@ -255,13 +255,13 @@ Ortak kurallar: payda 0 → `not_computable` (asla 0); kaynak veri yok → `insu
 - **Formül:** Recordable injuries (fatality, LTI, restricted work, medical treatment) / hours worked x 200,000
 - **Pay:** Recordable events
 - **Payda:** Hours worked
-- **Amaç:** Recordable injury frequency. Colour only when hours worked in the window reach the minimum exposure (formula parameter threshold_min_exposure_hours); below it the value and event counts are shown without colour (status_reason low_exposure) - small scopes are never coloured, judge them at company/tenant level. Any fatality in scope surfaces an alert independent of the rate. The thresholds count as active only once KPI-043 (near-miss reporting rate) is active (HR Director section 3.3 rule 2; docs/hr/hse/WP-2). Minimum exposure: 500,000 h (HR Director WP-2 Q2).
+- **Amaç:** Recordable injury frequency. Colour only when hours worked in the window reach the minimum exposure (formula parameter threshold_min_exposure_hours); below it the value and event counts are shown without colour (status_reason low_exposure) - small scopes are never coloured, judge them at company/tenant level. Any fatality in scope surfaces an alert independent of the rate. The thresholds count as active only once KPI-043 (near-miss reporting rate) is active (HR Director section 3.3 rule 2; docs/hr/hse/WP-2). One safety_events row = one case (ADR-021); third-party cases and subcontractor / agency cases whose employer has no hours worked in the denominator that month are shown as out-of-rate cases, not counted in the rate (WP-6 HSE 3.7). Minimum exposure: 500,000 h (HR Director WP-2 Q2).
 - **Dahil:** All records in scope and period
 - **Hariç:** None
 - **Veri kaynakları:** safety_events, timesheets · **Veri sahibi:** HSE_SPECIALIST
 - **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
 - **Eşikler (hedef/uyarı/kritik):** 1.0 / 2.0 / 3.5
-- **Parametreler (v1):** `{'multiplier': 200000, 'threshold_min_exposure_hours': 500000, 'required_feeds': ['timesheet', 'safety'], 'min_feed_coverage': 0.9}`
+- **Parametreler (v1):** `{'multiplier': 200000, 'threshold_min_exposure_hours': 500000, 'exclude_out_of_rate_cases': True, 'required_feeds': ['timesheet', 'safety'], 'min_feed_coverage': 0.9}`
 - **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE; coverage gate on feeds timesheet, safety (ADR-020): coverage below min_feed_coverage -> value without colour, status_reason low_coverage (warn) or insufficient_data (enforce, per HRSWI_COVERAGE_MODES)
 
 ### KPI-016 — Aktif Personel Sayısı / Active Headcount / Численность персонала
@@ -431,6 +431,20 @@ Ortak kurallar: payda 0 → `not_computable` (asla 0); kaynak veri yok → `insu
 - **Eşikler (hedef/uyarı/kritik):** 7 / 11 / 14
 - **Parametreler (v1):** `{'reporting_currency': 'TRY', 'required_feeds': ['cost'], 'min_feed_coverage': 0.8}`
 - **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE; coverage gate on feeds cost (ADR-020): coverage below min_feed_coverage -> value without colour, status_reason low_coverage (warn) or insufficient_data (enforce, per HRSWI_COVERAGE_MODES)
+
+### KPI-043 — Ramak Kala Bildirim Oranı / Near-Miss Reporting Rate / Частота сообщений о почти-происшествиях
+
+- **Formül:** Near-miss reports / hours worked x 200,000
+- **Pay:** Safety cases classified near_miss with event_date in the window (one row per report, de-duplicated by the import key source_system + event_ref + case_no)
+- **Payda:** Hours worked on approved timesheets in the same scope (same denominator as KPI-014A/B)
+- **Amaç:** Context for KPI-014A/B and input of the reporting-quality signals - NEVER a target, quota or bonus basis (lower_better punishes reporting, higher_better becomes a quota). Direction neutral, no thresholds. Below 200,000 h the value carries the 'low exposure' label. Reporter identity is not collected; no person / team / foreman breakdown.
+- **Dahil:** Near misses reported to the HSE system (6331 md. 14(1)(b) to be confirmed)
+- **Hariç:** Unsafe condition / unsafe act observations (HR Director WP-2 Q6); injuries; scopes whose safety coverage declares includes_near_miss = false (not covered - not a real zero)
+- **Veri kaynakları:** safety_events, timesheets · **Veri sahibi:** HSE_SPECIALIST
+- **Sıklık / kapsam:** monthly · tenant, legal_entity, project, occupation_group
+- **Eşikler (hedef/uyarı/kritik):** None / None / None
+- **Parametreler (v1):** `{'multiplier': 200000, 'threshold_min_exposure_hours': 200000, 'required_feeds': ['timesheet', 'safety'], 'min_feed_coverage': 0.9, 'required_feed_attributes': {'safety': {'includes_near_miss': True}}}`
+- **Eksik veri:** insufficient_data when source rows absent; not_computable when denominator = 0; suppressed when population < HRSWI_MIN_GROUP_SIZE; coverage gate on feeds timesheet, safety (ADR-020): coverage below min_feed_coverage -> value without colour, status_reason low_coverage (warn) or insufficient_data (enforce, per HRSWI_COVERAGE_MODES)
 
 ### KPI-048 — Kadın Çalışan Oranı / Female Employee Share / Доля женщин
 
