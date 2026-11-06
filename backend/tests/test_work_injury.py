@@ -49,7 +49,7 @@ from app.security.access import AccessContext
 from app.seed.reference import sync_kpi_catalog
 from app.services import imports
 from app.services.timekeeping import classify_leave
-from tests.factories import declare_all_feeds
+from tests.factories import assign_default_pattern, declare_all_feeds
 
 D = date
 MONTHS = [D(2025, 3, 1), D(2025, 4, 1), D(2025, 5, 1), D(2025, 6, 1), D(2026, 3, 1)]
@@ -113,6 +113,9 @@ def winj(database):
         for e in wb[2:]:
             leave(e, "annual", D(2025, 7, 1), D(2025, 7, 1), 9)
         declare_all_feeds(db, t.id)  # ADR-020: every feed complete
+        # ADR-024: entity B needs a known work pattern for the leave-days KPI-056 version (5 x 9 h = same values, WP-4
+        # E2). Entity A stays without a pattern: example 2's import keeps the 9 h fallback (8 days x 9 = 72 h).
+        assign_default_pattern(db, t.id, [b.id])
         db.commit()
         yield {"tenant_id": t.id, "A": a.id, "B": b.id}
 

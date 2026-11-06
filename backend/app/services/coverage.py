@@ -194,16 +194,19 @@ def declare(db: Session, *, tenant_id: int, user_id: int | None, decl: dict, bas
 
 
 def declare_complete(db: Session, tenant_id: int, entity_ids, feeds, first_month: date, last_month: date, *,
-                     note: str, user_id: int | None = None, invalidate: bool = True) -> int:
+                     note: str, user_id: int | None = None, invalidate: bool = True,
+                     planned_on_leave_days: str | None = None) -> int:
     """Bulk 'complete' declaration (demo seed, test factories, onboarding of a tenant whose history is known to be
-    complete). Existing declarations are replaced like any other declaration (audited)."""
+    complete). Existing declarations are replaced like any other declaration (audited). planned_on_leave_days applies
+    to the timesheet feed only (WP-4 3.5; 'included' = planned hours are written on leave days, ADR-024)."""
     n = 0
     for feed in feeds:
         n += declare(db, tenant_id=tenant_id, user_id=user_id, basis="manual_declaration", invalidate=False, decl={
             "feed_type": feed, "period_start": date(first_month.year, first_month.month, 1).isoformat(),
             "period_end": month_end(last_month).isoformat(), "legal_entity_ids": sorted(entity_ids),
             "project_ids": [None], "completeness": "complete", "coverage_ratio": None, "confirmed_empty": False,
-            "attributes": None, "planned_on_leave_days": None, "note": note})
+            "attributes": None, "planned_on_leave_days": planned_on_leave_days if feed == "timesheet" else None,
+            "note": note})
     if invalidate:
         mark_stale_from(db, tenant_id, date(first_month.year, first_month.month, 1))
     return n

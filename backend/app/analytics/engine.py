@@ -30,8 +30,9 @@ from app.security.access import AccessContext
 
 # bump whenever calculator output semantics or privacy post-processing change: old cache entries become unreachable
 # v3: CalcResult.status_reason (ADR-018); v4: data-feed coverage gate (ADR-020); v5: case-level safety rates,
-# out-of-rate cases, fatality alert categories / reclassification marker, required_feed_attributes (ADR-021)
-CACHE_SCHEMA = "v5"
+# out-of-rate cases, fatality alert categories / reclassification marker, required_feed_attributes (ADR-021);
+# v6: work patterns - leave-days KPI-055/056, planned-capacity absence denominator (ADR-024)
+CACHE_SCHEMA = "v6"
 
 
 class KpiError(Exception):
@@ -521,6 +522,13 @@ PARAM_RULES = {
     # WP-5 review condition 4: breakdown of counted separations with these stored SGK exit codes (23 / 25)
     "voluntary_just_cause_codes": lambda v: isinstance(v, list) and bool(v) and all(
         isinstance(x, str) and len(x) == 2 and x.isdigit() for x in v),
+    # ADR-024 / WP-4 3.4: KPI-055/056 count leave DAYS by work pattern (hours_per_day = fallback divisor only)
+    "day_basis": lambda v: v == "leave_days",
+    # WP-4 review condition 1 / S-1: share of the eligible population with a known work pattern (NOT min_coverage,
+    # which is KPI-004's productive-hours coverage)
+    "min_pattern_coverage": lambda v: isinstance(v, int | float) and not isinstance(v, bool) and 0 < v <= 1,
+    # WP-4 3.5 + review condition 2: planned_hours (v1) | planned_capacity (leave hours added back per employee-day)
+    "denominator_basis": lambda v: v in ("planned_hours", "planned_capacity"),
 }
 
 
@@ -530,10 +538,10 @@ _ENGINE_PARAMS = {"annualize", "threshold_min_days", "required_feeds", "min_feed
 CALCULATOR_PARAMS: dict[str, set[str]] = {
     "turnover_rate": {"exclude_categories", "include_categories", "unknown_share_bands", "low_information_share",
                       "voluntary_just_cause_codes"},
-    "absenteeism_rate": {"absence_types", "excluded_types"},
-    "protected_leave_share": {"absence_types"},
-    "annual_leave_usage": {"hours_per_day"},
-    "annual_leave_nonuse": {"hours_per_day", "long_absence_types"},
+    "absenteeism_rate": {"absence_types", "excluded_types", "denominator_basis"},
+    "protected_leave_share": {"absence_types", "denominator_basis"},
+    "annual_leave_usage": {"hours_per_day", "day_basis", "min_pattern_coverage"},
+    "annual_leave_nonuse": {"hours_per_day", "long_absence_types", "day_basis", "min_pattern_coverage"},
     "capacity_utilization": {"min_coverage"},
     "unit_labor_cost": {"reporting_currency"},
     "ltifr": {"event_types", "multiplier", "threshold_min_exposure_hours", "exclude_out_of_rate_cases"},
@@ -597,6 +605,7 @@ def mark_stale_from(db: Session, tenant_id: int, from_date: date) -> int:
     db.info.pop("headcount_memo", None)
     db.info.pop("ts_dirty", None)
     db.info.pop("coverage_memo", None)
+    db.info.pop("holiday_memo", None)
     db.info.setdefault("warm_tenants", set()).add(tenant_id)  # app.services.prewarm runs after the commit
     res = db.execute(update(KpiResult).where(KpiResult.tenant_id == tenant_id, KpiResult.period_end >= from_date,
                                              KpiResult.is_stale.is_(False)).values(is_stale=True))
