@@ -39,7 +39,8 @@ def warm_tenant(tenant_id: int) -> dict:
             ctx = build_access_context(db, user)
             if not ctx.has("kpi.read"):
                 continue
-            k = (ctx.scope_signature("kpi.read"), ctx.scope_signature("cost.read"))  # incl. project limits
+            k = (ctx.scope_signature("kpi.read"), ctx.scope_signature("cost.read"),  # incl. project limits
+                 ctx.scope_signature("health.read"))  # D-12: part of the dashboard response key
             if k in seen:
                 continue
             seen.add(k)

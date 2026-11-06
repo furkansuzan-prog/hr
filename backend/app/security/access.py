@@ -14,6 +14,9 @@ Every service query that touches workforce data must filter with `entity_clause(
 engine, `scope_for(perms)` folded into `calculators.Scope`. `entity_filter(perm)` still returns the entity id set
 (project-limited entities included) for callers that only need entity-level decisions; it alone is NOT enough to
 filter workforce rows. Writes require whole-entity access: `covers_entity`.
+
+D-9 / ADR-025: with HRSWI_FEATURE_SUBCONTRACTORS off (default) there is no expansion through contractor relationships:
+a legal-entity assignment covers exactly that entity, so project_limits stay empty.
 """
 from dataclasses import dataclass, field
 from datetime import date
@@ -22,6 +25,7 @@ from sqlalchemy import and_, exists, or_, select
 from sqlalchemy.orm import Session
 
 from app.models import Assignment, ContractorRelationship, LegalEntity, RolePermission, User, UserRoleAssignment
+from app.security.features import subcontractors_enabled
 
 # entity_id -> allowed project ids (only for project-limited entities)
 ProjectLimits = dict[int, frozenset[int]]
@@ -191,6 +195,7 @@ def _shared_subcontractors(db: Session, tenant_id: int, roots: set[int], on: dat
 
 def build_access_context(db: Session, user: User, on: date | None = None) -> AccessContext:
     on = on or date.today()
+    expand = subcontractors_enabled()  # D-9: firm-based unless the subcontractor feature is on
     ctx = AccessContext(user_id=user.id, tenant_id=user.tenant_id, email=user.email, locale=user.locale)
     assignments = db.execute(
         select(UserRoleAssignment).where(
@@ -211,7 +216,8 @@ def build_access_context(db: Session, user: User, on: date | None = None) -> Acc
             ).scalar()
             if not ok:
                 continue
-            expanded = _shared_subcontractors(db, user.tenant_id, {a.legal_entity_id}, on)
+            expanded = (_shared_subcontractors(db, user.tenant_id, {a.legal_entity_id}, on) if expand
+                        else {a.legal_entity_id: None})
         for p in perms:
             if p in ctx.grants and ctx.grants[p] is None:
                 continue

@@ -18,6 +18,10 @@ class Settings(BaseModel):
     survey_min_group_size: int = int(os.getenv("HRSWI_SURVEY_MIN_GROUP_SIZE", "10"))
     forecast_min_points: int = int(os.getenv("HRSWI_FORECAST_MIN_POINTS", "12"))
     llm_enabled: bool = os.getenv("HRSWI_LLM_ENABLED", "false").lower() == "true"
+    # D-9 / ADR-025: the product is firm-based. The subcontractor feature (access expansion through contractor
+    # relationships, contractor-relationship management, contractor tree, subcontractor report / KPIs / screens) is
+    # kept in code but OFF unless this flag is true.
+    feature_subcontractors: bool = os.getenv("HRSWI_FEATURE_SUBCONTRACTORS", "false").lower() == "true"
     cors_origins: list[str] = os.getenv("HRSWI_CORS_ORIGINS", "http://localhost:3000").split(",")
     import_chunk_size: int = int(os.getenv("HRSWI_IMPORT_CHUNK_SIZE", "1000"))
     max_upload_mb: int = int(os.getenv("HRSWI_MAX_UPLOAD_MB", "50"))

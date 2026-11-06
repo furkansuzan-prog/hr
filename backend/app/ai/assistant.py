@@ -16,6 +16,8 @@ from app.analytics import engine
 from app.analytics.domain import pearson
 from app.models import AiAnalysisRun, ImprovementAction
 from app.security.access import AccessContext
+from app.security.deps import write_audit
+from app.security.features import subcontractors_enabled
 
 PROHIBITED = [
     # TR
@@ -91,6 +93,8 @@ def classify(q: str) -> str:
     if any(re.search(p, ql) for p in PROHIBITED):
         return "prohibited"
     for intent, pats in INTENTS:
+        if intent == "contractor_risk" and not subcontractors_enabled():
+            continue  # D-9 / ADR-025: no subcontractor analysis while the feature is off
         if any(re.search(p, ql) for p in pats):
             return intent
     return "unknown"
@@ -339,6 +343,9 @@ def handle(db: Session, ctx: AccessContext, question: str, as_of: date | None = 
         else:
             out["answer"] = T["unknown"][lang]
     except engine.ScopeDenied as e:
+        # denials are audited like every other authorisation denial (e.g. a health-derived KPI without health.read)
+        write_audit(tenant_id=ctx.tenant_id, user_id=ctx.user_id, action="authz.scope_denied", entity_type="assistant",
+                    entity_id=intent, outcome="denied", details={"reason": str(e)})
         out["answer"] = {"tr": "Bu analiz için yetkiniz yok.", "en": "You are not authorised for this analysis.",
                          "ru": "Нет прав на этот анализ."}[lang]
         out["refused"] = True

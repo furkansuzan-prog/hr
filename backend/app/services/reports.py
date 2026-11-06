@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.analytics import engine
 from app.security.access import AccessContext
+from app.security.features import missing_permissions, report_hidden
 
 REPORTS = {
     "monthly_hr_performance": {
@@ -35,7 +36,7 @@ PLANNED = ["daily_workforce_summary", "weekly_movements", "turnover_analysis", "
 
 def catalog(locale: str) -> list[dict]:
     out = [{"code": k, "name": v["name"].get(locale, v["name"]["en"]), "status": v["status"],
-            "formats": ["xlsx", "csv", "pdf"]} for k, v in REPORTS.items()]
+            "formats": ["xlsx", "csv", "pdf"]} for k, v in REPORTS.items() if not report_hidden(k)]
     out += [{"code": c, "name": c.replace("_", " ").title(), "status": "planned", "formats": []} for c in PLANNED]
     return out
 
@@ -43,18 +44,21 @@ def catalog(locale: str) -> list[dict]:
 def build(db: Session, ctx: AccessContext, code: str, ps: date, pe: date, *, entity_ids: set[int] | None = None,
           project_id: int | None = None) -> dict:
     spec = REPORTS.get(code)
-    if spec is None:
+    if spec is None or report_hidden(code):
         raise KeyError(code)
+
+    def missing(c: str) -> list[str]:  # cost.read for sensitive, health.read for health-derived KPIs (D-12)
+        return missing_permissions(ctx, engine.get_definition(db, c))
+
     kpis, skipped = [], []
     for c in spec["kpis"]:
-        d = engine.get_definition(db, c)
-        if d.sensitive and not ctx.has("cost.read"):
-            skipped.append({"code": c, "reason": "requires cost.read"})
+        if m := missing(c):
+            skipped.append({"code": c, "reason": "requires " + ", ".join(m)})
             continue
         kpis.append(engine.evaluate(db, ctx, c, ps, pe, entity_ids=entity_ids, project_id=project_id))
     entity_rows: dict[int, dict] = {}
     for c in spec["by_entity"]:
-        if engine.get_definition(db, c).sensitive and not ctx.has("cost.read"):
+        if missing(c):
             continue
         for r in engine.by_entity(db, ctx, c, ps, pe, project_id=project_id):
             le = r["legal_entity"]
@@ -82,8 +86,7 @@ def build(db: Session, ctx: AccessContext, code: str, ps: date, pe: date, *, ent
                   "quality_score": k["quality_score"], "formula_version": k["formula"]["version"], "note": k["note"]}
                  for k in kpis],
         "by_entity": list(entity_rows.values()),
-        "by_entity_columns": [c for c in spec["by_entity"] if not (engine.get_definition(db, c).sensitive
-                                                                    and not ctx.has("cost.read"))],
+        "by_entity_columns": [c for c in spec["by_entity"] if not missing(c)],
     }
 
 

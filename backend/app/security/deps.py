@@ -11,6 +11,7 @@ from app.core.logging import request_id_var
 from app.models import AuditLog, User
 from app.security.access import AccessContext, build_access_context
 from app.security.auth import decode_access_token
+from app.security.features import subcontractors_enabled
 
 _bearer = HTTPBearer(auto_error=False)
 
@@ -104,3 +105,24 @@ def deny_entity(ctx: AccessContext, request: Request, perm: str, entity_ids: set
         details={"path": request.url.path, "permission": perm},
     )
     raise HTTPException(status.HTTP_403_FORBIDDEN, "Requested legal entity is outside your access scope")
+
+
+def require_subcontractor_feature() -> None:
+    """D-9 / ADR-025: subcontractor endpoints do not exist while HRSWI_FEATURE_SUBCONTRACTORS is off (404, not 403:
+    nothing to authorise)."""
+    if not subcontractors_enabled():
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Not Found")
+
+
+def deny_kpi_permission(ctx: AccessContext, request: Request | None, code: str, missing: list[str]) -> None:
+    """Audited 403 for a KPI whose extra permission (cost.read / health.read) the caller lacks."""
+    write_audit(
+        tenant_id=ctx.tenant_id,
+        user_id=ctx.user_id,
+        action="authz.denied",
+        entity_type="kpi",
+        entity_id=code,
+        outcome="denied",
+        details={"path": request.url.path if request else None, "missing": missing},
+    )
+    raise HTTPException(status.HTTP_403_FORBIDDEN, f"Missing permission {', '.join(missing)} for {code}")
