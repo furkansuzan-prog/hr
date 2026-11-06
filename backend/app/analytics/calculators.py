@@ -749,18 +749,56 @@ def _safety_where(scope: Scope, p: dict) -> str:
     return where
 
 
+# ADR-021 / WP-6 HSE 3.7: cases of these categories enter a rate only when their employer contributes hours worked
+# to the denominator in that month; third-party cases never do (no hours in the denominator).
+_HOURS_DEPENDENT_CATEGORIES = ("subcontractor_worker", "temporary_agency_worker")
+
+
+def _entity_months_with_hours(db: Session, scope: Scope, ps: date, pe: date) -> set[tuple[int, date]]:
+    """(legal entity, month) cells that have approved hours worked > 0 inside the scope (same filters as _hours)."""
+    where, p = _emp_where(replace(scope, project_id=None), date_from=":ps", date_to=":pe", row_project="t.project_id")
+    proj = ""
+    if scope.project_id:
+        proj = " AND t.project_id = :project"
+        p["project"] = scope.project_id
+    rows = db.execute(text(
+        "SELECT e.legal_entity_id, CAST(date_trunc('month', t.work_date) AS date) FROM timesheets t "
+        "JOIN employment_relationships e ON e.id = t.employment_id WHERE t.tenant_id = :tenant "
+        f"AND t.status = 'approved' AND t.work_date BETWEEN :ps AND :pe {where}{proj} "
+        "GROUP BY 1, 2 HAVING sum(t.worked_hours) > 0"), {**p, "ps": ps, "pe": pe}).all()
+    return {(r[0], r[1]) for r in rows}
+
+
 def _safety_rate(db: Session, scope: Scope, ps: date, pe: date, types: list[str], multiplier: float,
-                 min_exposure_hours: float | None = None) -> CalcResult:
+                 min_exposure_hours: float | None = None, exclude_out_of_rate: bool = False) -> CalcResult:
     """WP-2 R1: the rate is always computed; when the hours worked in the window are below `min_exposure_hours`
-    the result carries status_reason = low_exposure and the engine gives it no colour (equality = coloured)."""
+    the result carries status_reason = low_exposure and the engine gives it no colour (equality = coloured).
+    `exclude_out_of_rate` (ADR-021, WP-6 HSE 3.7): numerator and denominator from the same population - third-party
+    cases and subcontractor / agency cases whose employer has no hours worked in the scope that month are left out of
+    the rate and reported as out-of-rate case counts (they still count in the fatality alert). One row = one case."""
     if scope.occupation_group:
         return CalcResult(INSUFFICIENT, quality_score=0.0, lineage={"tables": ["safety_events"]},
                           note="Safety events are not recorded per occupation; rate not available for an occupation filter")
     p: dict = {"tenant": scope.tenant_id, "ps": ps, "pe": pe, "types": types}
     where = _safety_where(scope, p)
-    rows = dict(db.execute(
-        text("SELECT event_type, count(*) FROM safety_events WHERE tenant_id = :tenant "
-             f"AND event_date BETWEEN :ps AND :pe AND event_type = ANY(:types) {where} GROUP BY 1"), p).all())
+    cases = db.execute(
+        text("SELECT event_type, worker_category, legal_entity_id, CAST(date_trunc('month', event_date) AS date), "
+             "count(*) FROM safety_events WHERE tenant_id = :tenant "
+             f"AND event_date BETWEEN :ps AND :pe AND event_type = ANY(:types) {where} GROUP BY 1, 2, 3, 4"), p).all()
+    rows: dict[str, int] = {}
+    out_of_rate = {"third_party": 0, "no_hours_in_denominator": 0}
+    with_hours = None
+    for et, cat, eid, month, n in cases:
+        if exclude_out_of_rate and cat == "third_party":
+            out_of_rate["third_party"] += n
+            continue
+        if exclude_out_of_rate and cat in _HOURS_DEPENDENT_CATEGORIES:
+            if with_hours is None:
+                with_hours = _entity_months_with_hours(db, scope, ps, pe)
+            if (eid, month) not in with_hours:
+                out_of_rate["no_hours_in_denominator"] += n
+                continue
+        rows[et] = rows.get(et, 0) + int(n)
     n = sum(rows.values())
     h = _hours(db, scope, ps, pe)
     res = ratio(n, h["worked"], scale=multiplier, has_source_data=h["rows"] > 0, sample_size=h["persons"],
@@ -768,40 +806,76 @@ def _safety_rate(db: Session, scope: Scope, ps: date, pe: date, types: list[str]
     res.breakdown = {"events_by_type": rows, "hours_worked": round(h["worked"], 1), "multiplier": multiplier}
     res.quality_score = 100.0 if h["rows"] else 0.0
     res.lineage = {"tables": ["safety_events", "timesheets"], "event_types_counted": types}
+    excluded = sum(out_of_rate.values())
+    if exclude_out_of_rate and excluded:
+        res.breakdown["out_of_rate_cases"] = out_of_rate
+        res.note = (f"Out-of-rate cases: {excluded} (third party {out_of_rate['third_party']}, employer without hours "
+                    f"worked in the denominator {out_of_rate['no_hours_in_denominator']}) - not in the rate, still in "
+                    "the fatality alert")
     if res.status == OK and min_exposure_hours is not None and h["worked"] < min_exposure_hours:
         res.status_reason = LOW_EXPOSURE
-        res.note = (f"Low exposure: {h['worked']:,.0f} h worked < {min_exposure_hours:,.0f} h minimum - value shown "
-                    f"with event counts, no colour")
+        low = (f"Low exposure: {h['worked']:,.0f} h worked < {min_exposure_hours:,.0f} h minimum - value shown "
+               f"with event counts, no colour")
+        res.note = f"{low}; {res.note}" if res.note else low
     return res
 
 
 def ltifr(db: Session, scope: Scope, ps: date, pe: date, params: dict) -> CalcResult:
     """KPI-014A LTIFR: lost-time injuries (incl. fatalities) per 1,000,000 hours worked."""
     return _safety_rate(db, scope, ps, pe, params.get("event_types", ["lost_time_injury", "fatality"]),
-                        params.get("multiplier", 1_000_000), params.get("threshold_min_exposure_hours"))
+                        params.get("multiplier", 1_000_000), params.get("threshold_min_exposure_hours"),
+                        params.get("exclude_out_of_rate_cases", False))
 
 
 def trir(db: Session, scope: Scope, ps: date, pe: date, params: dict) -> CalcResult:
     """KPI-014B TRIR: recordable injuries per 200,000 hours worked (OSHA convention)."""
     return _safety_rate(db, scope, ps, pe,
                         params.get("event_types", ["fatality", "lost_time_injury", "restricted_work", "medical_treatment"]),
-                        params.get("multiplier", 200_000), params.get("threshold_min_exposure_hours"))
+                        params.get("multiplier", 200_000), params.get("threshold_min_exposure_hours"),
+                        params.get("exclude_out_of_rate_cases", False))
+
+
+def near_miss_rate(db: Session, scope: Scope, ps: date, pe: date, params: dict) -> CalcResult:
+    """KPI-043 (WP-2 R3): near-miss reports per 200,000 hours worked - same denominator as KPI-014A/B, direction
+    neutral, no thresholds. Below the exposure minimum the value carries status_reason low_exposure ('low exposure'
+    label; there is no colour anyway). Near misses have no worker category, so nothing is out of rate."""
+    return _safety_rate(db, scope, ps, pe, ["near_miss"], params.get("multiplier", 200_000),
+                        params.get("threshold_min_exposure_hours"))
 
 
 def fatality_alerts(db: Session, scope: Scope, ps: date, pe: date) -> list[dict]:
-    """WP-2 R2 (ADR-018): any fatality in scope x window surfaces an alert, independent of the rate - of its
-    exposure rule, small-group suppression, the occupation filter (events are not per occupation, so the filter is
-    ignored here) and of the formula's event_types. Counts ALL fatality records in scope. Group-level only: count and
-    month, never a person, description or day-level date. Not subject to minimum group size (HR Director WP-2 Q7)."""
+    """WP-2 R2 (ADR-018, ADR-021): any fatality in scope x window surfaces an alert, independent of the rate - of
+    its exposure rule, small-group suppression, the occupation filter (events are not per occupation, so the filter
+    is ignored here), the coverage gate and the formula's event_types. Counts ALL fatality records in scope, every
+    worker category included (third party, subcontractor without hours). Group-level only: count, month and - when
+    the cases carry one - the worker category; never a person, description or day-level date. Not subject to
+    minimum group size (HR Director WP-2 Q7). A fatality later reclassified to another class leaves a
+    'fatality_reclassified' alert in every window that contains it (WP-2 R2.5, example L). Scope = the reader's
+    authorised scope (subcontractor fatalities without a data-sharing grant are NOT shown - PO-3 open)."""
     p: dict = {"tenant": scope.tenant_id, "ps": ps, "pe": pe}
     where = _safety_where(scope, p)
     rows = db.execute(
-        text("SELECT to_char(event_date, 'YYYY-MM'), count(*) FROM safety_events WHERE tenant_id = :tenant "
-             f"AND event_date BETWEEN :ps AND :pe AND event_type = 'fatality' {where} GROUP BY 1 ORDER BY 1"), p).all()
-    n = sum(int(r[1]) for r in rows)
-    if not n:
-        return []
-    return [{"type": "fatality", "count": n, "by_month": {r[0]: int(r[1]) for r in rows}}]
+        text("SELECT to_char(event_date, 'YYYY-MM'), worker_category, event_type, count(*) FROM safety_events "
+             "WHERE tenant_id = :tenant AND event_date BETWEEN :ps AND :pe "
+             f"AND (event_type = 'fatality' OR reclassified_from_fatality) {where} GROUP BY 1, 2, 3 ORDER BY 1"),
+        p).all()
+    out = []
+    for kind, fatal in (("fatality", True), ("fatality_reclassified", False)):
+        sel = [r for r in rows if (r[2] == "fatality") == fatal]
+        n = sum(int(r[3]) for r in sel)
+        if not n:
+            continue
+        by_month: dict[str, int] = {}
+        for r in sel:
+            by_month[r[0]] = by_month.get(r[0], 0) + int(r[3])
+        alert = {"type": kind, "count": n, "by_month": by_month}
+        if fatal and any(r[1] for r in sel):  # legacy rows have no category: the breakdown is added only with data
+            cats: dict[str, int] = {}
+            for r in sel:
+                cats[r[1] or "unknown"] = cats.get(r[1] or "unknown", 0) + int(r[3])
+            alert["by_worker_category"] = dict(sorted(cats.items()))
+        out.append(alert)
+    return out
 
 
 # Calculators whose results carry rate-independent alerts (engine.evaluate; never frozen, never suppressed).
@@ -1062,6 +1136,7 @@ CALCULATORS: dict[str, Callable[[Session, Scope, date, date, dict], CalcResult]]
     "rework_rate": rework_rate,
     "ltifr": ltifr,
     "trir": trir,
+    "near_miss_rate": near_miss_rate,
     "active_headcount": active_headcount,
     "new_hire_count": new_hire_count,
     "early_turnover_90": early_turnover_90,

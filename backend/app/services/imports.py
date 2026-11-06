@@ -41,6 +41,7 @@ from app.models.people import TERMINATION_CATEGORIES
 from app.security.access import AccessContext
 from app.security.auth import national_id_hash
 from app.services import coverage as cov
+from app.services import safety_import as sfi
 from app.services.timekeeping import classify_leave
 
 log = logging.getLogger("hrswi.imports")
@@ -97,7 +98,8 @@ LEAVE_FIELDS = {
                                                  "record id", "report number", "leave id", "document number",
                                                  "номер документа", "номер больничного"]},
 }
-FIELD_SETS = {"employment": FIELDS, "leave": LEAVE_FIELDS}
+# ADR-021: HSE cases (one row = one affected person's outcome, no identity) - app.services.safety_import
+FIELD_SETS = {"employment": FIELDS, "leave": LEAVE_FIELDS, "safety_event": sfi.SAFETY_FIELDS}
 LEAVE_HOURS_PER_DAY = 9  # 45 h / 5 days; work-pattern specific conversion is backlog B-28
 # KVKK md.6 (data minimisation): diagnosis / medical detail is never needed for workforce analytics. Columns that
 # look like it are dropped BEFORE anything is stored or echoed back.
@@ -196,6 +198,10 @@ def upload(db: Session, ctx: AccessContext, *, entity_type: str, filename: str, 
     if entity_type not in FIELD_SETS:
         raise ImportError_(f"Unsupported entity_type '{entity_type}' (use one of: {', '.join(FIELD_SETS)})")
     fields = FIELD_SETS[entity_type]
+    if entity_type == "safety_event" and not ctx.has("hse.read"):
+        err = ImportError_("HSE case imports require hse.read in addition to import.write")
+        err.status_code = 403
+        raise err
     decl = _coverage_decl(db, ctx, entity_type, coverage)
     if len(content) > get_settings().max_upload_mb * 1024 * 1024:
         raise ImportError_("File too large")
@@ -212,20 +218,27 @@ def upload(db: Session, ctx: AccessContext, *, entity_type: str, filename: str, 
     if not rows and not (cov.IMPORT_FEEDS[entity_type] in cov.EVENT_FEEDS and decl
                          and decl["completeness"] == "complete"):
         # WP-6 3.5 step 2: an empty month is confirmable only for event feeds and only as an explicit 'complete'
-        raise ImportError_("The file has no data rows. A header-only file is accepted only for event feeds (leave) "
-                           "with a coverage declaration 'complete' (confirms that there are no records)")
+        raise ImportError_("The file has no data rows. A header-only file is accepted only for event feeds (leave, "
+                           "safety_event) with a coverage declaration 'complete' (confirms that there are no records)")
     dropped: list[str] = []
     if entity_type == "leave":
         dropped = [h for h in headers if any(k in _norm(h) for k in _HEALTH_COLUMN_HINTS)]
-        if dropped:
-            headers = [h for h in headers if h not in dropped]
-            rows = [{k: v for k, v in r.items() if k not in dropped} for r in rows]
+    elif entity_type == "safety_event":
+        # KVKK md.4/6 (WP-6 HSE 3.9, V17): identity / health / free-text columns never reach storage
+        dropped = sfi.prohibited_columns(headers)
+        conflicts = sfi.field_alias_conflicts(dropped)
+        if conflicts:
+            raise ImportError_("Column(s) " + ", ".join(conflicts) + " match the prohibited-column list (identity, "
+                               "health or free text) but are named like an import field; rename the column")
+    if dropped:
+        headers = [h for h in headers if h not in dropped]
+        rows = [{k: v for k, v in r.items() if k not in dropped} for r in rows]
     suggested = suggest_mapping(headers, fields)
     # KVKK: identity numbers are pseudonymised BEFORE the raw row is persisted or echoed back in the preview
     _pseudonymise(rows, suggested.get("national_id"))
     batch = ImportBatch(tenant_id=ctx.tenant_id, entity_type=entity_type, file_name=filename[:255], file_sha256=sha,
                         status="uploaded", total_rows=len(rows), created_by=ctx.user_id,
-                        mapping=suggested, coverage=decl)
+                        mapping=suggested, coverage=decl, dropped_columns=dropped or None)
     db.add(batch)
     db.flush()
     chunk = get_settings().import_chunk_size
@@ -259,10 +272,17 @@ def validate(db: Session, ctx: AccessContext, batch_id: int, mapping: dict[str, 
     missing = [f for f, m in fields.items() if m["required"] and not mapping.get(f)]
     if missing:
         raise ImportError_(f"Mapping missing required fields: {', '.join(missing)}")
+    gone = sorted({v for v in mapping.values() if v and v in (batch.dropped_columns or [])})
+    if gone:  # WP-6 HSE review condition 4: never a silent drop of a mapped column
+        raise ImportError_("Mapped column(s) " + ", ".join(gone) + " were dropped on upload as prohibited (identity, "
+                           "health or free text) and were not stored; rename the column in the source file and upload "
+                           "again")
     batch.mapping = mapping
     db.query(DataQualityIssue).filter(DataQualityIssue.import_batch_id == batch.id).delete()
     if batch.entity_type == "leave":
         return _validate_leave(db, ctx, batch, mapping)
+    if batch.entity_type == "safety_event":
+        return sfi.validate(db, ctx, batch, mapping)
 
     import_scope = _import_scope(ctx)
     ents = {le.code: le for le in db.execute(select(LegalEntity).where(LegalEntity.tenant_id == ctx.tenant_id)).scalars()}
@@ -384,6 +404,7 @@ def commit(db: Session, ctx: AccessContext, batch_id: int, *, fail_after_rows: i
                 if fail_after_rows is not None and processed >= fail_after_rows:
                     raise RuntimeError("simulated failure during commit")
                 d = (_commit_leave_row(db, ctx, r) if batch.entity_type == "leave"
+                     else sfi.commit_row(db, ctx, r) if batch.entity_type == "safety_event"
                      else _commit_row(db, ctx, batch, r, ents, projects, occs))
                 if d == "review":  # sent to manual identity review: not committed, not retried automatically
                     r.has_error = True
@@ -403,6 +424,8 @@ def commit(db: Session, ctx: AccessContext, batch_id: int, *, fail_after_rows: i
         batch.error_message = None
         _invalidate_from_committed(db, ctx, batch.id)
         cov.record_import(db, ctx, batch)  # B-20: coverage rows in the same transaction as the status change
+        if batch.entity_type == "safety_event":
+            sfi.minimise_raw(db, batch)
         db.commit()
     except Exception as exc:
         db.rollback()
@@ -700,7 +723,7 @@ def _invalidate_from_committed(db: Session, ctx: AccessContext, batch_id: int) -
     dates = []
     for (m,) in db.execute(select(ImportStagingRow.mapped).where(ImportStagingRow.batch_id == batch_id,
                                                                  ImportStagingRow.committed.is_(True))):
-        for k in ("start_date", "end_date"):
+        for k in ("start_date", "end_date", "event_date"):
             if m and m.get(k):
                 dates.append(date.fromisoformat(m[k]))
     if dates:
@@ -779,7 +802,8 @@ def _batch(db: Session, ctx: AccessContext, batch_id: int) -> ImportBatch:
     b = db.get(ImportBatch, batch_id)
     # entity-scoped importers may only touch batches they created (audit finding #9)
     if b is None or b.tenant_id != ctx.tenant_id or (
-            ctx.entity_filter("import.write") is not None and b.created_by != ctx.user_id):
+            ctx.entity_filter("import.write") is not None and b.created_by != ctx.user_id) or (
+            b.entity_type == "safety_event" and not ctx.has("hse.read")):  # ADR-021: HSE batches need hse.read
         raise ImportError_("Batch not found")
     return b
 
@@ -792,7 +816,7 @@ def summary(db: Session, ctx: AccessContext, batch_id: int) -> dict:
             "total_rows": b.total_rows,
             "valid_rows": b.valid_rows, "error_rows": b.error_rows, "committed_rows": b.committed_rows,
             "identity_reviews": reviews, "attempt_count": b.attempt_count, "error_message": b.error_message,
-            "mapping": b.mapping, "coverage": b.coverage}
+            "mapping": b.mapping, "coverage": b.coverage, "dropped_columns": b.dropped_columns or []}
 
 
 def error_report_csv(db: Session, ctx: AccessContext, batch_id: int) -> str:

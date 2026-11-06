@@ -44,7 +44,9 @@ _SAFETY_PURPOSE = (
     "threshold_min_exposure_hours); below it the value and event counts are shown without colour (status_reason "
     "low_exposure) - small scopes are never coloured, judge them at company/tenant level. Any fatality in scope "
     "surfaces an alert independent of the rate. The thresholds count as active only once KPI-043 (near-miss "
-    "reporting rate) is active (HR Director section 3.3 rule 2; docs/hr/hse/WP-2)."
+    "reporting rate) is active (HR Director section 3.3 rule 2; docs/hr/hse/WP-2). One safety_events row = one case "
+    "(ADR-021); third-party cases and subcontractor / agency cases whose employer has no hours worked in the "
+    "denominator that month are shown as out-of-rate cases, not counted in the rate (WP-6 HSE 3.7)."
 )
 
 KPI_CATALOG: list[dict] = [
@@ -147,14 +149,31 @@ KPI_CATALOG: list[dict] = [
        num="LTI + fatality events", den="Hours worked (timesheets)", sources=["safety_events", "timesheets"],
        owner="HSE_SPECIALIST", standards=["ISO 45001 (context)", "GRI 403-9", "ESRS S1-14", "ISO 30414"],
        purpose="Lost-time injury frequency. " + _SAFETY_PURPOSE + " Minimum exposure: 1,000,000 h.",
-       params={"multiplier": 1_000_000, "threshold_min_exposure_hours": 1_000_000}),
+       params={"multiplier": 1_000_000, "threshold_min_exposure_hours": 1_000_000, "exclude_out_of_rate_cases": True}),
     _k("KPI-014B", "health_safety", "G", "Toplam Kaydedilebilir Olay Oranı (TRIR)", "Total Recordable Incident Rate",
        "TRIR", "per 200k h", "lower_better", "trir",
        formula="Recordable injuries (fatality, LTI, restricted work, medical treatment) / hours worked x 200,000",
        num="Recordable events", den="Hours worked", sources=["safety_events", "timesheets"], owner="HSE_SPECIALIST",
        standards=["GRI 403-9 (rate basis must be disclosed)"],
        purpose="Recordable injury frequency. " + _SAFETY_PURPOSE + " Minimum exposure: 500,000 h (HR Director WP-2 Q2).",
-       params={"multiplier": 200_000, "threshold_min_exposure_hours": 500_000}),
+       params={"multiplier": 200_000, "threshold_min_exposure_hours": 500_000, "exclude_out_of_rate_cases": True}),
+    # WP-2 R3 + HR Director Q3/Q6 (permanently neutral, no thresholds); wave-2 item 10, ADR-021
+    _k("KPI-043", "health_safety", "G", "Ramak Kala Bildirim Oranı", "Near-Miss Reporting Rate",
+       "Частота сообщений о почти-происшествиях", "per 200k h", "neutral", "near_miss_rate",
+       formula="Near-miss reports / hours worked x 200,000",
+       num="Safety cases classified near_miss with event_date in the window (one row per report, de-duplicated by "
+           "the import key source_system + event_ref + case_no)",
+       den="Hours worked on approved timesheets in the same scope (same denominator as KPI-014A/B)",
+       sources=["safety_events", "timesheets"], owner="HSE_SPECIALIST",
+       standards=["ISO 45001 10.2 (context)", "6331 md. 14 (to be confirmed)"],
+       purpose="Context for KPI-014A/B and input of the reporting-quality signals - NEVER a target, quota or bonus "
+               "basis (lower_better punishes reporting, higher_better becomes a quota). Direction neutral, no "
+               "thresholds. Below 200,000 h the value carries the 'low exposure' label. Reporter identity is not "
+               "collected; no person / team / foreman breakdown.",
+       incl="Near misses reported to the HSE system (6331 md. 14(1)(b) to be confirmed)",
+       excl="Unsafe condition / unsafe act observations (HR Director WP-2 Q6); injuries; scopes whose safety coverage "
+            "declares includes_near_miss = false (not covered - not a real zero)",
+       params={"multiplier": 200_000, "threshold_min_exposure_hours": 200_000}),
     _k("KPI-015", "sustainable_employment", "B", "Sürdürülebilir İstihdam Göstergeleri",
        "Sustainable Employment Indicator Family", "Показатели устойчивой занятости", "family", "neutral", None,
        formula="Indicator FAMILY (KPI-002, 008, 009, 014A/B, survey wellbeing, social protection) - not a single score",
@@ -268,7 +287,6 @@ _DRAFTS = [
     ("KPI-040", "development", "H", "Zorunlu Eğitim Tamamlama Oranı", "Mandatory Training Completion", "Выполнение обязательного обучения", "%", "Completed mandatory trainings / required x 100", []),
     ("KPI-041", "development", "H", "Süresi Dolan Sertifika Oranı", "Expiring Certificates Share", "Истекающие сертификаты", "%", "Certificates expiring in 60 days / valid certificates x 100", []),
     ("KPI-042", "development", "H", "Eğitim Yatırımı / Çalışan", "Training Spend per Employee", "Затраты на обучение на сотрудника", "currency", "Training cost / avg headcount", ["ISO 30414"]),
-    ("KPI-043", "health_safety", "G", "Ramak Kala Bildirim Oranı", "Near-Miss Reporting Rate", "Частота сообщений о почти-происшествиях", "per 200k h", "Near-miss reports / hours worked x 200,000 (higher can mean better reporting culture)", []),
     ("KPI-044", "health_safety", "G", "Kayıp Gün Oranı", "Lost Day Rate", "Коэффициент потерянных дней", "per 200k h", "Lost days / hours worked x 200,000", ["GRI 403-9 (2016 legacy)"]),
     ("KPI-045", "health_safety", "G", "İSG Eğitim Saati / Çalışan", "HSE Training Hours per Employee", "Часы обучения ОТ на сотрудника", "hours", "HSE category training hours / avg headcount", ["6331 s. Kanun"]),
     ("KPI-046", "wellbeing", "L", "Çalışan Bağlılık Skoru", "Employee Engagement Score", "Индекс вовлеченности", "score", "Mean engagement score from survey aggregates (n>=10)", ["ISO 30414"]),
@@ -364,7 +382,7 @@ REQUIRED_FEEDS: dict[str, tuple[str, ...]] = {
     **{c: ("timesheet", "leave") for c in ("KPI-003", "KPI-028", "KPI-053", "KPI-054")},
     **{c: ("employment", "leave") for c in ("KPI-055", "KPI-056")},
     **{c: ("timesheet",) for c in ("KPI-004", "KPI-007", "KPI-032")},
-    **{c: ("timesheet", "safety") for c in ("KPI-014A", "KPI-014B")},
+    **{c: ("timesheet", "safety") for c in ("KPI-014A", "KPI-014B", "KPI-043")},
     "KPI-008": ("employment", "training"),
     "KPI-019": ("cost", "employment"),  # denominator = average headcount
     "KPI-036": ("cost",),  # overtime cost / total cost - both from the cost feed
@@ -380,6 +398,11 @@ for _item in KPI_CATALOG:
         _item["missing_data_behavior"] += (
             f"; coverage gate on feeds {', '.join(_feeds)} (ADR-020): coverage below min_feed_coverage -> value without "
             "colour, status_reason low_coverage (warn) or insufficient_data (enforce, per HRSWI_COVERAGE_MODES)")
+# ADR-021 / WP-6 HSE 3.6: a safety declaration that says near misses are not included does not cover KPI-043
+REQUIRED_FEED_ATTRIBUTES = {"KPI-043": {"safety": {"includes_near_miss": True}}}
+for _item in KPI_CATALOG:
+    if _item["code"] in REQUIRED_FEED_ATTRIBUTES and _item["status"] == "active":
+        _item["formula"]["parameters"]["required_feed_attributes"] = REQUIRED_FEED_ATTRIBUTES[_item["code"]]
 
 
 FRAMEWORKS = [

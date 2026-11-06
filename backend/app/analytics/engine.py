@@ -14,6 +14,9 @@ from app.models import (
     FEED_TYPES,
     LEAVE_RECLASSIFY_ACTION,
     LEAVE_TYPES,
+    SAFETY_COVERAGE_ATTRIBUTES,
+    SAFETY_EVENT_TYPES,
+    SAFETY_RECLASSIFY_ACTION,
     AuditLog,
     KpiCalculationRun,
     KpiDefinition,
@@ -26,7 +29,9 @@ from app.models import (
 from app.security.access import AccessContext
 
 # bump whenever calculator output semantics or privacy post-processing change: old cache entries become unreachable
-CACHE_SCHEMA = "v4"  # v3: CalcResult.status_reason (ADR-018); v4: data-feed coverage gate (ADR-020)
+# v3: CalcResult.status_reason (ADR-018); v4: data-feed coverage gate (ADR-020); v5: case-level safety rates,
+# out-of-rate cases, fatality alert categories / reclassification marker, required_feed_attributes (ADR-021)
+CACHE_SCHEMA = "v5"
 
 
 class KpiError(Exception):
@@ -270,18 +275,25 @@ def _frozen_result(db, tenant_id, kpi, f, scope, ps, pe):
         n = _reclassified_after_close(db, tenant_id, scope, ps, pe)
         if n:
             note += f"; {n} leave record(s) reclassified after closing"
+    if r.is_stale and f.calculator_key in _SAFETY_CALCULATORS:
+        n = _reclassified_after_close(db, tenant_id, scope, ps, pe, action=SAFETY_RECLASSIFY_ACTION)
+        if n:
+            note += f"; {n} safety case(s) reclassified after closing"
     res = enforce_privacy(CalcResult(r.status, num(r.value), num(r.numerator), num(r.denominator), r.sample_size,
                                      num(r.quality_score), r.breakdown or {}, lineage, note, reason))
     return res, {"frozen": True, "is_stale": r.is_stale, "run_id": r.run_id}
 
 
 _LEAVE_CALCULATORS = {"absenteeism_rate", "protected_leave_share", "annual_leave_usage", "annual_leave_nonuse"}
+_SAFETY_CALCULATORS = {"ltifr", "trir", "near_miss_rate"}
 
 
-def _reclassified_after_close(db: Session, tenant_id: int, scope, ps: date, pe: date) -> int:
-    """WP-1 3.4 step 5 / ADR-019: a closed period keeps its frozen value; the view only says how many leave records
-    overlapping the period were reclassified after it was closed (a count - no person, type or date). Whole entities
-    of the scope only (audit rows carry no project; project-limited entities contribute nothing, ADR-017)."""
+def _reclassified_after_close(db: Session, tenant_id: int, scope, ps: date, pe: date,
+                              action: str = LEAVE_RECLASSIFY_ACTION) -> int:
+    """WP-1 3.4 step 5 / ADR-019 (leave), WP-6 HSE 4.3 / ADR-021 (safety cases): a closed period keeps its frozen
+    value; the view only says how many records overlapping the period were reclassified after it was closed (a count
+    - no person, type or date). Whole entities of the scope only (project-limited entities contribute nothing,
+    ADR-017). Safety audit rows carry event_date; leave rows start_date / end_date."""
     closed_at = db.execute(select(func.max(PeriodClose.closed_at)).where(
         PeriodClose.tenant_id == tenant_id, PeriodClose.period_month.in_(month_starts(ps, pe)),
         PeriodClose.status == "closed")).scalar()
@@ -292,9 +304,10 @@ def _reclassified_after_close(db: Session, tenant_id: int, scope, ps: date, pe: 
         ents = set(scope.entity_ids) - {e for e, _ in scope.project_limits}
     n = 0
     for (d,) in db.execute(select(AuditLog.details).where(
-            AuditLog.tenant_id == tenant_id, AuditLog.action == LEAVE_RECLASSIFY_ACTION, AuditLog.at > closed_at)):
+            AuditLog.tenant_id == tenant_id, AuditLog.action == action, AuditLog.at > closed_at)):
         d = d or {}
-        if (d.get("start_date", "9999") <= pe.isoformat() and d.get("end_date", "0000") >= ps.isoformat()
+        start, end = d.get("start_date") or d.get("event_date") or "9999", d.get("end_date") or d.get("event_date")
+        if (start <= pe.isoformat() and (end or "0000") >= ps.isoformat()
                 and (ents is None or d.get("legal_entity_id") in ents)):
             n += 1
     return n
@@ -462,7 +475,7 @@ def required_feeds_of_active_kpis(db: Session) -> set[str]:
 
 # Allowed formula parameters per calculator (audit finding #7): unknown keys / wrong types are rejected.
 _LEAVE_TYPES = LEAVE_TYPES  # ADR-019: includes work_injury
-_EVENT_TYPES = {"fatality", "lost_time_injury", "restricted_work", "medical_treatment", "first_aid", "near_miss"}
+_EVENT_TYPES = set(SAFETY_EVENT_TYPES)
 _TERM = {"voluntary", "employer_initiated", "contract_end", "project_end", "retirement", "death", "other", "unknown"}
 PARAM_RULES = {
     "absence_types": lambda v: isinstance(v, list) and v and set(v) <= _LEAVE_TYPES,
@@ -485,12 +498,20 @@ PARAM_RULES = {
     # B-20 / ADR-020 coverage gate (engine-level, every calculator): source feeds that must be declared complete
     "required_feeds": lambda v: isinstance(v, list) and bool(v) and set(v) <= set(FEED_TYPES) and len(set(v)) == len(v),
     "min_feed_coverage": lambda v: isinstance(v, int | float) and not isinstance(v, bool) and 0 < v <= 1,
+    # ADR-021: a declared feed attribute that contradicts this makes the cell uncovered (KPI-043: a safety declaration
+    # with includes_near_miss = false does not cover the near-miss rate). Only the safety feed has attributes.
+    "required_feed_attributes": lambda v: isinstance(v, dict) and bool(v) and set(v) <= {"safety"} and all(
+        isinstance(a, dict) and a and set(a) <= set(SAFETY_COVERAGE_ATTRIBUTES)
+        and all(isinstance(b, bool) for b in a.values()) for a in v.values()),
+    # ADR-021 / WP-6 HSE 3.7: third-party cases and subcontractor / agency cases without hours in the denominator
+    # are reported as out-of-rate cases instead of entering the numerator
+    "exclude_out_of_rate_cases": lambda v: isinstance(v, bool),
 }
 
 
 # Parameters each calculator actually reads (HR sprint-1 finding: a valid-looking key the calculator ignores, e.g.
 # exclude_categories on early_turnover_90, silently changed nothing). Engine-level keys apply to every calculator.
-_ENGINE_PARAMS = {"annualize", "threshold_min_days", "required_feeds", "min_feed_coverage"}
+_ENGINE_PARAMS = {"annualize", "threshold_min_days", "required_feeds", "min_feed_coverage", "required_feed_attributes"}
 CALCULATOR_PARAMS: dict[str, set[str]] = {
     "turnover_rate": {"exclude_categories", "include_categories"},
     "absenteeism_rate": {"absence_types", "excluded_types"},
@@ -499,8 +520,9 @@ CALCULATOR_PARAMS: dict[str, set[str]] = {
     "annual_leave_nonuse": {"hours_per_day", "long_absence_types"},
     "capacity_utilization": {"min_coverage"},
     "unit_labor_cost": {"reporting_currency"},
-    "ltifr": {"event_types", "multiplier", "threshold_min_exposure_hours"},
-    "trir": {"event_types", "multiplier", "threshold_min_exposure_hours"},
+    "ltifr": {"event_types", "multiplier", "threshold_min_exposure_hours", "exclude_out_of_rate_cases"},
+    "trir": {"event_types", "multiplier", "threshold_min_exposure_hours", "exclude_out_of_rate_cases"},
+    "near_miss_rate": {"multiplier", "threshold_min_exposure_hours"},
     "early_turnover_90": {"days"},
     "labor_cost_per_employee": {"reporting_currency"},
     "overtime_cost_share": {"reporting_currency"},

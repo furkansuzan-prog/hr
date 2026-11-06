@@ -15,6 +15,7 @@ from sqlalchemy import (
     String,
     Time,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -265,18 +266,45 @@ class TrainingRecord(Base, TenantMixin, TimestampMixin, SourceMixin):
 # ---------------------------------------------------------------- HSE (Module G)
 
 
+# Platform classification of a safety case (WP-6 HSE 3.2). Severity order = "most severe outcome" rule (3.1) and the
+# direction of a reclassification (reclassified_up / reclassified_down, shared with the leave import - WP-1 cond. 5).
+SAFETY_EVENT_TYPES = ("fatality", "lost_time_injury", "restricted_work", "medical_treatment", "first_aid", "near_miss")
+SAFETY_SEVERITY = {"near_miss": 0, "first_aid": 1, "medical_treatment": 2, "restricted_work": 3, "lost_time_injury": 4,
+                   "fatality": 5}
+# Who was affected (WP-6 HSE 3.3; HR Director term decision, SPRINT1_REVIEW section 3). NULL = legacy / near miss.
+WORKER_CATEGORIES = ("own_employee", "subcontractor_worker", "temporary_agency_worker", "third_party")
+SAFETY_RECLASSIFY_ACTION = "safety.reclassify"
+
+
 class SafetyEvent(Base, TenantMixin, TimestampMixin, SourceMixin):
-    """Event-level HSE record WITHOUT diagnosis or person identity (special-category data stays in the HSE
-    system of record; only classification + lost days flow here)."""
+    """Case-level HSE record (ADR-021: one row = the outcome of ONE affected person, without identity) WITHOUT
+    diagnosis, injury detail, free text or person identity - special-category data stays in the HSE system of record.
+    Imported rows carry source_record_id = "<event_ref>#<case_no>" (re-import key, unique per source system)."""
 
     __tablename__ = "safety_events"
+    __table_args__ = (
+        Index("uq_safety_case_source", "tenant_id", "source_system", "source_record_id", unique=True,
+              postgresql_where=text("source_record_id IS NOT NULL")),
+    )
     id: Mapped[int] = mapped_column(primary_key=True)
     legal_entity_id: Mapped[int] = mapped_column(ForeignKey("legal_entities.id"), index=True)
     project_id: Mapped[int | None] = mapped_column(ForeignKey("projects.id"))
     event_date: Mapped[date] = mapped_column(Date)
-    # fatality|lost_time_injury|restricted_work|medical_treatment|first_aid|near_miss
-    event_type: Mapped[str] = mapped_column(String(30))
-    lost_days: Mapped[int] = mapped_column(Integer, default=0)
+    event_type: Mapped[str] = mapped_column(String(30))  # SAFETY_EVENT_TYPES
+    # calendar days away, event day excluded (WP-6 HSE 3.5); NULL = not yet known (open case) - empty is not 0
+    lost_days: Mapped[int | None] = mapped_column(Integer, default=0)
+    # ADR-021 / WP-6 HSE 3.3 (all optional: legacy rows and the demo seed have none of them)
+    event_ref: Mapped[str | None] = mapped_column(String(100))
+    case_no: Mapped[int | None] = mapped_column(Integer)
+    worker_category: Mapped[str | None] = mapped_column(String(30))  # WORKER_CATEGORIES
+    reported_date: Mapped[date | None] = mapped_column(Date)
+    restricted_days: Mapped[int | None] = mapped_column(Integer)
+    case_status: Mapped[str | None] = mapped_column(String(10))  # open | closed
+    sgk_notification: Mapped[str | None] = mapped_column(String(20))  # notified | pending | not_required
+    sgk_notification_date: Mapped[date | None] = mapped_column(Date)
+    high_consequence: Mapped[bool | None] = mapped_column(Boolean)
+    # WP-2 R2.5 / example L: a fatality later reclassified keeps a marker so the alert band still says so
+    reclassified_from_fatality: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
 
 
 # ---------------------------------------------------------------- Planning (Module I)

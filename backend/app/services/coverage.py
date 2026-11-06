@@ -7,7 +7,7 @@ Ways a declaration is written:
 1. Import (primary): the upload may carry a `coverage` object; on a successful commit every declared employer x month
    gets a row (`basis = import_batch`). Without a declaration every employer x month that received rows gets
    `partial` (ratio unknown) - row presence is not proof of completeness - and an existing declaration is kept.
-   A header-only file of an event feed (leave) is accepted only with `completeness = complete` -> `confirmed_empty`.
+   A header-only file of an event feed (leave, safety_event) is accepted only with `completeness = complete` -> `confirmed_empty`.
 2. Manual (`POST /api/v1/coverage`): import.write on the WHOLE employer (ADR-017 - project-limited grants cannot
    write); `none` and `confirmed_empty` require a note; the safety feed additionally needs hse.read for that employer
    (interim rule until A11 defines an HSE declaration permission).
@@ -25,6 +25,7 @@ from app.models import (
     COVERAGE_COMPLETENESS,
     COVERAGE_DECLARE_ACTION,
     FEED_TYPES,
+    SAFETY_COVERAGE_ATTRIBUTES,
     AuditLog,
     DataFeedCoverage,
     ImportStagingRow,
@@ -34,8 +35,9 @@ from app.models import (
 from app.security.access import AccessContext
 
 EVENT_FEEDS = {"leave", "training", "safety"}  # an empty month is a valid, confirmable state (header-only file)
-IMPORT_FEEDS = {"employment": "employment", "leave": "leave"}  # import entity_type -> feed type
-SAFETY_ATTRIBUTES = {"includes_subcontractor_cases", "includes_near_miss"}
+# import entity_type -> feed type (ADR-021: the HSE case import feeds 'safety')
+IMPORT_FEEDS = {"employment": "employment", "leave": "leave", "safety_event": "safety"}
+SAFETY_ATTRIBUTES = set(SAFETY_COVERAGE_ATTRIBUTES)
 PLANNED_ON_LEAVE = {"included", "excluded", "unknown"}
 MAX_MONTHS = 60
 UNDECLARED_IMPORT_LOOKBACK_MONTHS = 60  # employment rows without a declaration: partial only for recent months
@@ -212,6 +214,9 @@ def declare_complete(db: Session, tenant_id: int, entity_ids, feeds, first_month
 
 def _row_cells(m: dict, ents: dict[str, int], today: date) -> set[tuple[int, date]]:
     e = ents.get(m.get("legal_entity_code") or "")
+    if m.get("event_date"):  # HSE case (ADR-021): a single day
+        sd = ed = date.fromisoformat(m["event_date"])
+        return {(e, date(sd.year, sd.month, 1))} if e is not None else set()
     if e is None or not m.get("start_date"):
         return set()
     sd = date.fromisoformat(m["start_date"])
@@ -221,12 +226,16 @@ def _row_cells(m: dict, ents: dict[str, int], today: date) -> set[tuple[int, dat
     return {(e, mo) for mo in month_starts(sd, ed)} if ed >= sd else set()
 
 
-def row_outside(decl: dict | None, entity_id: int | None, sd: date | None, ed: date | None) -> bool:
-    """Validation warning row_outside_declared_coverage: the row's employer is not declared or its span does not
-    overlap the declared period. Such rows are still loaded but create no coverage."""
+def row_outside(decl: dict | None, entity_id: int | None, sd: date | None, ed: date | None,
+                project_id: int | None = None) -> bool:
+    """Validation warning row_outside_declared_coverage: the row's employer is not declared, its span does not
+    overlap the declared period or (project-level declaration, rows with a project) its project is not declared.
+    Such rows are still loaded but create no coverage."""
     if not decl or entity_id is None or sd is None:
         return False
     if entity_id not in decl["legal_entity_ids"]:
+        return True
+    if project_id is not None and None not in decl["project_ids"] and project_id not in decl["project_ids"]:
         return True
     return sd > date.fromisoformat(decl["period_end"]) or (ed or sd) < date.fromisoformat(decl["period_start"])
 

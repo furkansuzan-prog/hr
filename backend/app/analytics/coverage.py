@@ -15,6 +15,10 @@ Mode per feed (settings.coverage_modes; product-owner decision PO-6 is open, eve
     both     -> min_feed_coverage <= C < 1: value kept, quality <= C x 100, note "n entity-month(s) not covered";
                 enforce additionally withholds the colour until the covered-subset recomputation (WP-6 K3) exists.
 
+Formula parameter `required_feed_attributes` (ADR-021, e.g. KPI-043 {"safety": {"includes_near_miss": true}}): a
+declaration whose attributes explicitly contradict the requirement counts as not covered (factor 0) - "near misses
+are not in this feed" is not a real zero near-miss rate. A declaration without the attribute is taken at its word.
+
 The gate never touches fatality alerts (computed separately, WP-6 data review condition 3). Scope rules: whole
 entities need a declaration without project (project_id NULL); a project filter or an ADR-017 project-limited
 entity accepts a declaration for that project and falls back to the whole-entity declaration.
@@ -103,31 +107,34 @@ def _weights(db: Session, scope: Scope, months: list[date]) -> dict[date, dict[i
     return {m: store[m] for m in months}
 
 
-def _declarations(db: Session, tenant_id: int, months: list[date]) -> dict[tuple, tuple[str, float | None]]:
-    """(feed, entity, project|None, month) -> (completeness, ratio) for the tenant (metadata only, no person data)."""
+def _declarations(db: Session, tenant_id: int, months: list[date]) -> dict[tuple, tuple]:
+    """(feed, entity, project|None, month) -> (completeness, ratio, attributes) for the tenant (metadata only)."""
     store = _memo(db).setdefault(("decl", tenant_id), {})
     loaded = _memo(db).setdefault(("decl_months", tenant_id), set())
     todo = [m for m in months if m not in loaded]
     if todo:
         for r in db.execute(text(
-                "SELECT feed_type, legal_entity_id, project_id, period_month, completeness, coverage_ratio "
-                "FROM data_feed_coverage WHERE tenant_id = :t AND period_month = ANY(CAST(:m AS date[]))"),
+                "SELECT feed_type, legal_entity_id, project_id, period_month, completeness, coverage_ratio, "
+                "attributes FROM data_feed_coverage WHERE tenant_id = :t AND period_month = ANY(CAST(:m AS date[]))"),
                 {"t": tenant_id, "m": todo}):
-            store[(r[0], r[1], r[2], r[3])] = (r[4], float(r[5]) if r[5] is not None else None)
+            store[(r[0], r[1], r[2], r[3])] = (r[4], float(r[5]) if r[5] is not None else None, r[6] or {})
         loaded.update(todo)
     return store
 
 
-def _factor(decl: tuple[str, float | None] | None) -> float:
+def _factor(decl: tuple | None, required: dict | None = None) -> float:
     if decl is None:
         return 0.0  # undeclared behaves like 'none'
-    completeness, ratio = decl
+    completeness, ratio, attributes = decl
+    if required and any(k in attributes and attributes[k] != v for k, v in required.items()):
+        return 0.0  # ADR-021: the declaration says the required content is not in the feed
     if completeness == "partial":
         return ratio if ratio is not None else PARTIAL_UNKNOWN_RATIO
     return _FACTOR.get(completeness, 0.0)
 
 
-def feed_coverage(db: Session, scope: Scope, ps: date, pe: date, feeds: list[str]) -> dict[str, dict]:
+def feed_coverage(db: Session, scope: Scope, ps: date, pe: date, feeds: list[str],
+                  attributes: dict | None = None) -> dict[str, dict]:
     """{feed: {"ratio": C | None, "uncovered": n entity-months, "cells": n}}. ratio None = nothing is required
     (no entity-month with people in scope) - the calculator's own missing-data rule decides."""
     months = month_starts(ps, pe)
@@ -139,6 +146,7 @@ def feed_coverage(db: Session, scope: Scope, ps: date, pe: date, feeds: list[str
     entity_level = not (scope.project_id or scope.occupation_group)
     out = {}
     for feed in feeds:
+        need = (attributes or {}).get(feed)
         req = cov = 0.0
         cells = uncovered = 0
         for m in months:
@@ -156,7 +164,7 @@ def feed_coverage(db: Session, scope: Scope, ps: date, pe: date, feeds: list[str
             for e, w in cell_w.items():
                 units = [scope.project_id] if scope.project_id else (list(limits[e]) if e in limits else [None])
                 f = min(_factor(decl.get((feed, e, u, m)) if u is not None and (feed, e, u, m) in decl
-                                else decl.get((feed, e, None, m))) for u in units)
+                                else decl.get((feed, e, None, m)), need) for u in units)
                 req += w
                 cov += w * f
                 cells += 1
@@ -181,7 +189,7 @@ def apply_gate(db: Session, scope: Scope, ps: date, pe: date, params: dict, res:
     if not active:
         return res
     min_c = float(params.get("min_feed_coverage", DEFAULT_MIN_FEED_COVERAGE))
-    cov = feed_coverage(db, scope, ps, pe, active)
+    cov = feed_coverage(db, scope, ps, pe, active, params.get("required_feed_attributes"))
     known = {f: c for f, c in cov.items() if c["ratio"] is not None}
     res.lineage = {**(res.lineage or {}), "coverage": {
         "feeds": {f: c["ratio"] for f, c in cov.items()}, "min_feed_coverage": min_c,

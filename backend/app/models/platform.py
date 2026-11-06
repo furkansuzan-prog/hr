@@ -237,6 +237,9 @@ class ImportBatch(Base, TenantMixin, TimestampMixin):
     created_by: Mapped[int | None] = mapped_column(BigInteger)
     # B-20 / ADR-020: optional coverage declaration sent with the upload (normalised by app.services.coverage)
     coverage: Mapped[dict | None] = mapped_column(JSON)
+    # ADR-021 / WP-6 HSE V17: NAMES of the columns dropped on upload as prohibited (identity, health, free text).
+    # Values are never stored; a mapping that points at a dropped column is rejected (rename the column).
+    dropped_columns: Mapped[list | None] = mapped_column(JSON)
 
 
 # B-20 / ADR-020 (docs/hr/data/WP-6 section 3.4): which feed is complete for which employer x month.
@@ -244,6 +247,9 @@ FEED_TYPES = ("employment", "leave", "timesheet", "training", "cost", "safety", 
 COVERAGE_COMPLETENESS = ("complete", "partial", "none")  # no row = 'undeclared' (behaves like 'none')
 COVERAGE_BASIS = ("import_batch", "connector_run", "manual_declaration")
 COVERAGE_DECLARE_ACTION = "coverage.declare"
+# safety-feed declaration attributes (WP-6 HSE 3.6 / review condition 1); includes_near_miss = false makes KPI-043
+# uncovered for that cell (formula parameter required_feed_attributes, ADR-021)
+SAFETY_COVERAGE_ATTRIBUTES = ("includes_subcontractor_cases", "includes_near_miss")
 
 
 class DataFeedCoverage(Base, TenantMixin, TimestampMixin):
